@@ -38,16 +38,19 @@ NO_COLOR = bool(os.environ.get("NO_COLOR"))
 DEFAULT_THEME: dict[str, Any] = {
     "model": {
         "glyph": "\U000f06a9 ",  # nf-md-robot (Supplementary PUA)
-        "color": "#88c0d0",
+        "color": "#d8dee9",
+        "bg": "#3b4252",
         "bold": True,
     },
     "dir": {
         "glyph": "\U000f0770 ",  # nf-md-folder_open (Supplementary PUA)
         "color": "#81a1c1",
+        "bg": "#2e3440",
     },
     "context_bar": {
         "glyph": "\U000f0493 ",  # nf-md-chart_pie (Supplementary PUA)
         "color": "#a3be8c",
+        "bg": "#2e3440",
         "width": 10,
         "warn_threshold": 40.0,
         "warn_color": "#ebcb8b",
@@ -56,10 +59,12 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     "tokens": {
         "color": "#8fbcbb",
+        "bg": "#2e3440",
     },
     "cost": {
         "glyph": "\U000f0d63 ",  # nf-md-lightning_bolt (Supplementary PUA)
         "color": "#d08770",
+        "bg": "#2e3440",
         "warn_threshold": 2.0,
         "warn_color": "#ebcb8b",
         "critical_threshold": 5.0,
@@ -68,6 +73,7 @@ DEFAULT_THEME: dict[str, Any] = {
     "duration": {
         "glyph": "\U000f0954 ",  # nf-md-clock_outline (Supplementary PUA)
         "color": "#6e8898",
+        "bg": "#2e3440",
     },
     "separator": {
         "char": "\u2502",      # │
@@ -104,16 +110,25 @@ def _parse_hex(hex_color: str) -> tuple[int, int, int] | None:
         return None
 
 
-def style(text: str, hex_color: str | None = None, bold: bool = False) -> str:
+def style(text: str, hex_color: str | None = None, bold: bool = False,
+          bg_color: str | None = None) -> str:
     """Wrap text in ANSI truecolor. Plain text if NO_COLOR or invalid color."""
-    if NO_COLOR or not hex_color:
+    if NO_COLOR:
         return text
-    rgb = _parse_hex(hex_color)
-    if not rgb:
+    codes: list[str] = []
+    if bold:
+        codes.append("1")
+    if hex_color:
+        rgb = _parse_hex(hex_color)
+        if rgb:
+            codes.append(f"38;2;{rgb[0]};{rgb[1]};{rgb[2]}")
+    if bg_color:
+        bg = _parse_hex(bg_color)
+        if bg:
+            codes.append(f"48;2;{bg[0]};{bg[1]};{bg[2]}")
+    if not codes:
         return text
-    r, g, b = rgb
-    prefix = f"\033[{'1;' if bold else ''}38;2;{r};{g};{b}m"
-    return f"{prefix}{text}\033[0m"
+    return f"\033[{';'.join(codes)}m{text}\033[0m"
 
 
 def style_dim(text: str) -> str:
@@ -164,6 +179,7 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(model, dict):
         name = model.get("display_name")
         if isinstance(name, str) and name:
+            name = name.replace(" context)", ")")
             state["model_name"] = name
 
     # Directory — prefer workspace.current_dir, fall back to cwd
@@ -290,11 +306,21 @@ def _abbreviate_count(n: int) -> str:
     return f"{val:.1f}M" if val < 100 else f"{int(val)}M"
 
 
+def _pill(text: str, cfg: dict[str, Any], color: str | None = None,
+          bold: bool = False) -> str:
+    """Wrap text as a pill with optional background. Adds padding if bg."""
+    c = color or cfg.get("color")
+    bg = cfg.get("bg")
+    if bg and not NO_COLOR:
+        return style(f" {text} ", c, bold, bg)
+    return style(text, c, bold)
+
+
 def format_tokens(input_tokens: int, output_tokens: int, theme: dict[str, Any]) -> str:
     """Format token counts as ↑12.3k ↓4.1k."""
     text = f"\u2191{_abbreviate_count(input_tokens)} \u2193{_abbreviate_count(output_tokens)}"
     tok_cfg = theme.get("tokens", {})
-    return style(text, tok_cfg.get("color"))
+    return _pill(text, tok_cfg)
 
 
 def render_bar(pct: int, theme: dict[str, Any]) -> str:
@@ -321,7 +347,7 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
         bold = False
 
     glyph = cfg.get("glyph", "")
-    return style(f"{glyph}{bar}{suffix}", color, bold)
+    return _pill(f"{glyph}{bar}{suffix}", cfg, color, bold)
 
 
 def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
@@ -344,14 +370,14 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     if model_name:
         m_cfg = theme.get("model", {})
         text = f"{m_cfg.get('glyph', '')}{_sanitize_fragment(model_name)}"
-        parts.append(style(text, m_cfg.get("color"), m_cfg.get("bold", False)))
+        parts.append(_pill(text, m_cfg, bold=m_cfg.get("bold", False)))
 
     # Module: dir
     dir_basename = state.get("dir_basename")
     if dir_basename:
         d_cfg = theme.get("dir", {})
         text = f"{d_cfg.get('glyph', '')}{_sanitize_fragment(dir_basename)}"
-        parts.append(style(text, d_cfg.get("color")))
+        parts.append(_pill(text, d_cfg))
 
     # Module: context_bar
     if "context_used" in state and "context_total" in state:
@@ -370,17 +396,17 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         warn_t = c_cfg.get("warn_threshold", 2.0)
         crit_t = c_cfg.get("critical_threshold", 5.0)
         if cost_val >= crit_t:
-            parts.append(style(cost_text, c_cfg.get("critical_color", "#bf616a"), True))
+            parts.append(_pill(cost_text, c_cfg, c_cfg.get("critical_color", "#bf616a"), True))
         elif cost_val >= warn_t:
-            parts.append(style(cost_text, c_cfg.get("warn_color", "#ebcb8b")))
+            parts.append(_pill(cost_text, c_cfg, c_cfg.get("warn_color", "#ebcb8b")))
         else:
-            parts.append(style(cost_text, c_cfg.get("color")))
+            parts.append(_pill(cost_text, c_cfg))
 
     # Module: duration
     if "duration_ms" in state:
         dur_cfg = theme.get("duration", {})
         text = f"{dur_cfg.get('glyph', '')}{_format_duration(state['duration_ms'])}"
-        parts.append(style(text, dur_cfg.get("color")))
+        parts.append(_pill(text, dur_cfg))
 
     if not parts:
         return ""
