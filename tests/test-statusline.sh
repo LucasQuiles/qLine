@@ -14,6 +14,7 @@
 #   bash tests/test-statusline.sh --section config
 #   bash tests/test-statusline.sh --section ansi
 #   bash tests/test-statusline.sh --section layout
+#   bash tests/test-statusline.sh --section collector
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -114,7 +115,7 @@ run_statusline() {
     local tmpout tmpderr
     tmpout=$(mktemp)
     tmpderr=$(mktemp)
-    printf '%s' "$input" | NO_COLOR=1 python3 "$SRC" >"$tmpout" 2>"$tmpderr"
+    printf '%s' "$input" | NO_COLOR=1 QLINE_NO_COLLECT=1 python3 "$SRC" >"$tmpout" 2>"$tmpderr"
     local exit_code=$?
     LAST_STDOUT=$(cat "$tmpout")
     LAST_STDERR=$(cat "$tmpderr")
@@ -128,7 +129,7 @@ run_statusline_color() {
     local tmpout tmpderr
     tmpout=$(mktemp)
     tmpderr=$(mktemp)
-    printf '%s' "$input" | python3 "$SRC" >"$tmpout" 2>"$tmpderr"
+    printf '%s' "$input" | QLINE_NO_COLLECT=1 python3 "$SRC" >"$tmpout" 2>"$tmpderr"
     local exit_code=$?
     LAST_STDOUT=$(cat "$tmpout")
     LAST_STDERR=$(cat "$tmpderr")
@@ -878,6 +879,122 @@ line = render(state, theme)
 print(repr(line))
 ")
 assert_equals "L-10: all modules disabled -> empty" "$OUT" "''"
+
+echo ""
+fi
+
+# ======================================================================
+# SECTION: collector — system data collector tests
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "collector" ]; then
+echo "--- Collector Tests ---"
+
+# COL-01: CPU from valid loadavg mock file
+MOCK_PROC=$(mktemp -d)
+echo "2.50 1.20 0.80 1/234 5678" > "$MOCK_PROC/loadavg"
+OUT=$(run_py "
+import statusline
+statusline.PROC_DIR = '$MOCK_PROC'
+state = {}
+statusline.collect_cpu(state)
+val = state.get('cpu_percent', 'ABSENT')
+if isinstance(val, int) and val >= 0:
+    print('NUMBER')
+else:
+    print(val)
+")
+rm -rf "$MOCK_PROC"
+assert_equals "COL-01: CPU from valid loadavg -> number" "$OUT" "NUMBER"
+
+# COL-02: CPU from missing file
+MOCK_PROC=$(mktemp -d)
+OUT=$(run_py "
+import statusline
+statusline.PROC_DIR = '$MOCK_PROC'
+state = {}
+statusline.collect_cpu(state)
+print(state.get('cpu_percent', 'ABSENT'))
+")
+rm -rf "$MOCK_PROC"
+assert_equals "COL-02: CPU from missing file -> ABSENT" "$OUT" "ABSENT"
+
+# COL-03: CPU from empty file
+MOCK_PROC=$(mktemp -d)
+echo -n "" > "$MOCK_PROC/loadavg"
+OUT=$(run_py "
+import statusline
+statusline.PROC_DIR = '$MOCK_PROC'
+state = {}
+statusline.collect_cpu(state)
+print(state.get('cpu_percent', 'ABSENT'))
+")
+rm -rf "$MOCK_PROC"
+assert_equals "COL-03: CPU from empty file -> ABSENT" "$OUT" "ABSENT"
+
+# COL-04: Memory from valid meminfo (MemAvailable present)
+MOCK_PROC=$(mktemp -d)
+cat > "$MOCK_PROC/meminfo" << 'MEMINFO'
+MemTotal:       16384000 kB
+MemFree:         1000000 kB
+MemAvailable:    6000000 kB
+Buffers:          500000 kB
+Cached:          3000000 kB
+MEMINFO
+OUT=$(run_py "
+import statusline
+statusline.PROC_DIR = '$MOCK_PROC'
+state = {}
+statusline.collect_memory(state)
+print(state.get('memory_percent', 'ABSENT'))
+")
+rm -rf "$MOCK_PROC"
+# used = 16384000 - 6000000 = 10384000, pct = (10384000 * 100) // 16384000 = 63
+assert_equals "COL-04: Memory from valid meminfo -> 63%" "$OUT" "63"
+
+# COL-05: Memory missing MemAvailable -> fallback to MemFree+Buffers+Cached
+MOCK_PROC=$(mktemp -d)
+cat > "$MOCK_PROC/meminfo" << 'MEMINFO'
+MemTotal:       16384000 kB
+MemFree:         2000000 kB
+Buffers:          500000 kB
+Cached:          3000000 kB
+MEMINFO
+OUT=$(run_py "
+import statusline
+statusline.PROC_DIR = '$MOCK_PROC'
+state = {}
+statusline.collect_memory(state)
+print(state.get('memory_percent', 'ABSENT'))
+")
+rm -rf "$MOCK_PROC"
+# available = 2000000 + 500000 + 3000000 = 5500000
+# used = 16384000 - 5500000 = 10884000, pct = (10884000 * 100) // 16384000 = 66
+assert_equals "COL-05: Memory fallback -> 66%" "$OUT" "66"
+
+# COL-06: Memory from missing file
+MOCK_PROC=$(mktemp -d)
+OUT=$(run_py "
+import statusline
+statusline.PROC_DIR = '$MOCK_PROC'
+state = {}
+statusline.collect_memory(state)
+print(state.get('memory_percent', 'ABSENT'))
+")
+rm -rf "$MOCK_PROC"
+assert_equals "COL-06: Memory missing file -> ABSENT" "$OUT" "ABSENT"
+
+# COL-07: Disk from real statvfs -> percentage between 0 and 100
+OUT=$(run_py "
+import statusline
+state = {}
+statusline.collect_disk(state)
+val = state.get('disk_percent', 'ABSENT')
+if isinstance(val, int) and 0 <= val <= 100:
+    print('VALID')
+else:
+    print('INVALID:' + str(val))
+")
+assert_equals "COL-07: Disk from real statvfs -> valid pct" "$OUT" "VALID"
 
 echo ""
 fi
