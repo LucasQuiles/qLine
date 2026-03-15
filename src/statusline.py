@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
-"""Claude Code status-line command.
+"""Claude Code status-line command — qLine.
 
-Reads Claude status JSON from stdin, emits exactly one deterministic
-stdout line (or empty output), exits 0 on recoverable failures.
+Reads Claude status JSON from stdin, emits exactly one styled stdout
+line (or empty output), exits 0 on recoverable failures.
+
+Visual: ANSI truecolor, Nerd Font glyphs, threshold-based color
+escalation, context progress bar, TOML-configurable theming.
 
 Contract:
   - One bounded binary stdin read with overall deadline
   - Byte-capped (not char-capped) input
   - Sparse-safe normalizer: documented fields are baseline, runtime
     additions are optional
-  - Pure renderer: fixed module order, ASCII-safe separators, no
-    shell/network/secret dependencies
+  - Styled renderer: fixed module order, ANSI truecolor, Nerd Font
+    glyphs, NO_COLOR support
   - No stderr on normal execution
   - Exit 0 on all recoverable failures
-
-Ownership: local code owns stdin intake, normalization, formatting,
-and silent failure behavior. Claude runtime owns cadence, payload
-assembly, trust gating, command invocation, and final rendering.
 """
 from __future__ import annotations
 
@@ -24,16 +23,104 @@ import json
 import os
 import select
 import sys
+import tomllib
 from typing import Any
 
 # --- Constants ---
 
 MAX_STDIN_BYTES = 524_288  # 512 KB byte budget (binary read)
 READ_DEADLINE_S = 0.2      # Overall read deadline in seconds
+CONFIG_PATH = os.path.expanduser("~/.config/qline.toml")
+NO_COLOR = bool(os.environ.get("NO_COLOR"))
 
-# Context window thresholds
-CONTEXT_WARN_PCT = 70
-CONTEXT_CRITICAL_PCT = 85
+# --- Default Theme (Muted Ocean) ---
+
+DEFAULT_THEME: dict[str, Any] = {
+    "model": {
+        "glyph": "\uf46a ",   # nf-oct-hubot
+        "color": "#88c0d0",
+        "bold": True,
+    },
+    "dir": {
+        "glyph": "\uf07c ",   # nf-fa-folder_open
+        "color": "#81a1c1",
+    },
+    "context_bar": {
+        "glyph": "\uf200 ",   # nf-fa-pie_chart
+        "color": "#a3be8c",
+        "width": 10,
+        "warn_threshold": 40.0,
+        "warn_color": "#ebcb8b",
+        "critical_threshold": 70.0,
+        "critical_color": "#bf616a",
+    },
+    "tokens": {
+        "color": "#8fbcbb",
+    },
+    "cost": {
+        "glyph": "\uf0e7 ",   # nf-fa-bolt
+        "color": "#d08770",
+        "warn_threshold": 2.0,
+        "warn_color": "#ebcb8b",
+        "critical_threshold": 5.0,
+        "critical_color": "#bf616a",
+    },
+    "duration": {
+        "glyph": "\uf017 ",   # nf-fa-clock_o
+        "color": "#6e8898",
+    },
+    "separator": {
+        "char": "\u2502",      # │
+        "dim": True,
+    },
+}
+
+
+# --- Config ---
+
+def load_config() -> dict[str, Any]:
+    """Load TOML config with shallow per-section merge over defaults."""
+    theme = {k: dict(v) for k, v in DEFAULT_THEME.items()}
+    try:
+        with open(CONFIG_PATH, "rb") as f:
+            user = tomllib.load(f)
+        for section, defaults in theme.items():
+            if section in user and isinstance(user[section], dict):
+                defaults.update(user[section])
+    except Exception:
+        pass
+    return theme
+
+
+# --- ANSI Styling ---
+
+def _parse_hex(hex_color: str) -> tuple[int, int, int] | None:
+    """Parse #RRGGBB to (R, G, B) or None on failure."""
+    if not isinstance(hex_color, str) or len(hex_color) != 7 or hex_color[0] != "#":
+        return None
+    try:
+        return (int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16))
+    except ValueError:
+        return None
+
+
+def style(text: str, hex_color: str | None = None, bold: bool = False) -> str:
+    """Wrap text in ANSI truecolor. Plain text if NO_COLOR or invalid color."""
+    if NO_COLOR or not hex_color:
+        return text
+    rgb = _parse_hex(hex_color)
+    if not rgb:
+        return text
+    r, g, b = rgb
+    prefix = f"\033[{'1;' if bold else ''}38;2;{r};{g};{b}m"
+    return f"{prefix}{text}\033[0m"
+
+
+def style_dim(text: str) -> str:
+    """Apply ANSI dim attribute."""
+    if NO_COLOR:
+        return text
+    return f"\033[2m{text}\033[0m"
 
 
 # --- Reader ---
@@ -69,23 +156,7 @@ def read_stdin_bounded() -> dict[str, Any] | None:
 # --- Normalizer ---
 
 def normalize(payload: dict[str, Any]) -> dict[str, Any]:
-    """Create a normalized internal state from the raw payload.
-
-    Documented fields (baseline):
-      - model.display_name -> model_name
-      - workspace.current_dir (fallback to cwd) -> dir_basename
-      - version -> version
-      - output_style.name -> output_style
-      - cost.total_cost_usd -> cost_usd
-      - cost.total_duration_ms -> duration_ms
-
-    Optional/version-sensitive fields:
-      - context_window.used, context_window.total -> context_used, context_total
-      - added_dirs -> added_dirs (list)
-      - worktree -> is_worktree (bool)
-      - current_usage -> current_usage (dict)
-      - agent_id -> agent_id (str)
-    """
+    """Create a normalized internal state from the raw payload."""
     state: dict[str, Any] = {}
 
     # Model name
@@ -135,6 +206,14 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(used, (int, float)) and isinstance(total, (int, float)) and total > 0:
             state["context_used"] = int(used)
             state["context_total"] = int(total)
+        # Token counts (version-sensitive runtime fields)
+        input_tok = ctx_window.get("total_input_tokens")
+        output_tok = ctx_window.get("total_output_tokens")
+        if isinstance(input_tok, (int, float)) and isinstance(output_tok, (int, float)):
+            input_tok, output_tok = int(input_tok), int(output_tok)
+            if input_tok > 0 or output_tok > 0:
+                state["input_tokens"] = input_tok
+                state["output_tokens"] = output_tok
 
     # Optional: added_dirs
     added_dirs = payload.get("added_dirs")
@@ -191,64 +270,126 @@ def _format_duration(duration_ms: int) -> str:
     return f"{hours}h"
 
 
-def _format_context(used: int, total: int) -> str:
-    """Format context window usage with threshold indicators."""
-    pct = (used * 100) // total
-    if pct >= CONTEXT_CRITICAL_PCT:
-        return f"ctx:{pct}%!"
-    if pct >= CONTEXT_WARN_PCT:
-        return f"ctx:{pct}%~"
-    return f"ctx:{pct}%"
+def _abbreviate_count(n: int) -> str:
+    """Abbreviate token counts: 1234 -> 1.2k, 1234567 -> 1.2M."""
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        val = n / 1000
+        return f"{val:.1f}k" if val < 100 else f"{int(val)}k"
+    val = n / 1_000_000
+    return f"{val:.1f}M" if val < 100 else f"{int(val)}M"
 
 
-def render(state: dict[str, Any]) -> str:
+def format_tokens(input_tokens: int, output_tokens: int, theme: dict[str, Any]) -> str:
+    """Format token counts as ↑12.3k ↓4.1k."""
+    text = f"\u2191{_abbreviate_count(input_tokens)} \u2193{_abbreviate_count(output_tokens)}"
+    tok_cfg = theme.get("tokens", {})
+    return style(text, tok_cfg.get("color"))
+
+
+def render_bar(pct: int, theme: dict[str, Any]) -> str:
+    """Render context progress bar with threshold coloring."""
+    cfg = theme.get("context_bar", {})
+    width = cfg.get("width", 10)
+    filled = (pct * width) // 100
+    bar = "\u2588" * filled + "\u2591" * (width - filled)
+
+    warn_t = cfg.get("warn_threshold", 40.0)
+    crit_t = cfg.get("critical_threshold", 70.0)
+
+    if pct >= crit_t:
+        suffix = f" {pct}%!"
+        color = cfg.get("critical_color", "#bf616a")
+        bold = True
+    elif pct >= warn_t:
+        suffix = f" {pct}%~"
+        color = cfg.get("warn_color", "#ebcb8b")
+        bold = False
+    else:
+        suffix = f" {pct}%"
+        color = cfg.get("color", "#a3be8c")
+        bold = False
+
+    glyph = cfg.get("glyph", "")
+    return style(f"{glyph}{bar}{suffix}", color, bold)
+
+
+def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     """Render a single status line from normalized state.
 
-    Module order: model -> dir -> context -> cost -> duration
-    Separator: ' | '
+    Module order: model -> dir -> context_bar -> tokens -> cost -> duration
     Omits absent modules.
     """
+    if theme is None:
+        theme = DEFAULT_THEME
+
     parts: list[str] = []
+    sep_cfg = theme.get("separator", {})
+    sep_char = sep_cfg.get("char", "\u2502")
+    sep_dim = sep_cfg.get("dim", True)
+    sep = f" {style_dim(sep_char) if sep_dim else sep_char} "
 
     # Module: model
     model_name = state.get("model_name")
     if model_name:
-        parts.append(_sanitize_fragment(model_name))
+        m_cfg = theme.get("model", {})
+        text = f"{m_cfg.get('glyph', '')}{_sanitize_fragment(model_name)}"
+        parts.append(style(text, m_cfg.get("color"), m_cfg.get("bold", False)))
 
     # Module: dir
     dir_basename = state.get("dir_basename")
     if dir_basename:
-        parts.append(_sanitize_fragment(dir_basename))
+        d_cfg = theme.get("dir", {})
+        text = f"{d_cfg.get('glyph', '')}{_sanitize_fragment(dir_basename)}"
+        parts.append(style(text, d_cfg.get("color")))
 
-    # Module: context
+    # Module: context_bar
     if "context_used" in state and "context_total" in state:
-        parts.append(_format_context(state["context_used"], state["context_total"]))
+        pct = (state["context_used"] * 100) // state["context_total"]
+        parts.append(render_bar(pct, theme))
+
+    # Module: tokens
+    if "input_tokens" in state and "output_tokens" in state:
+        parts.append(format_tokens(state["input_tokens"], state["output_tokens"], theme))
 
     # Module: cost
     if "cost_usd" in state:
-        parts.append(_format_cost(state["cost_usd"]))
+        c_cfg = theme.get("cost", {})
+        cost_val = state["cost_usd"]
+        cost_text = f"{c_cfg.get('glyph', '')}{_format_cost(cost_val)}"
+        warn_t = c_cfg.get("warn_threshold", 2.0)
+        crit_t = c_cfg.get("critical_threshold", 5.0)
+        if cost_val >= crit_t:
+            parts.append(style(cost_text, c_cfg.get("critical_color", "#bf616a"), True))
+        elif cost_val >= warn_t:
+            parts.append(style(cost_text, c_cfg.get("warn_color", "#ebcb8b")))
+        else:
+            parts.append(style(cost_text, c_cfg.get("color")))
 
     # Module: duration
     if "duration_ms" in state:
-        parts.append(_format_duration(state["duration_ms"]))
+        dur_cfg = theme.get("duration", {})
+        text = f"{dur_cfg.get('glyph', '')}{_format_duration(state['duration_ms'])}"
+        parts.append(style(text, dur_cfg.get("color")))
 
     if not parts:
         return ""
 
-    line = " | ".join(parts)
-    # Final sanitization: ensure single line, no newlines
-    return _sanitize_fragment(line)
+    line = sep.join(parts)
+    return line
 
 
 # --- Entrypoint ---
 
 def main() -> None:
     """Status-line entrypoint. Read, normalize, render, emit."""
+    theme = load_config()
     payload = read_stdin_bounded()
     if payload is None:
         return
     state = normalize(payload)
-    line = render(state)
+    line = render(state, theme)
     if line:
         print(line)
 
