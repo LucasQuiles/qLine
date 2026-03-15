@@ -769,46 +769,40 @@ print(line)
 assert_single_line "L-01: no newline when line2 empty" "$OUT"
 assert_contains "L-01b: model present" "$OUT" "Opus"
 
-# L-02: Single-line mode (lines=1) works
+# L-02: force_single_line merges all lines
 OUT=$(run_py "
 from statusline import render, DEFAULT_THEME
-import copy
 theme = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULT_THEME.items()}
 theme['layout'] = dict(DEFAULT_THEME['layout'])
-theme['layout']['lines'] = 1
+theme['layout']['force_single_line'] = True
 state = {'model_name': 'Opus', 'cost_usd': 0.50}
 line = render(state, theme)
 print(line)
 ")
-assert_single_line "L-02: single-line mode" "$OUT"
+assert_single_line "L-02: force single line" "$OUT"
 assert_contains "L-02b: model present" "$OUT" "Opus"
 assert_contains "L-02c: cost present" "$OUT" "0.50"
 
-# L-03: lines=0 clamped to 1
+# L-03: force_single_line=False (default) allows multi-line
 OUT=$(run_py "
 from statusline import render, DEFAULT_THEME
-theme = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULT_THEME.items()}
-theme['layout'] = dict(DEFAULT_THEME['layout'])
-theme['layout']['lines'] = 0
 state = {'model_name': 'Opus'}
-line = render(state, theme)
+line = render(state, DEFAULT_THEME)
 print(line)
 ")
-assert_single_line "L-03: lines=0 clamped to 1" "$OUT"
-assert_contains "L-03b: model present" "$OUT" "Opus"
+assert_contains "L-03: default renders" "$OUT" "Opus"
 
-# L-04: lines=5 clamped to 2
+# L-04: Multiple layout lines (line3 support)
 OUT=$(run_py "
 from statusline import render, DEFAULT_THEME
 theme = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULT_THEME.items()}
-theme['layout'] = dict(DEFAULT_THEME['layout'])
-theme['layout']['lines'] = 5
-state = {'model_name': 'Opus'}
+theme['layout'] = {'line1': ['model'], 'line2': ['cost'], 'line3': ['duration']}
+state = {'model_name': 'Opus', 'cost_usd': 1.0, 'duration_ms': 60000}
 line = render(state, theme)
-# With lines=2 and empty line2, should still be single line
-print(repr(line))
+line_count = line.count(chr(10)) + 1
+print(f'lines={line_count}')
 ")
-assert_not_contains "L-04: lines=5 clamped to 2 (no extra lines)" "$OUT" "\\n"
+assert_contains "L-04: three layout lines" "$OUT" "lines=3"
 
 # L-05: Unknown module name silently ignored
 OUT=$(run_py "

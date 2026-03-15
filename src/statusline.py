@@ -98,7 +98,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "right": "",
     },
     "layout": {
-        "lines": 2,
+        "force_single_line": False,
         "line1": ["model", "dir", "context_bar", "tokens", "cost", "duration"],
         "line2": ["cpu", "memory", "disk"],
     },
@@ -951,35 +951,43 @@ def render_line(state: dict[str, Any], theme: dict[str, Any],
 def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     """Render status output from normalized state using layout config.
 
-    Supports single-line (lines=1) and multi-line (lines=2) layouts.
-    Module order is determined by layout.line1 and layout.line2 arrays.
+    Layout lines (line1, line2, line3, ...) are rendered in order.
+    Empty lines are suppressed. If force_single_line is True, all
+    layout lines are merged into one (compact mode).
     """
     if theme is None:
         theme = DEFAULT_THEME
 
     layout = theme.get("layout", {})
-    num_lines = max(1, min(2, layout.get("lines", 1)))
-    line1_modules = layout.get("line1", DEFAULT_LINE1)
-    line2_modules = layout.get("line2", DEFAULT_LINE2)
+    force_single = layout.get("force_single_line", False)
 
-    # Validate: must be lists, fallback to defaults
-    if not isinstance(line1_modules, list):
-        line1_modules = DEFAULT_LINE1
-    if not isinstance(line2_modules, list):
-        line2_modules = DEFAULT_LINE2
+    # Collect all configured lines (line1, line2, line3, ...)
+    has_any_line_key = any(layout.get(f"line{i}") is not None for i in range(1, 6))
+    layout_lines: list[list[str]] = []
+    if has_any_line_key:
+        for key in ("line1", "line2", "line3", "line4", "line5"):
+            modules = layout.get(key)
+            if isinstance(modules, list) and modules:
+                layout_lines.append(modules)
+            elif modules is not None and not isinstance(modules, list):
+                default = {"line1": DEFAULT_LINE1, "line2": DEFAULT_LINE2}.get(key)
+                if default:
+                    layout_lines.append(default)
+        # If user set line keys but all were empty arrays, respect that (empty output)
+    else:
+        layout_lines = [DEFAULT_LINE1, DEFAULT_LINE2]
 
-    state["_compact"] = (num_lines == 1)
+    state["_compact"] = force_single
 
-    if num_lines == 1:
-        # Merge both lines into one
-        merged = list(line1_modules) + list(line2_modules)
+    if force_single:
+        merged: list[str] = []
+        for modules in layout_lines:
+            merged.extend(modules)
         return render_line(state, theme, merged)
 
     # Multi-line: render each, suppress empty lines
-    l1 = render_line(state, theme, line1_modules)
-    l2 = render_line(state, theme, line2_modules)
-
-    lines = [l for l in (l1, l2) if l]
+    rendered = [render_line(state, theme, modules) for modules in layout_lines]
+    lines = [l for l in rendered if l]
     if not lines:
         return ""
     return "\n".join(lines)
