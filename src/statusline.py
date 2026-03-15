@@ -405,10 +405,16 @@ def _abbreviate_count(n: int) -> str:
 
 
 def _pill(text: str, cfg: dict[str, Any], color: str | None = None,
-          bold: bool = False, theme: dict[str, Any] | None = None) -> str:
+          bold: bool = False, theme: dict[str, Any] | None = None,
+          dim: bool = False) -> str:
     """Wrap text as a pill with optional background and rounded caps."""
     c = color or cfg.get("color")
     bg_hex = cfg.get("bg")
+    if dim and not NO_COLOR:
+        if bg_hex:
+            inner = style(f" {text} ", c, bold, bg_hex)
+            return f"\033[2m{inner}\033[0m"
+        return style_dim(style(text, c, bold))
     if bg_hex and not NO_COLOR:
         inner = style(f" {text} ", c, bold, bg_hex)
         pill_cfg = (theme or {}).get("pill", {})
@@ -786,11 +792,12 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
     else:
         glyph = cfg.get("glyph", "")
         text = f"{glyph}{pct}%"
+    is_stale = state.get(f"{theme_key}_stale", False)
     if pct >= crit_t:
-        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme, dim=is_stale)
     if pct >= warn_t:
-        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
-    return _pill(text, cfg, theme=theme)
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme, dim=is_stale)
+    return _pill(text, cfg, theme=theme, dim=is_stale)
 
 
 # --- Subprocess-based module renderers ---
@@ -812,7 +819,8 @@ def render_git(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
         text = f"{cfg.get('glyph', '')}{branch}@{sha}{dirty_marker}"
     else:
         text = f"{cfg.get('glyph', '')}{branch}{dirty_marker}"
-    return _pill(text, cfg, theme=theme)
+    is_stale = state.get("git_stale", False)
+    return _pill(text, cfg, theme=theme, dim=is_stale)
 
 
 def render_cpu(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -842,11 +850,12 @@ def render_agents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     text = f"{cfg.get('glyph', '')}{count}"
     warn_t = cfg.get("warn_threshold", 5)
     crit_t = cfg.get("critical_threshold", 8)
+    is_stale = state.get("agents_stale", False)
     if count >= crit_t:
-        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme, dim=is_stale)
     elif count >= warn_t:
-        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
-    return _pill(text, cfg, theme=theme)
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme, dim=is_stale)
+    return _pill(text, cfg, theme=theme, dim=is_stale)
 
 
 def render_tmux(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -860,7 +869,8 @@ def render_tmux(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
         text = f"{cfg.get('glyph', 'tmux ')}{sessions}s/{panes}p"
     else:
         text = f"{cfg.get('glyph', 'tmux ')}{sessions}s"
-    return _pill(text, cfg, theme=theme)
+    is_stale = state.get("tmux_stale", False)
+    return _pill(text, cfg, theme=theme, dim=is_stale)
 
 
 MODULE_RENDERERS: dict[str, Any] = {

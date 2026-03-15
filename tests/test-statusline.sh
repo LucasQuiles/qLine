@@ -1250,6 +1250,75 @@ echo ""
 fi
 
 # ======================================================================
+# SECTION: stale — stale data dimming tests
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "stale" ]; then
+echo "--- Stale Data Tests ---"
+
+# STALE-01: Stale CPU rendered dimmed (need color output)
+OUT=$(python3 -c "
+import sys; sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_cpu, DEFAULT_THEME
+state = {'cpu_percent': 42, 'cpu_stale': True}
+result = render_cpu(state, DEFAULT_THEME)
+print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
+")
+assert_equals "STALE-01: stale has dim" "$OUT" "HAS_DIM"
+
+# STALE-02: Non-stale CPU not dimmed
+OUT=$(python3 -c "
+import sys; sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_cpu, DEFAULT_THEME
+state = {'cpu_percent': 42, 'cpu_stale': False}
+result = render_cpu(state, DEFAULT_THEME)
+print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
+")
+assert_equals "STALE-02: non-stale no dim" "$OUT" "NO_DIM"
+
+# STALE-03: Stale git rendered dimmed
+OUT=$(python3 -c "
+import sys; sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_git, DEFAULT_THEME
+state = {'git_branch': 'main', 'git_sha': 'abc1234', 'git_stale': True}
+result = render_git(state, DEFAULT_THEME)
+print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
+")
+assert_equals "STALE-03: stale git has dim" "$OUT" "HAS_DIM"
+
+# STALE-04: Stale tmux rendered dimmed
+OUT=$(python3 -c "
+import sys; sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_tmux, DEFAULT_THEME
+state = {'tmux_sessions': 2, 'tmux_panes': 8, 'tmux_stale': True}
+result = render_tmux(state, DEFAULT_THEME)
+print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
+")
+assert_equals "STALE-04: stale tmux has dim" "$OUT" "HAS_DIM"
+
+# STALE-05: Stale agents rendered dimmed
+OUT=$(python3 -c "
+import sys; sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_agents, DEFAULT_THEME
+state = {'agent_count': 3, 'agents_stale': True}
+result = render_agents(state, DEFAULT_THEME)
+print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
+")
+assert_equals "STALE-05: stale agents has dim" "$OUT" "HAS_DIM"
+
+# STALE-06: Stale memory rendered dimmed
+OUT=$(python3 -c "
+import sys; sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_memory, DEFAULT_THEME
+state = {'memory_percent': 65, 'memory_stale': True}
+result = render_memory(state, DEFAULT_THEME)
+print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
+")
+assert_equals "STALE-06: stale memory has dim" "$OUT" "HAS_DIM"
+
+echo ""
+fi
+
+# ======================================================================
 # Summary
 # ======================================================================
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
