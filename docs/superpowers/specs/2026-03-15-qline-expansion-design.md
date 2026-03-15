@@ -1,0 +1,668 @@
+# qLine Expansion Design Spec
+
+## Summary
+
+Expand qLine from 6 modules on 1 line to 12 modules across 2 configurable lines, adding git info, system metrics, and process monitoring. Expands the contract to allow subprocesses and file reads with strict per-collector timeouts.
+
+## Decisions Made
+
+- **Contract expansion:** Allow subprocesses/file reads with 50ms hard timeout per collector
+- **Multi-line:** 2-line default, configurable to 1-line mode
+- **Layout:** Fully configurable via TOML `line1`/`line2` arrays
+- **Per-module toggles:** Each module has `enabled` toggle + `show_threshold`
+- **Floor thresholds:** Default 0 for all (show when value > 0%)
+- **Stale data:** Cache file at `/tmp/qline-cache.json` for dimmed stale display on timeout
+- **Platform:** Linux primary (`/proc` filesystem); macOS gracefully degrades (system modules auto-hidden)
+
+## Architecture
+
+### Data Flow
+
+```
+stdin (JSON bytes)
+    ↓ [read_stdin_bounded]
+        - select() deadline (0.2s)
+        - binary read up to 512KB
+    ↓ [normalize]
+        - Extract payload fields → state dict
+    ↓ [collect_system_data]  ← NEW
+        - git: branch, SHA, dirty status
+        - cpu: load from /proc/loadavg
+        - memory: usage from /proc/meminfo
+        - disk: usage from os.statvfs("/")
+        - agents: payload tasks + pgrep codex
+        - tmux: session/pane counts
+    ↓ [load_config]
+        - TOML merge at ~/.config/qline.toml
+    ↓ [render]
+        - Module registry maps names → render functions
+        - Layout arrays drive line composition
+        - 1 or 2 lines joined by \n
+    ↓
+stdout (1-2 lines ANSI or empty)
+    ↓
+exit 0
+```
+
+### Module Registry
+
+Replaces hardcoded if/else render chain. Each renderer returns a styled string or `None` (display condition not met).
+
+```python
+MODULE_RENDERERS = {
+    "model": render_model,
+    "dir": render_dir,
+    "context_bar": render_context_bar,
+    "tokens": render_tokens,
+    "cost": render_cost,
+    "duration": render_duration,
+    "git": render_git,
+    "cpu": render_cpu,
+    "memory": render_memory,
+    "disk": render_disk,
+    "agents": render_agents,
+    "tmux": render_tmux,
+}
+```
+
+`render_line()` iterates a layout array, calls each renderer, collects non-None results, joins with separator.
+
+### Collector Framework
+
+```python
+def collect_system_data(state: dict, theme: dict) -> None:
+    """Run all enabled collectors, mutating state in-place."""
+    collectors = [
+        ("git", collect_git),
+        ("cpu", collect_cpu),
+        ("memory", collect_memory),
+        ("disk", collect_disk),
+        ("agents", collect_agents),
+        ("tmux", collect_tmux),
+    ]
+    for name, fn in collectors:
+        if not theme.get(name, {}).get("enabled", True):
+            continue
+        try:
+            fn(state)
+        except Exception:
+            pass
+```
+
+## Default Layout
+
+```
+Line 1: model │ dir │ context_bar │ tokens │ cost │ duration
+Line 2: git │ cpu │ memory │ disk │ agents │ tmux
+```
+
+Line 1 preserves current behavior exactly. Line 2 adds new modules. If all line 2 modules are hidden/disabled, output stays single-line.
+
+## Module Specifications
+
+### Existing Modules (unchanged)
+
+| Module | State key(s) | Display | Show when |
+|--------|-------------|---------|-----------|
+| model | `model_name` | `󰚩 Opus 4.6 (1M)` | present and non-empty |
+| dir | `dir_basename` | `󰝰 qLine` (appends `⊛` when `is_worktree=True`) | present and non-empty |
+| context_bar | `context_used`, `context_total` | `󰋑 █████░░░░░ 50%` | both present, total > 0 |
+| tokens | `input_tokens`, `output_tokens` | `↑12.3k ↓4.1k` | both present, at least one > 0 |
+| cost | `cost_usd` | `$ 1.23` | present |
+| duration | `duration_ms` | `󰥔 1m30s` | present and > 0 |
+
+### New Modules
+
+#### Git (`git`)
+
+- **Source:** `git status --porcelain --branch` (single subprocess, gives branch, tracking, dirty state) + `git rev-parse --short HEAD` (SHA)
+- **Display:** `󰊢 main@a3f7b2c*` (dirty asterisk if porcelain output has file changes)
+- **Glyph:** `\U000f04a9` (nf-md-source_branch, Supplementary PUA)
+- **Color:** `#b48ead` (muted purple, distinct from metrics group)
+- **Show when:** inside a git repo (`git rev-parse` succeeds)
+- **Hide when:** not a repo, command fails, command times out
+- **Edge cases:**
+  - Detached HEAD: show `HEAD@a3f7b2c` instead of branch name
+  - Empty repo (no commits): show `init` with no SHA
+  - Branch with slashes (`feature/foo/bar`): display full name, truncate to 20 chars with `…` if longer
+  - `.git` is a file (submodule/worktree gitdir link): `git rev-parse` handles natively
+  - Bare repo: `git status` fails → module omitted
+  - `.git/index.lock` present: command may return error → omitted
+  - `git` binary not installed: `FileNotFoundError` → omitted
+
+#### Worktree (decorator on `dir`)
+
+- **Source:** `is_worktree` from stdin payload (already normalized)
+- **Display:** appends configurable marker after dir basename, e.g. `󰝰 qLine⊛`
+- **Config key:** `dir.worktree_marker` (default `⊛`)
+- **No subprocess needed**
+- **Show when:** `is_worktree` is `True`
+
+#### CPU (`cpu`)
+
+- **Source:** `/proc/loadavg` field 1 (1-minute load average) divided by `os.cpu_count()` × 100 for percentage
+- **Display:** `CPU 23%`
+- **Color:** `#a8d4d0` (shared metrics color)
+- **Thresholds:** warn 60%, critical 85% (configurable)
+- **Show when:** value > 0% (configurable via `show_threshold`, default 0)
+- **Hide when:** `/proc/loadavg` missing (macOS), parse failure, `cpu_count()` returns None, permission denied
+- **Edge cases:**
+  - `/proc/loadavg` empty or malformed → omitted
+  - `cpu_count()` returns `None` → omitted
+  - Load astronomically high (>100% per core) → display capped at 999%, threshold colors still apply
+  - Container with cgroup CPU limits → load avg reflects container, `cpu_count()` may return host cores (acceptable approximation)
+
+#### Memory (`memory`)
+
+- **Source:** `/proc/meminfo` — `MemTotal` minus `MemAvailable` = used bytes, percentage of total
+- **Display:** `MEM 64%`
+- **Color:** `#a8d4d0` (shared metrics color)
+- **Thresholds:** warn 70%, critical 90% (configurable)
+- **Show when:** value > 0% (configurable via `show_threshold`, default 0)
+- **Hide when:** `/proc/meminfo` missing (macOS), parse failure, `MemTotal` is 0, permission denied
+- **Edge cases:**
+  - `MemAvailable` missing (older kernels): fall back to `MemFree + Buffers + Cached`
+  - Values non-numeric → omitted
+  - Container → `MemAvailable` reflects cgroup limit (correct behavior)
+
+#### Disk (`disk`)
+
+- **Source:** `os.statvfs("/")` — `(total - available) / total × 100`
+- **Display:** `DSK 78%`
+- **Color:** `#a8d4d0` (shared metrics color)
+- **Thresholds:** warn 80%, critical 95% (configurable)
+- **Show when:** value > 0% (configurable via `show_threshold`, default 0)
+- **Hide when:** `statvfs` raises `OSError`, total blocks = 0
+- **Edge cases:**
+  - NFS-mounted home (slow stat): `statvfs` may be slow — caught by overall timing, not individually timed but < 50ms in practice
+  - Disconnected mount → `OSError` → omitted
+  - Path permission denied → `OSError` → omitted
+
+#### Agents (`agents`)
+
+- **Source:** stdin payload task data (Claude agents with non-terminal status) + `pgrep -f "codex"` (Codex instances)
+- **Display:** `󰚩 3` (total agent count) — omitted if 0
+- **Glyph:** `\U000f06a9` (nf-md-robot, same as model but used in count context)
+- **Color:** `#b48ead` (muted purple, environment group)
+- **Thresholds:** warn 5, critical 8 (configurable)
+- **Show when:** count > 0
+- **Hide when:** count = 0, or both data sources fail
+- **Edge cases:**
+  - Payload has no task data → Claude count = 0
+  - Task data is wrong type → ignored (sparse-safe)
+  - `pgrep` not installed → `FileNotFoundError` → Codex count = 0, Claude count still works
+  - `pgrep` times out → Codex count = 0
+  - `pgrep` returns empty → Codex count = 0
+  - Zombie processes matching pattern → counted (acceptable, transient)
+
+#### Tmux (`tmux`)
+
+- **Source:** `tmux list-sessions 2>/dev/null` (session count from line count) + `tmux list-panes -a 2>/dev/null` (pane count from line count)
+- **Display:** `tmux 3s/12p` (3 sessions, 12 panes)
+- **Color:** `#8eacb8` (muted teal, environment group)
+- **Show when:** tmux is running and at least 1 session exists
+- **Hide when:** `tmux` not installed, not running (`no server running` on stderr), command fails/times out
+- **Edge cases:**
+  - Not inside tmux (`$TMUX` unset) but tmux server running → still shows (monitoring, not "am I in tmux")
+  - Session names with special characters → line count is stable regardless
+  - Single session, 1 pane → `tmux 1s/1p`
+  - `tmux` command times out → omitted
+
+## Timing Budget
+
+| Phase | Budget | Expected |
+|-------|--------|----------|
+| stdin read | 200ms (deadline) | ~1ms typical |
+| normalize | — | <1ms |
+| collect_git | 50ms timeout | 5-15ms |
+| collect_cpu | — | <1ms (file read) |
+| collect_memory | — | <1ms (file read) |
+| collect_disk | — | <1ms (statvfs) |
+| collect_agents | 50ms timeout (pgrep) | 5-10ms |
+| collect_tmux | 50ms timeout | 5-10ms |
+| load_config | — | <1ms |
+| render | — | <1ms |
+| **Total worst case** | | **~250ms** (within 300ms) |
+
+All subprocess calls use `subprocess.run(capture_output=True, timeout=0.05, text=True)` with `stderr=subprocess.DEVNULL`. `TimeoutExpired` and all exceptions caught → module omitted.
+
+## Subprocess Rules
+
+- All use direct command lists, never `shell=True`
+- `close_fds=True` (default on POSIX) — no fd leaks
+- `timeout=0.05` (50ms) — sends SIGKILL on expiry, no orphans
+- `stderr=subprocess.DEVNULL` — no noise
+- `FileNotFoundError` (binary missing) → caught, module omitted
+- Non-zero exit code → module omitted
+
+## Multi-line Rendering
+
+```python
+def render(state, theme):
+    layout = theme.get("layout", {})
+    num_lines = layout.get("lines", 2)
+    line1_modules = layout.get("line1", DEFAULT_LINE1)
+    line2_modules = layout.get("line2", DEFAULT_LINE2)
+
+    line1 = render_line(state, theme, line1_modules)
+
+    if num_lines <= 1:
+        line2_parts = render_line(state, theme, line2_modules)
+        if line1 and line2_parts:
+            return line1 + sep + line2_parts
+        return line1 or line2_parts or ""
+
+    line2 = render_line(state, theme, line2_modules)
+    if line1 and line2:
+        return line1 + "\n" + line2
+    return line1 or line2 or ""
+```
+
+**Empty line suppression:** If all modules on a line are hidden/disabled/omitted, that line is not emitted. No blank lines, no trailing newlines.
+
+**Single-line fallback:** `lines = 1` merges both layout arrays into one line with separator joining.
+
+## Intelligent UI/UX
+
+### Progressive Disclosure
+
+System modules only appear when values exceed `show_threshold` (default 0 for all — effectively always visible when collectors succeed). Configurable per module for users who want a cleaner bar during idle.
+
+### Contextual Density
+
+When `lines = 1`, auto-abbreviate system module labels for space:
+- `memory` → `M:64%`
+- `cpu` → `C:23%`
+- `disk` → `D:78%`
+- Git branch truncated to 20 chars with `…`
+
+In two-line mode, full labels used.
+
+### Stale Data
+
+If a collector timed out on this invocation but cache has a recent value (<60s old):
+- Show the cached value **dimmed** (ANSI dim attribute)
+- If cache is missing or stale (>60s), omit the module instead
+
+Cache file: `/tmp/qline-cache.json` — atomic write via `tempfile.NamedTemporaryFile` + `os.rename()`.
+
+Cache write failure (read-only fs, `/tmp` full) → silently skip caching, render without stale data.
+
+### Color Coherence
+
+- System metrics (CPU/MEM/DSK) share base color `#a8d4d0` — read as a group
+- Environment modules (git, agents) share `#b48ead` — distinct from metrics
+- Tmux gets `#8eacb8` — muted, infrastructure feel
+- Warn/critical colors shared across all thresholded modules for consistency
+
+### Graceful Degradation
+
+```
+Two-line → one-line (if line2 empty) → empty (if everything hidden)
+```
+
+Never shows a broken or partial line. If a glyph renders as tofu, the text label (`CPU`, `MEM`, `DSK`, `tmux`) still conveys meaning.
+
+## TOML Configuration
+
+All keys optional. Missing file or any read error = use defaults silently.
+
+```toml
+[layout]
+lines = 2
+line1 = ["model", "dir", "context_bar", "tokens", "cost", "duration"]
+line2 = ["git", "cpu", "memory", "disk", "agents", "tmux"]
+
+[model]
+enabled = true
+glyph = "󰚩 "
+color = "#d8dee9"
+bg = "#3b4252"
+
+[dir]
+enabled = true
+glyph = "󰝰 "
+color = "#9bb8d3"
+bg = "#2e3440"
+worktree_marker = "⊛"
+
+[context_bar]
+enabled = true
+glyph = "󰋑 "
+color = "#b5d4a0"
+bg = "#2e3440"
+width = 10
+warn_threshold = 40.0
+warn_color = "#f0d399"
+critical_threshold = 70.0
+critical_color = "#d06070"
+show_threshold = 0
+
+[tokens]
+enabled = true
+color = "#a8d4d0"
+bg = "#2e3440"
+
+[cost]
+enabled = true
+glyph = "$ "
+color = "#e0956a"
+bg = "#2e3440"
+warn_threshold = 2.0
+warn_color = "#f0d399"
+critical_threshold = 5.0
+critical_color = "#d06070"
+
+[duration]
+enabled = true
+glyph = "󰥔 "
+color = "#8eacb8"
+bg = "#2e3440"
+
+[git]
+enabled = true
+glyph = "󰊢 "
+color = "#b48ead"
+bg = "#2e3440"
+dirty_marker = "*"
+
+[cpu]
+enabled = true
+glyph = "CPU "
+color = "#a8d4d0"
+bg = "#2e3440"
+warn_threshold = 60.0
+critical_threshold = 85.0
+warn_color = "#f0d399"
+critical_color = "#d06070"
+show_threshold = 0
+
+[memory]
+enabled = true
+glyph = "MEM "
+color = "#a8d4d0"
+bg = "#2e3440"
+warn_threshold = 70.0
+critical_threshold = 90.0
+warn_color = "#f0d399"
+critical_color = "#d06070"
+show_threshold = 0
+
+[disk]
+enabled = true
+glyph = "DSK "
+color = "#a8d4d0"
+bg = "#2e3440"
+warn_threshold = 80.0
+critical_threshold = 95.0
+warn_color = "#f0d399"
+critical_color = "#d06070"
+show_threshold = 0
+
+[agents]
+enabled = true
+glyph = "󰚩 "
+color = "#b48ead"
+bg = "#2e3440"
+warn_threshold = 5
+critical_threshold = 8
+warn_color = "#f0d399"
+critical_color = "#d06070"
+
+[tmux]
+enabled = true
+glyph = "tmux "
+color = "#8eacb8"
+bg = "#2e3440"
+
+[separator]
+char = "│"
+dim = true
+
+[pill]
+left = ""
+right = ""
+```
+
+### Config Edge Cases
+
+| Scenario | Behavior |
+|----------|----------|
+| `enabled = false` on every module | Empty output |
+| `lines` set to 0 or negative | Treat as 1 |
+| `lines` set to 3+ | Treat as 2 |
+| `line1`/`line2` not arrays | Use defaults |
+| Unknown module name in layout array | Silently ignored |
+| Duplicate module in layout array | Rendered twice (no crash) |
+| Empty layout array `line1 = []` | That line produces nothing |
+| Module on line2 that's normally on line1 | Renders on line2 correctly |
+| Threshold set to negative | Treat as 0 |
+| Threshold warn > critical | Both trigger at their values independently |
+| Missing `layout` section entirely | Use defaults |
+
+## Display Conditions
+
+| Module | Show when | Hide when |
+|--------|-----------|-----------|
+| model | `model_name` present and non-empty | missing/empty |
+| dir | `dir_basename` present and non-empty | missing/empty |
+| context_bar | `context_used` and `context_total` both present, total > 0 | either missing or total = 0 |
+| tokens | both `input_tokens` and `output_tokens` present, at least one > 0 | both 0 or either missing |
+| cost | `cost_usd` present | missing |
+| duration | `duration_ms` present and > 0 | missing or 0 |
+| git | inside a git repo (rev-parse succeeds) | not a repo, command fails/times out |
+| worktree | `is_worktree` is `True` in payload | `False`, missing, not in payload |
+| cpu | value > `show_threshold` (default 0) | below threshold, `/proc` missing, parse failure |
+| memory | value > `show_threshold` (default 0) | below threshold, `/proc` missing, parse failure |
+| disk | value > `show_threshold` (default 0) | below threshold, `statvfs` fails |
+| agents | count > 0 | count = 0, both sources fail |
+| tmux | at least 1 session running | not installed, no sessions, fails/times out |
+
+## Resilience
+
+| Scenario | Behavior |
+|----------|----------|
+| Single collector hangs past 50ms | Killed via `timeout=`, other collectors still run |
+| All collectors fail simultaneously | Line 1 renders normally from payload data, line 2 silently omitted |
+| `/proc` mounted but stale (container/VM) | Values validated for sane ranges (0-100%), out-of-range → omitted |
+| `git` repo locked (`.git/index.lock`) | Command may error → omitted |
+| Subprocess spawns child that outlives timeout | `subprocess.run` with `timeout=` sends SIGKILL |
+| Collector output has newlines/control chars | Sanitized via `_sanitize_fragment()` |
+| Payload shape changes between Claude versions | Sparse-safe: unknown fields ignored, missing → omitted |
+| TOML config changes mid-session | Re-read every invocation — picks up changes live |
+
+## Durability
+
+| Concern | Approach |
+|---------|----------|
+| Claude updates payload schema | Normalizer is additive — new fields don't break old, old fields fallback |
+| Nerd Font glyphs break in future | All glyphs configurable via TOML — swap to ASCII without code changes |
+| Linux-only `/proc` paths | Guard with try/except — macOS users get system modules auto-hidden |
+| Python 3.11+ required (`tomllib`) | Document in install script |
+| tmux version differences | Parse output defensively — line count, not column parsing |
+| Git version differences | Porcelain/plumbing commands stable across versions |
+
+## Performance Guarantees
+
+| Condition | Behavior |
+|-----------|----------|
+| Total render > 300ms | Claude Code kills process — exit 0 implicit |
+| Invoked 3x/second | Stateless — no accumulation, no leaks |
+| 100+ tmux sessions / 50+ agents | Count-based output — render time constant |
+| Branch name 100+ chars | Truncate to 20 chars with `…` |
+| Huge payload (512KB) | Already capped by `MAX_STDIN_BYTES` |
+
+## Filesystem Edge Cases
+
+| Condition | Behavior |
+|-----------|----------|
+| Read-only filesystem | Cache write fails → skip caching, no error |
+| `/tmp` full | Cache write fails → skip caching |
+| `/proc` missing (macOS, container) | CPU/MEM omitted |
+| NFS-mounted home (slow stat) | `statvfs` on `/` avoids home path |
+| Symlinked/file `.git` | `git rev-parse` handles natively |
+| cwd deleted while running | `statvfs("/")` uses root. Git may fail → omitted |
+
+## Process & Environment Edge Cases
+
+| Condition | Behavior |
+|-----------|----------|
+| No PATH set | `FileNotFoundError` → caught, module omitted |
+| Binaries not installed | `FileNotFoundError` → caught, module omitted |
+| Inside Docker container | `/proc` reflects cgroup limits (correct) |
+| Inside WSL | All collectors work the same |
+| Multiple Claude sessions | Stateless — no shared state conflicts |
+| Cache race (concurrent write/read) | Atomic write via tempfile + `os.rename()` |
+| SIGPIPE | `BrokenPipeError` caught by top-level try/except, exit 0 |
+
+## Data Integrity
+
+| Condition | Behavior |
+|-----------|----------|
+| Payload fields change type | Sparse-safe normalizer validates types every time |
+| Git SHA changes between invocations | Fresh collection each time, no git state cached |
+| Clock skew / NTP jump | Cache staleness worst case: treated as stale → fresh collection |
+| Non-UTF-8 locale | Subprocess decode with `errors="replace"` |
+| Cache file corrupted | `json.loads` fails → treated as empty |
+| Cache from older version | Sparse-safe — missing fields → module omitted |
+
+## Concurrency Safety
+
+| Condition | Behavior |
+|-----------|----------|
+| Two sessions invoke simultaneously | Independent processes, own stdin — no conflict |
+| Session A writes cache, B reads | Atomic rename prevents partial reads |
+| Collector subprocess fd leaks | `close_fds=True` (POSIX default) |
+
+## Testing Strategy
+
+### Existing Tests (preserved)
+
+All 121 existing tests remain unchanged. Refactor from monolithic `render()` to `render_line()` + module registry validated by existing assertions.
+
+### New Test Sections
+
+#### Collector Tests (~25 tests)
+
+**Git:**
+- Happy: repo with branch + SHA + clean
+- Happy: repo with dirty files → asterisk
+- Edge: detached HEAD → `HEAD@abc1234`
+- Edge: empty repo (no commits) → `init`
+- Edge: branch with slashes → truncated with `…`
+- Edge: not a git repo → omitted
+- Edge: `git` not installed → omitted
+- Edge: command times out → omitted
+- Edge: bare repo → omitted
+
+**CPU:**
+- Happy: valid `/proc/loadavg` → percentage
+- Edge: file missing → omitted
+- Edge: file empty → omitted
+- Edge: `cpu_count()` returns None → omitted
+- Edge: extremely high load → capped display, threshold colors apply
+
+**Memory:**
+- Happy: valid `/proc/meminfo` → percentage
+- Edge: file missing → omitted
+- Edge: `MemAvailable` missing → fallback to `MemFree+Buffers+Cached`
+- Edge: `MemTotal` is 0 → omitted
+- Edge: malformed values → omitted
+
+**Disk:**
+- Happy: `statvfs("/")` → percentage
+- Edge: `OSError` → omitted
+- Edge: total blocks = 0 → omitted
+
+**Agents:**
+- Happy: payload with 3 running tasks + 2 codex → `5`
+- Edge: no task data in payload → Claude count = 0
+- Edge: `pgrep` not installed → Codex count = 0, Claude count still works
+- Edge: `pgrep` times out → Codex count = 0
+- Edge: count = 0 → omitted
+
+**Tmux:**
+- Happy: 3 sessions, 12 panes → `3s/12p`
+- Edge: not installed → omitted
+- Edge: server not running → omitted
+- Edge: command times out → omitted
+- Edge: single session, 1 pane → `1s/1p`
+
+#### Layout Tests (~12 tests)
+
+- Single-line mode: all modules on one line
+- Two-line mode: correct line assignment
+- Empty line2 suppression → single line output
+- Empty line1 suppression → only line2
+- Both lines empty → empty output
+- Unknown module name → silently ignored
+- Duplicate module → rendered twice
+- Empty layout array → that line empty
+- Module moved between lines → renders correctly
+- `lines = 0` → treated as 1
+- `lines = 5` → treated as 2
+- `line1`/`line2` not arrays → use defaults
+
+#### Toggle Tests (~8 tests)
+
+- `enabled = false` hides module
+- `enabled = false` on all modules → empty output
+- `show_threshold` hides module below value
+- `show_threshold = 0` shows when value > 0
+- Disabled module not collected (no subprocess spawned)
+- Module removed from layout arrays → hidden
+- Module in layout but `enabled = false` → hidden
+- Default config (no TOML file) → all enabled
+
+#### Failure Mode Tests (~15 tests)
+
+- All subprocesses time out simultaneously → line 1 renders, line 2 omitted
+- Non-zero exit code → module omitted
+- Garbage stdout from subprocess → module omitted
+- Binary exists but permission denied → module omitted
+- PATH empty/broken → omitted
+- `/proc` permission denied → omitted
+- Cache write fails (read-only) → renders without cache
+- Cache file corrupted → treated as empty
+- Cache from different schema version → missing fields omitted
+- Concurrent cache write/read → no partial reads (atomic rename)
+- SIGPIPE → exit 0
+- Malformed TOML with new sections → defaults for new sections
+- Extremely long subprocess output → no memory issues (capture_output bounded)
+
+#### Stale Data Tests (~5 tests)
+
+- Collector succeeds → value cached
+- Collector times out, cache fresh (<60s) → dimmed value shown
+- Collector times out, cache stale (>60s) → omitted
+- Cache file missing → omitted on timeout
+- Cache write atomic (no partial JSON)
+
+#### Contextual Density Tests (~5 tests)
+
+- `lines = 1`: CPU shows as `C:23%`
+- `lines = 1`: MEM shows as `M:64%`
+- `lines = 1`: DSK shows as `D:78%`
+- `lines = 1`: branch truncated
+- `lines = 2`: full labels used
+
+**Total new tests: ~70**
+**Total tests: ~191**
+
+## Constraints Preserved
+
+- Single or dual stdout line (or empty output)
+- No stderr on normal execution
+- Exit 0 on all recoverable failures
+- One bounded stdin read
+- Byte-capped input (512KB)
+- 200ms read deadline
+- NO_COLOR convention respected
+
+## Deferred
+
+- Usage limits (API + keyring + cache)
+- Hook health badge
+- `--explain` debug surface
+- Severity-driven module reordering
+- `glyph_set` config for BMP PUA vs MDI vs ASCII presets
