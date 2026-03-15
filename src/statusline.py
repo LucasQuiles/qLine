@@ -378,21 +378,37 @@ def _format_cost(cost_usd: float) -> str:
     return f"{cost_usd:.2f}"
 
 
-def _format_duration(duration_ms: int) -> str:
-    """Format duration in human-readable form."""
+def _format_duration(duration_ms: int, fmt: str = "auto") -> str:
+    """Format duration in human-readable form.
+
+    fmt options:
+      "auto"  — smallest meaningful unit(s): 30s, 2m 30s, 1h 15m
+      "hm"    — hours and minutes only: 0h 2m, 1h 15m
+      "m"     — total minutes only: 2m, 75m
+      "hms"   — hours, minutes, seconds: 0h 2m 30s, 1h 15m 0s
+    """
     seconds = duration_ms // 1000
-    if seconds < 60:
-        return f"{seconds}s"
     minutes = seconds // 60
-    remaining_s = seconds % 60
-    if minutes < 60:
-        if remaining_s:
-            return f"{minutes}m{remaining_s}s"
-        return f"{minutes}m"
     hours = minutes // 60
     remaining_m = minutes % 60
+    remaining_s = seconds % 60
+
+    if fmt == "hms":
+        return f"{hours}h {remaining_m}m {remaining_s}s"
+    if fmt == "hm":
+        return f"{hours}h {remaining_m}m"
+    if fmt == "m":
+        return f"{minutes}m"
+
+    # auto
+    if seconds < 60:
+        return f"{seconds}s"
+    if minutes < 60:
+        if remaining_s:
+            return f"{minutes}m {remaining_s}s"
+        return f"{minutes}m"
     if remaining_m:
-        return f"{hours}h{remaining_m}m"
+        return f"{hours}h {remaining_m}m"
     return f"{hours}h"
 
 
@@ -590,7 +606,8 @@ def render_duration(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     if "duration_ms" not in state:
         return None
     dur_cfg = theme.get("duration", {})
-    text = f"{dur_cfg.get('glyph', '')}{_format_duration(state['duration_ms'])}"
+    fmt = dur_cfg.get("format", "auto")
+    text = f"{dur_cfg.get('glyph', '')}{_format_duration(state['duration_ms'], fmt)}"
     return _pill(text, dur_cfg, theme=theme)
 
 

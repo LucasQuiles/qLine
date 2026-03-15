@@ -531,9 +531,9 @@ print(_format_duration(7200000))
 print(_format_duration(5400000))
 ")
 assert_contains "R-10a: seconds" "$OUT" "30s"
-assert_contains "R-10b: minutes" "$OUT" "2m30s"
+assert_contains "R-10b: minutes" "$OUT" "2m 30s"
 assert_contains "R-10c: hours" "$OUT" "2h"
-assert_contains "R-10d: hours+min" "$OUT" "1h30m"
+assert_contains "R-10d: hours+min" "$OUT" "1h 30m"
 
 # R-11: Token abbreviation
 OUT=$(run_py "
