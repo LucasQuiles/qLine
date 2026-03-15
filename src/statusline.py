@@ -37,17 +37,20 @@ NO_COLOR = bool(os.environ.get("NO_COLOR"))
 
 DEFAULT_THEME: dict[str, Any] = {
     "model": {
+        "enabled": True,
         "glyph": "\U000f06a9 ",  # nf-md-robot (Supplementary PUA)
         "color": "#d8dee9",
         "bg": "#3b4252",
         "bold": False,
     },
     "dir": {
+        "enabled": True,
         "glyph": "\U000f0770 ",  # nf-md-folder_open (Supplementary PUA)
         "color": "#9bb8d3",
         "bg": "#2e3440",
     },
     "context_bar": {
+        "enabled": True,
         "glyph": "\U000f02d1 ",  # nf-md-heart (Supplementary PUA)
         "color": "#b5d4a0",
         "bg": "#2e3440",
@@ -58,10 +61,12 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "tokens": {
+        "enabled": True,
         "color": "#a8d4d0",
         "bg": "#2e3440",
     },
     "cost": {
+        "enabled": True,
         "glyph": "$ ",
         "color": "#e0956a",
         "bg": "#2e3440",
@@ -71,6 +76,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "duration": {
+        "enabled": True,
         "glyph": "\U000f0954 ",  # nf-md-clock_outline (Supplementary PUA)
         "color": "#8eacb8",
         "bg": "#2e3440",
@@ -82,6 +88,69 @@ DEFAULT_THEME: dict[str, Any] = {
     "pill": {
         "left": "",
         "right": "",
+    },
+    "layout": {
+        "lines": 2,
+        "line1": ["model", "dir", "context_bar", "tokens", "cost", "duration"],
+        "line2": ["git", "cpu", "memory", "disk", "agents", "tmux"],
+    },
+    "git": {
+        "enabled": True,
+        "glyph": "\U000f04a9 ",
+        "color": "#b48ead",
+        "bg": "#2e3440",
+        "dirty_marker": "*",
+    },
+    "cpu": {
+        "enabled": True,
+        "glyph": "CPU ",
+        "color": "#a8d4d0",
+        "bg": "#2e3440",
+        "warn_threshold": 60.0,
+        "critical_threshold": 85.0,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+        "show_threshold": 0,
+    },
+    "memory": {
+        "enabled": True,
+        "glyph": "MEM ",
+        "color": "#a8d4d0",
+        "bg": "#2e3440",
+        "warn_threshold": 70.0,
+        "critical_threshold": 90.0,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+        "show_threshold": 0,
+    },
+    "disk": {
+        "enabled": True,
+        "glyph": "DSK ",
+        "color": "#a8d4d0",
+        "bg": "#2e3440",
+        "path": "/",
+        "warn_threshold": 80.0,
+        "critical_threshold": 95.0,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+        "show_threshold": 0,
+    },
+    "agents": {
+        "enabled": True,
+        "glyph": "\U000f04cc ",
+        "color": "#b48ead",
+        "bg": "#2e3440",
+        "warn_threshold": 5,
+        "critical_threshold": 8,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+        "show_threshold": 0,
+    },
+    "tmux": {
+        "enabled": True,
+        "glyph": "tmux ",
+        "color": "#8eacb8",
+        "bg": "#2e3440",
     },
 }
 
