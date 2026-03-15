@@ -399,9 +399,9 @@ def _format_duration(duration_ms: int, fmt: str = "auto") -> str:
     remaining_s = seconds % 60
 
     if fmt == "hms":
-        return f"{hours}h {remaining_m}m {remaining_s}s"
+        return f"{hours}h{remaining_m}m{remaining_s}s"
     if fmt == "hm":
-        return f"{hours}h {remaining_m}m"
+        return f"{hours}h{remaining_m}m"
     if fmt == "m":
         return f"{minutes}m"
 
@@ -410,10 +410,10 @@ def _format_duration(duration_ms: int, fmt: str = "auto") -> str:
         return f"{seconds}s"
     if minutes < 60:
         if remaining_s:
-            return f"{minutes}m {remaining_s}s"
+            return f"{minutes}m{remaining_s}s"
         return f"{minutes}m"
     if remaining_m:
-        return f"{hours}h {remaining_m}m"
+        return f"{hours}h{remaining_m}m"
     return f"{hours}h"
 
 
