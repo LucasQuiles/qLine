@@ -79,6 +79,10 @@ DEFAULT_THEME: dict[str, Any] = {
         "char": "\u2502",      # │
         "dim": True,
     },
+    "pill": {
+        "left": "\u25d6",      # ◖ Left Half Black Circle
+        "right": "\u25d7",     # ◗ Right Half Black Circle
+    },
 }
 
 
@@ -307,12 +311,18 @@ def _abbreviate_count(n: int) -> str:
 
 
 def _pill(text: str, cfg: dict[str, Any], color: str | None = None,
-          bold: bool = False) -> str:
-    """Wrap text as a pill with optional background. Adds padding if bg."""
+          bold: bool = False, theme: dict[str, Any] | None = None) -> str:
+    """Wrap text as a pill with optional background and rounded caps."""
     c = color or cfg.get("color")
-    bg = cfg.get("bg")
-    if bg and not NO_COLOR:
-        return style(f" {text} ", c, bold, bg)
+    bg_hex = cfg.get("bg")
+    if bg_hex and not NO_COLOR:
+        inner = style(f" {text} ", c, bold, bg_hex)
+        pill_cfg = (theme or {}).get("pill", {})
+        left = pill_cfg.get("left", "")
+        right = pill_cfg.get("right", "")
+        if left and right:
+            return style(left, bg_hex) + inner + style(right, bg_hex)
+        return inner
     return style(text, c, bold)
 
 
@@ -320,7 +330,7 @@ def format_tokens(input_tokens: int, output_tokens: int, theme: dict[str, Any]) 
     """Format token counts as ↑12.3k ↓4.1k."""
     text = f"\u2191{_abbreviate_count(input_tokens)} \u2193{_abbreviate_count(output_tokens)}"
     tok_cfg = theme.get("tokens", {})
-    return _pill(text, tok_cfg)
+    return _pill(text, tok_cfg, theme=theme)
 
 
 def render_bar(pct: int, theme: dict[str, Any]) -> str:
@@ -347,7 +357,7 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
         bold = False
 
     glyph = cfg.get("glyph", "")
-    return _pill(f"{glyph}{bar}{suffix}", cfg, color, bold)
+    return _pill(f"{glyph}{bar}{suffix}", cfg, color, bold, theme)
 
 
 def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
@@ -370,14 +380,14 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     if model_name:
         m_cfg = theme.get("model", {})
         text = f"{m_cfg.get('glyph', '')}{_sanitize_fragment(model_name)}"
-        parts.append(_pill(text, m_cfg, bold=m_cfg.get("bold", False)))
+        parts.append(_pill(text, m_cfg, bold=m_cfg.get("bold", False), theme=theme))
 
     # Module: dir
     dir_basename = state.get("dir_basename")
     if dir_basename:
         d_cfg = theme.get("dir", {})
         text = f"{d_cfg.get('glyph', '')}{_sanitize_fragment(dir_basename)}"
-        parts.append(_pill(text, d_cfg))
+        parts.append(_pill(text, d_cfg, theme=theme))
 
     # Module: context_bar
     if "context_used" in state and "context_total" in state:
@@ -396,17 +406,17 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         warn_t = c_cfg.get("warn_threshold", 2.0)
         crit_t = c_cfg.get("critical_threshold", 5.0)
         if cost_val >= crit_t:
-            parts.append(_pill(cost_text, c_cfg, c_cfg.get("critical_color", "#bf616a"), True))
+            parts.append(_pill(cost_text, c_cfg, c_cfg.get("critical_color", "#bf616a"), True, theme))
         elif cost_val >= warn_t:
-            parts.append(_pill(cost_text, c_cfg, c_cfg.get("warn_color", "#ebcb8b")))
+            parts.append(_pill(cost_text, c_cfg, c_cfg.get("warn_color", "#ebcb8b"), theme=theme))
         else:
-            parts.append(_pill(cost_text, c_cfg))
+            parts.append(_pill(cost_text, c_cfg, theme=theme))
 
     # Module: duration
     if "duration_ms" in state:
         dur_cfg = theme.get("duration", {})
         text = f"{dur_cfg.get('glyph', '')}{_format_duration(state['duration_ms'])}"
-        parts.append(_pill(text, dur_cfg))
+        parts.append(_pill(text, dur_cfg, theme=theme))
 
     if not parts:
         return ""
