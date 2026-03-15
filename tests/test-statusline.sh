@@ -745,6 +745,11 @@ assert_exit_zero "C-11a: exit 0" "$LAST_EXIT"
 assert_single_line "C-11b: single line" "$LAST_STDOUT"
 assert_contains "C-11c: model" "$LAST_STDOUT" "Opus"
 
+# C-12: Full real payload produces output with system modules (color mode)
+run_statusline_color "$(cat "$FIXTURES/valid-real-payload.json")"
+assert_exit_zero "C-12a: exit 0" "$LAST_EXIT"
+assert_empty "C-12b: no stderr" "$LAST_STDERR"
+
 echo ""
 fi
 
