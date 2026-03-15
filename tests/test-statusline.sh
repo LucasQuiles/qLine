@@ -300,7 +300,7 @@ print(state.get('output_style', ''))
 print(state.get('cost_usd', ''))
 print(state.get('duration_ms', ''))
 ")
-assert_contains "N-01a: model_name extracted" "$OUT" "Opus"
+assert_contains "N-01a: model_name extracted" "$OUT" "Op"
 assert_contains "N-01b: dir_basename extracted" "$OUT" "qLine"
 assert_contains "N-01c: version extracted" "$OUT" "2.1.76"
 assert_contains "N-01d: output_style extracted" "$OUT" "default"
@@ -317,7 +317,7 @@ print(state.get('model_name', 'MISSING'))
 print('DIR:' + state.get('dir_basename', 'NONE'))
 print('COST:' + str(state.get('cost_usd', 'NONE')))
 ")
-assert_contains "N-02a: model_name from minimal" "$OUT" "Opus"
+assert_contains "N-02a: model_name from minimal" "$OUT" "Op"
 assert_contains "N-02b: no dir in minimal" "$OUT" "DIR:NONE"
 assert_contains "N-02c: no cost in minimal" "$OUT" "COST:NONE"
 
@@ -371,7 +371,7 @@ print('MODEL:' + state.get('model_name', 'PRESENT'))
 assert_contains "N-06a: wrong-type cost ignored" "$OUT" "COST:ABSENT"
 assert_contains "N-06b: wrong-type context ignored" "$OUT" "CTX:ABSENT"
 assert_contains "N-06c: wrong-type added_dirs ignored" "$OUT" "ADDED:ABSENT"
-assert_contains "N-06d: model still extracted" "$OUT" "MODEL:Opus"
+assert_contains "N-06d: model still extracted" "$OUT" "MODEL:Op"
 
 # N-07: Empty dict
 OUT=$(run_py "
@@ -456,7 +456,7 @@ assert_contains "R-02a: model with glyph" "$OUT" $'\U000f06a9 Opus'
 assert_contains "R-02b: dir with glyph" "$OUT" $'\U000f0770 qLine'
 assert_contains "R-02c: bar present" "$OUT" "50%"
 assert_contains "R-02d: tokens present" "$OUT" "12.3k"
-assert_contains "R-02e: cost with glyph" "$OUT" '$ 1.23'
+assert_contains "R-02e: cost with glyph" "$OUT" '$1.23'
 assert_contains "R-02f: duration with glyph" "$OUT" $'\U000f0954 45s'
 assert_contains "R-02g: separator" "$OUT" "│"
 
@@ -683,7 +683,7 @@ run_statusline "$(cat "$FIXTURES/valid-full.json")"
 assert_exit_zero "C-01a: exit 0" "$LAST_EXIT"
 assert_empty "C-01b: no stderr" "$LAST_STDERR"
 assert_single_line "C-01c: single line" "$LAST_STDOUT"
-assert_contains "C-01d: model" "$LAST_STDOUT" "Opus"
+assert_contains "C-01d: model" "$LAST_STDOUT" "Op"
 assert_contains "C-01e: dir" "$LAST_STDOUT" "qLine"
 assert_contains "C-01f: cost" "$LAST_STDOUT" '1.23'
 assert_contains "C-01g: duration" "$LAST_STDOUT" "45s"
@@ -691,7 +691,7 @@ assert_contains "C-01g: duration" "$LAST_STDOUT" "45s"
 # C-02: Minimal fixture
 run_statusline "$(cat "$FIXTURES/valid-minimal.json")"
 assert_exit_zero "C-02a: exit 0" "$LAST_EXIT"
-assert_contains "C-02b: model" "$LAST_STDOUT" "Opus"
+assert_contains "C-02b: model" "$LAST_STDOUT" "Op"
 
 # C-03: Context window fixture (warn at new 40% threshold — 75% is warn)
 run_statusline "$(cat "$FIXTURES/valid-with-context-window.json")"
@@ -712,7 +712,7 @@ assert_contains "C-05b: cwd fallback" "$LAST_STDOUT" "myapp"
 # C-06: Wrong-type optionals
 run_statusline "$(cat "$FIXTURES/wrong-type-optionals.json")"
 assert_exit_zero "C-06a: exit 0" "$LAST_EXIT"
-assert_contains "C-06b: model rendered" "$LAST_STDOUT" "Opus"
+assert_contains "C-06b: model rendered" "$LAST_STDOUT" "Op"
 
 # C-07: Empty JSON object
 run_statusline "{}"
@@ -743,7 +743,7 @@ assert_contains "C-10e: cost critical" "$LAST_STDOUT" '27.29'
 run_statusline "$(cat "$FIXTURES/valid-optional-fields.json")"
 assert_exit_zero "C-11a: exit 0" "$LAST_EXIT"
 assert_single_line "C-11b: single line" "$LAST_STDOUT"
-assert_contains "C-11c: model" "$LAST_STDOUT" "Opus"
+assert_contains "C-11c: model" "$LAST_STDOUT" "Op"
 
 # C-12: Full real payload produces output with system modules (color mode)
 run_statusline_color "$(cat "$FIXTURES/valid-real-payload.json")"

@@ -75,7 +75,7 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     "cost": {
         "enabled": True,
-        "glyph": "$ ",
+        "glyph": "$",
         "color": "#e0956a",
         "bg": "#2e3440",
         "warn_threshold": 2.0,
@@ -280,7 +280,12 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(model, dict):
         name = model.get("display_name")
         if isinstance(name, str) and name:
+            # Shorten: "Opus 4.6 (1M context)" → "Op4.6[1M]"
             name = name.replace(" context)", ")")
+            # Abbreviate model family: Opus→Op, Sonnet→So, Haiku→Ha
+            for full, short in (("Opus", "Op"), ("Sonnet", "So"), ("Haiku", "Ha")):
+                name = name.replace(full, short)
+            name = name.replace(" (", "[").replace(")", "]").replace(" ", "")
             state["model_name"] = name
 
     # Directory — prefer workspace.current_dir, fall back to cwd
@@ -567,15 +572,15 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
     glyph = cfg.get("glyph", "")
 
-    # Token counts before the bar
+    # Token counts before the glyph, no space between ↑ and ↓
     token_prefix = ""
     if "input_tokens" in state and "output_tokens" in state:
         inp = state["input_tokens"]
         out = state["output_tokens"]
         if inp > 0 or out > 0:
-            token_prefix = f"\u2191{_abbreviate_count(inp)} \u2193{_abbreviate_count(out)} "
+            token_prefix = f"\u2191{_abbreviate_count(inp)}\u2193{_abbreviate_count(out)} "
 
-    text = f"{glyph}{token_prefix}{bar}{suffix}"
+    text = f"{token_prefix}{glyph}{bar}{suffix}"
 
     return _pill(text, cfg, color, bold, theme)
 
