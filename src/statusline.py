@@ -590,8 +590,33 @@ def collect_disk(state: dict[str, Any]) -> None:
 
 
 def collect_git(state: dict[str, Any]) -> None:
-    """Collect git info. Placeholder."""
-    pass
+    """Collect git branch, SHA, and dirty status."""
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+    sha_out = _run_cmd(["git", "rev-parse", "--short", "HEAD"], timeout=0.025, env=env)
+    if sha_out is None:
+        check = _run_cmd(["git", "rev-parse", "--git-dir"], timeout=0.025, env=env)
+        if check is not None:
+            state["git_branch"] = "init"
+        return
+    sha = sha_out.strip()
+    state["git_sha"] = sha
+    status_out = _run_cmd(["git", "status", "--porcelain", "--branch"], timeout=0.025, env=env)
+    if status_out is None:
+        state["git_branch"] = "HEAD"
+        state["git_dirty"] = False
+        return
+    lines = status_out.splitlines()
+    branch = "HEAD"
+    if lines and lines[0].startswith("## "):
+        branch_part = lines[0][3:].split("...")[0]
+        if "HEAD (no branch)" in branch_part or "No commits yet" in branch_part:
+            branch = "HEAD" if "no branch" in branch_part else "init"
+        else:
+            branch = branch_part
+    if len(branch) > 20:
+        branch = branch[:19] + "\u2026"
+    state["git_branch"] = branch
+    state["git_dirty"] = len(lines) > 1
 
 
 def collect_agents(state: dict[str, Any]) -> None:
@@ -662,8 +687,19 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
 
 
 def render_git(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render git branch/status module. Placeholder."""
-    return None
+    """Render git branch/status module."""
+    if "git_branch" not in state:
+        return None
+    cfg = theme.get("git", {})
+    branch = state["git_branch"]
+    sha = state.get("git_sha", "")
+    dirty = state.get("git_dirty", False)
+    dirty_marker = cfg.get("dirty_marker", "*") if dirty else ""
+    if sha:
+        text = f"{cfg.get('glyph', '')}{branch}@{sha}{dirty_marker}"
+    else:
+        text = f"{cfg.get('glyph', '')}{branch}{dirty_marker}"
+    return _pill(text, cfg, theme=theme)
 
 
 def render_cpu(state: dict[str, Any], theme: dict[str, Any]) -> str | None:

@@ -996,6 +996,51 @@ else:
 ")
 assert_equals "COL-07: Disk from real statvfs -> valid pct" "$OUT" "VALID"
 
+# COL-08: Git in a repo
+GIT_TMP=$(mktemp -d)
+(cd "$GIT_TMP" && git init -q && git commit --allow-empty -m "init" -q)
+OUT=$(run_py "
+import os
+os.chdir('$GIT_TMP')
+import statusline
+state = {}
+statusline.collect_git(state)
+print('branch:' + str(state.get('git_branch', 'ABSENT')))
+print('sha:' + str(state.get('git_sha', 'ABSENT')))
+print('dirty:' + str(state.get('git_dirty', 'ABSENT')))
+")
+rm -rf "$GIT_TMP"
+assert_not_contains "COL-08a: git branch present" "$OUT" "branch:ABSENT"
+assert_not_contains "COL-08b: git sha present" "$OUT" "sha:ABSENT"
+assert_contains "COL-08c: git clean" "$OUT" "dirty:False"
+
+# COL-09: Git dirty detection
+GIT_TMP=$(mktemp -d)
+(cd "$GIT_TMP" && git init -q && git commit --allow-empty -m "init" -q && echo "x" > dirty.txt)
+OUT=$(run_py "
+import os
+os.chdir('$GIT_TMP')
+import statusline
+state = {}
+statusline.collect_git(state)
+print('dirty:' + str(state.get('git_dirty', 'ABSENT')))
+")
+rm -rf "$GIT_TMP"
+assert_contains "COL-09: git dirty" "$OUT" "dirty:True"
+
+# COL-10: Git not a repo
+NOTGIT=$(mktemp -d)
+OUT=$(run_py "
+import os
+os.chdir('$NOTGIT')
+import statusline
+state = {}
+statusline.collect_git(state)
+print('branch:' + str(state.get('git_branch', 'ABSENT')))
+")
+rm -rf "$NOTGIT"
+assert_contains "COL-10: not a repo" "$OUT" "branch:ABSENT"
+
 echo ""
 fi
 
