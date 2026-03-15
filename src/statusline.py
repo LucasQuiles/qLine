@@ -550,14 +550,16 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         bold = False
 
     glyph = cfg.get("glyph", "")
-    text = f"{glyph}{bar}{suffix}"
 
-    # Append token counts if available
+    # Token counts before the bar
+    token_prefix = ""
     if "input_tokens" in state and "output_tokens" in state:
         inp = state["input_tokens"]
         out = state["output_tokens"]
         if inp > 0 or out > 0:
-            text += f" \u2191{_abbreviate_count(inp)} \u2193{_abbreviate_count(out)}"
+            token_prefix = f"\u2191{_abbreviate_count(inp)} \u2193{_abbreviate_count(out)} "
+
+    text = f"{glyph}{token_prefix}{bar}{suffix}"
 
     return _pill(text, cfg, color, bold, theme)
 
