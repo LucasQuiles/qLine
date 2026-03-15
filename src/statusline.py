@@ -100,7 +100,7 @@ DEFAULT_THEME: dict[str, Any] = {
     "layout": {
         "lines": 2,
         "line1": ["model", "dir", "context_bar", "tokens", "cost", "duration"],
-        "line2": ["git", "cpu", "memory", "disk", "agents", "tmux"],
+        "line2": ["cpu", "memory", "disk"],
     },
     "git": {
         "enabled": True,
@@ -111,9 +111,10 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     "cpu": {
         "enabled": True,
-        "glyph": "CPU ",
+        "glyph": "\U000f04cc ",  # nf-md-chip (Supplementary PUA)
         "color": "#a8d4d0",
         "bg": "#2e3440",
+        "width": 5,
         "warn_threshold": 60.0,
         "critical_threshold": 85.0,
         "warn_color": "#f0d399",
@@ -122,9 +123,10 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     "memory": {
         "enabled": True,
-        "glyph": "MEM ",
+        "glyph": "\U000f035b ",  # nf-md-memory (Supplementary PUA)
         "color": "#a8d4d0",
         "bg": "#2e3440",
+        "width": 5,
         "warn_threshold": 70.0,
         "critical_threshold": 90.0,
         "warn_color": "#f0d399",
@@ -133,10 +135,11 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     "disk": {
         "enabled": True,
-        "glyph": "DSK ",
+        "glyph": "\U000f02ca ",  # nf-md-harddisk (Supplementary PUA)
         "color": "#a8d4d0",
         "bg": "#2e3440",
         "path": "/",
+        "width": 5,
         "warn_threshold": 80.0,
         "critical_threshold": 95.0,
         "warn_color": "#f0d399",
@@ -144,7 +147,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "agents": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "\U000f04cc ",
         "color": "#b48ead",
         "bg": "#2e3440",
@@ -155,7 +158,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "tmux": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "tmux ",
         "color": "#8eacb8",
         "bg": "#2e3440",
@@ -475,17 +478,45 @@ def render_model(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render directory basename module."""
+    """Render directory pill with optional git branch, worktree, and commit.
+
+    Components (each independently toggleable):
+      - project: dir basename (always shown if present)
+      - worktree: ⊛ marker when is_worktree=True
+      - branch: git branch name (from git collector)
+      - commit: short SHA (from git collector)
+    All share one pill with the dir theme.
+    """
     dir_basename = state.get("dir_basename")
     if not dir_basename:
         return None
     d_cfg = theme.get("dir", {})
-    name = _sanitize_fragment(dir_basename)
+    git_cfg = theme.get("git", {})
+    parts = [_sanitize_fragment(dir_basename)]
+
+    # Worktree marker
     if state.get("is_worktree"):
         marker = d_cfg.get("worktree_marker", "\u229b")
-        name = f"{name}{marker}"
-    text = f"{d_cfg.get('glyph', '')}{name}"
-    return _pill(text, d_cfg, theme=theme)
+        parts[-1] = parts[-1] + marker
+
+    # Git branch (if git module enabled and data present)
+    if git_cfg.get("enabled", True) and "git_branch" in state:
+        branch = state["git_branch"]
+        max_len = 12 if state.get("_compact") else 20
+        if len(branch) > max_len:
+            branch = branch[:max_len - 1] + "\u2026"
+        dirty = state.get("git_dirty", False)
+        dirty_marker = git_cfg.get("dirty_marker", "*") if dirty else ""
+        sha = state.get("git_sha", "")
+        if sha:
+            parts.append(f"{branch}@{sha}{dirty_marker}")
+        else:
+            parts.append(f"{branch}{dirty_marker}")
+
+    glyph = d_cfg.get("glyph", "")
+    text = f"{glyph}{' '.join(parts)}"
+    is_stale = state.get("git_stale", False)
+    return _pill(text, d_cfg, theme=theme, dim=is_stale)
 
 
 def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -777,7 +808,10 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
 def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
                           state_key: str, theme_key: str,
                           compact_label: str = "") -> str | None:
-    """Shared renderer for system metric modules (cpu, memory, disk)."""
+    """Shared renderer for system metric modules (cpu, memory, disk).
+
+    Renders a mini progress bar with percentage, e.g. '󰓬 ███░░ 64%'
+    """
     if state_key not in state:
         return None
     cfg = theme.get(theme_key, {})
@@ -787,11 +821,18 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
         return None
     warn_t = cfg.get("warn_threshold", 60.0)
     crit_t = cfg.get("critical_threshold", 85.0)
+
+    # Mini progress bar
+    width = cfg.get("width", 5)
+    filled = (pct * width) // 100
+    bar = "\u2588" * filled + "\u2591" * (width - filled)
+
     if state.get("_compact") and compact_label:
-        text = f"{compact_label}{pct}%"
+        text = f"{compact_label}{bar} {pct}%"
     else:
         glyph = cfg.get("glyph", "")
-        text = f"{glyph}{pct}%"
+        text = f"{glyph}{bar} {pct}%"
+
     is_stale = state.get(f"{theme_key}_stale", False)
     if pct >= crit_t:
         return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme, dim=is_stale)
@@ -804,23 +845,8 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
 
 
 def render_git(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render git branch/status module."""
-    if "git_branch" not in state:
-        return None
-    cfg = theme.get("git", {})
-    branch = state["git_branch"]
-    max_len = 12 if state.get("_compact") else 20
-    if len(branch) > max_len:
-        branch = branch[:max_len - 1] + "\u2026"
-    sha = state.get("git_sha", "")
-    dirty = state.get("git_dirty", False)
-    dirty_marker = cfg.get("dirty_marker", "*") if dirty else ""
-    if sha:
-        text = f"{cfg.get('glyph', '')}{branch}@{sha}{dirty_marker}"
-    else:
-        text = f"{cfg.get('glyph', '')}{branch}{dirty_marker}"
-    is_stale = state.get("git_stale", False)
-    return _pill(text, cfg, theme=theme, dim=is_stale)
+    """Git info is now merged into the dir pill. This is a no-op."""
+    return None
 
 
 def render_cpu(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -889,7 +915,7 @@ MODULE_RENDERERS: dict[str, Any] = {
 }
 
 DEFAULT_LINE1 = ["model", "dir", "context_bar", "tokens", "cost", "duration"]
-DEFAULT_LINE2 = ["git", "cpu", "memory", "disk", "agents", "tmux"]
+DEFAULT_LINE2 = ["cpu", "memory", "disk"]
 
 
 def render_line(state: dict[str, Any], theme: dict[str, Any],
