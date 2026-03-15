@@ -913,7 +913,8 @@ state = {'cpu_percent': 23, '_compact': True}
 result = render_cpu(state, DEFAULT_THEME)
 print(result or 'NONE')
 ")
-assert_contains "L-13: CPU compact" "$OUT" "C:23%"
+assert_contains "L-13: CPU compact" "$OUT" "C:"
+assert_contains "L-13b: CPU compact pct" "$OUT" "23%"
 
 # L-14: CPU full in normal mode
 OUT=$(run_py "
@@ -922,7 +923,8 @@ state = {'cpu_percent': 23, '_compact': False}
 result = render_cpu(state, DEFAULT_THEME)
 print(result or 'NONE')
 ")
-assert_contains "L-14: CPU full" "$OUT" "CPU"
+assert_contains "L-14: CPU full has bar" "$OUT" "░"
+assert_contains "L-14b: CPU full pct" "$OUT" "23%"
 
 # L-15: Memory abbreviated in compact mode
 OUT=$(run_py "
@@ -931,7 +933,8 @@ state = {'memory_percent': 55, '_compact': True}
 result = render_memory(state, DEFAULT_THEME)
 print(result or 'NONE')
 ")
-assert_contains "L-15: MEM compact" "$OUT" "M:55%"
+assert_contains "L-15: MEM compact" "$OUT" "M:"
+assert_contains "L-15b: MEM compact pct" "$OUT" "55%"
 
 # L-16: Disk abbreviated in compact mode
 OUT=$(run_py "
@@ -940,7 +943,8 @@ state = {'disk_percent': 80, '_compact': True}
 result = render_disk(state, DEFAULT_THEME)
 print(result or 'NONE')
 ")
-assert_contains "L-16: DSK compact" "$OUT" "D:80%"
+assert_contains "L-16: DSK compact" "$OUT" "D:"
+assert_contains "L-16b: DSK compact pct" "$OUT" "80%"
 
 # L-17: Git branch truncated to 12 chars in compact mode
 OUT=$(run_py "
@@ -1280,12 +1284,12 @@ print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
 ")
 assert_equals "STALE-02: non-stale no dim" "$OUT" "NO_DIM"
 
-# STALE-03: Stale git rendered dimmed
+# STALE-03: Stale git in dir pill rendered dimmed
 OUT=$(python3 -c "
 import sys; sys.path.insert(0, '$REPO_DIR/src')
-from statusline import render_git, DEFAULT_THEME
-state = {'git_branch': 'main', 'git_sha': 'abc1234', 'git_stale': True}
-result = render_git(state, DEFAULT_THEME)
+from statusline import render_dir, DEFAULT_THEME
+state = {'dir_basename': 'proj', 'git_branch': 'main', 'git_sha': 'abc1234', 'git_stale': True}
+result = render_dir(state, DEFAULT_THEME)
 print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
 ")
 assert_equals "STALE-03: stale git has dim" "$OUT" "HAS_DIM"
