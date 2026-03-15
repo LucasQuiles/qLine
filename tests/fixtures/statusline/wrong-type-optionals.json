@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "Status",
+  "model": {
+    "id": "claude-opus-4-6",
+    "display_name": "Opus"
+  },
+  "workspace": {
+    "current_dir": "/home/q/LAB/qLine"
+  },
+  "cost": "not-a-dict",
+  "context_window": "also-not-a-dict",
+  "added_dirs": "should-be-list"
+}
