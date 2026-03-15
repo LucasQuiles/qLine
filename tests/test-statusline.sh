@@ -1041,6 +1041,24 @@ print('branch:' + str(state.get('git_branch', 'ABSENT')))
 rm -rf "$NOTGIT"
 assert_contains "COL-10: not a repo" "$OUT" "branch:ABSENT"
 
+# COL-11: Tmux render format
+OUT=$(run_py "
+from statusline import render_tmux, DEFAULT_THEME
+state = {'tmux_sessions': 3, 'tmux_panes': 12}
+result = render_tmux(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "COL-11: tmux format" "$OUT" "3s/12p"
+
+# COL-12: Tmux zero sessions -> hidden
+OUT=$(run_py "
+from statusline import render_tmux, DEFAULT_THEME
+state = {'tmux_sessions': 0}
+result = render_tmux(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_equals "COL-12: tmux zero hidden" "$OUT" "NONE"
+
 echo ""
 fi
 

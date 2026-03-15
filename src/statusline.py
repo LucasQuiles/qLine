@@ -625,8 +625,20 @@ def collect_agents(state: dict[str, Any]) -> None:
 
 
 def collect_tmux(state: dict[str, Any]) -> None:
-    """Collect tmux session info. Placeholder."""
-    pass
+    """Collect tmux session and pane counts."""
+    sessions_out = _run_cmd(["tmux", "list-sessions"], timeout=0.025)
+    if sessions_out is None:
+        return
+    session_lines = [l for l in sessions_out.splitlines() if l.strip()]
+    if not session_lines:
+        return
+    state["tmux_sessions"] = len(session_lines)
+    panes_out = _run_cmd(["tmux", "list-panes", "-a"], timeout=0.025)
+    if panes_out is not None:
+        pane_lines = [l for l in panes_out.splitlines() if l.strip()]
+        state["tmux_panes"] = len(pane_lines)
+    else:
+        state["tmux_panes"] = 0
 
 
 # --- System Data Orchestrator ---
@@ -723,8 +735,17 @@ def render_agents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_tmux(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render tmux session info module. Placeholder."""
-    return None
+    """Render tmux session info module."""
+    if "tmux_sessions" not in state or state["tmux_sessions"] <= 0:
+        return None
+    cfg = theme.get("tmux", {})
+    sessions = state["tmux_sessions"]
+    panes = state.get("tmux_panes", 0)
+    if panes > 0:
+        text = f"{cfg.get('glyph', 'tmux ')}{sessions}s/{panes}p"
+    else:
+        text = f"{cfg.get('glyph', 'tmux ')}{sessions}s"
+    return _pill(text, cfg, theme=theme)
 
 
 MODULE_RENDERERS: dict[str, Any] = {
