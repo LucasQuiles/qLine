@@ -99,7 +99,7 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     "layout": {
         "force_single_line": False,
-        "line1": ["model", "dir", "context_bar", "tokens", "cost", "duration"],
+        "line1": ["model", "dir", "context_bar", "cost", "duration"],
         "line2": ["cpu", "memory", "disk"],
     },
     "git": {
@@ -520,18 +520,51 @@ def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render context progress bar module."""
+    """Render context health pill with progress bar and optional token counts.
+
+    Combines context bar + tokens into one pill:
+      󰋑 █████░░░░░ 15% ↑281k ↓141k
+    """
     if "context_used" not in state or "context_total" not in state:
         return None
+    cfg = theme.get("context_bar", {})
     pct = (state["context_used"] * 100) // state["context_total"]
-    return render_bar(pct, theme)
+    width = cfg.get("width", 10)
+    filled = (pct * width) // 100
+    bar = "\u2588" * filled + "\u2591" * (width - filled)
+
+    warn_t = cfg.get("warn_threshold", 40.0)
+    crit_t = cfg.get("critical_threshold", 70.0)
+
+    if pct >= crit_t:
+        suffix = f" {pct}%!"
+        color = cfg.get("critical_color", "#d06070")
+        bold = True
+    elif pct >= warn_t:
+        suffix = f" {pct}%~"
+        color = cfg.get("warn_color", "#f0d399")
+        bold = False
+    else:
+        suffix = f" {pct}%"
+        color = cfg.get("color", "#b5d4a0")
+        bold = False
+
+    glyph = cfg.get("glyph", "")
+    text = f"{glyph}{bar}{suffix}"
+
+    # Append token counts if available
+    if "input_tokens" in state and "output_tokens" in state:
+        inp = state["input_tokens"]
+        out = state["output_tokens"]
+        if inp > 0 or out > 0:
+            text += f" \u2191{_abbreviate_count(inp)} \u2193{_abbreviate_count(out)}"
+
+    return _pill(text, cfg, color, bold, theme)
 
 
 def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render token counts module."""
-    if "input_tokens" not in state or "output_tokens" not in state:
-        return None
-    return format_tokens(state["input_tokens"], state["output_tokens"], theme)
+    """Tokens are now merged into context_bar pill. This is a no-op."""
+    return None
 
 
 def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -914,7 +947,7 @@ MODULE_RENDERERS: dict[str, Any] = {
     "tmux": render_tmux,
 }
 
-DEFAULT_LINE1 = ["model", "dir", "context_bar", "tokens", "cost", "duration"]
+DEFAULT_LINE1 = ["model", "dir", "context_bar", "cost", "duration"]
 DEFAULT_LINE2 = ["cpu", "memory", "disk"]
 
 
