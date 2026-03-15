@@ -585,7 +585,7 @@ theme = statusline.load_config()
 print(theme['model']['color'])
 print(theme['cost']['warn_threshold'])
 ")
-assert_contains "CF-01a: default model color" "$OUT" "#88c0d0"
+assert_contains "CF-01a: default model color" "$OUT" "#d8dee9"
 assert_contains "CF-01b: default cost warn" "$OUT" "2.0"
 
 # CF-02: Malformed TOML returns defaults
@@ -598,7 +598,7 @@ theme = statusline.load_config()
 print(theme['model']['color'])
 ")
 rm -f "$TMPTOML"
-assert_contains "CF-02: malformed TOML uses defaults" "$OUT" "#88c0d0"
+assert_contains "CF-02: malformed TOML uses defaults" "$OUT" "#d8dee9"
 
 # CF-03: Partial override merges correctly
 TMPTOML=$(mktemp --suffix=.toml)
