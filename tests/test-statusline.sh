@@ -453,7 +453,7 @@ assert_contains "R-02a: model with glyph" "$OUT" $'\U000f06a9 Opus'
 assert_contains "R-02b: dir with glyph" "$OUT" $'\U000f0770 qLine'
 assert_contains "R-02c: bar present" "$OUT" "50%"
 assert_contains "R-02d: tokens present" "$OUT" "12.3k"
-assert_contains "R-02e: cost with glyph" "$OUT" $'\U000f0d63 $1.23'
+assert_contains "R-02e: cost with glyph" "$OUT" '$ 1.23'
 assert_contains "R-02f: duration with glyph" "$OUT" $'\U000f0954 45s'
 assert_contains "R-02g: separator" "$OUT" "│"
 
@@ -466,7 +466,7 @@ line = render(state, DEFAULT_THEME)
 print(line)
 ")
 assert_contains "R-03a: model present" "$OUT" "Opus"
-assert_contains "R-03b: cost present" "$OUT" '$0.50'
+assert_contains "R-03b: cost present" "$OUT" '0.50'
 assert_not_contains "R-03c: no bar" "$OUT" "░"
 
 # R-04: Model-only
@@ -516,8 +516,8 @@ from statusline import _format_cost
 print(_format_cost(0.001))
 print(_format_cost(5.50))
 ")
-assert_contains "R-09a: small cost" "$OUT" '$0.0010'
-assert_contains "R-09b: normal cost" "$OUT" '$5.50'
+assert_contains "R-09a: small cost" "$OUT" '0.0010'
+assert_contains "R-09b: normal cost" "$OUT" '5.50'
 
 # R-10: Duration formatting
 OUT=$(run_py "
@@ -682,7 +682,7 @@ assert_empty "C-01b: no stderr" "$LAST_STDERR"
 assert_single_line "C-01c: single line" "$LAST_STDOUT"
 assert_contains "C-01d: model" "$LAST_STDOUT" "Opus"
 assert_contains "C-01e: dir" "$LAST_STDOUT" "qLine"
-assert_contains "C-01f: cost" "$LAST_STDOUT" '$1.23'
+assert_contains "C-01f: cost" "$LAST_STDOUT" '1.23'
 assert_contains "C-01g: duration" "$LAST_STDOUT" "45s"
 
 # C-02: Minimal fixture
@@ -734,7 +734,7 @@ assert_exit_zero "C-10a: exit 0" "$LAST_EXIT"
 assert_contains "C-10b: bar present" "$LAST_STDOUT" "15%"
 assert_contains "C-10c: input tokens" "$LAST_STDOUT" "↑281k"
 assert_contains "C-10d: output tokens" "$LAST_STDOUT" "↓141k"
-assert_contains "C-10e: cost critical" "$LAST_STDOUT" '$27.29'
+assert_contains "C-10e: cost critical" "$LAST_STDOUT" '27.29'
 
 # C-11: Optional fields don't crash
 run_statusline "$(cat "$FIXTURES/valid-optional-fields.json")"

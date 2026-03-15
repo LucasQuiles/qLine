@@ -48,7 +48,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "bg": "#2e3440",
     },
     "context_bar": {
-        "glyph": "\U000f0493 ",  # nf-md-chart_pie (Supplementary PUA)
+        "glyph": "\U000f02d1 ",  # nf-md-heart (Supplementary PUA)
         "color": "#b5d4a0",
         "bg": "#2e3440",
         "width": 10,
@@ -62,7 +62,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "bg": "#2e3440",
     },
     "cost": {
-        "glyph": "\U000f0d63 ",  # nf-md-lightning_bolt (Supplementary PUA)
+        "glyph": "$ ",
         "color": "#e0956a",
         "bg": "#2e3440",
         "warn_threshold": 2.0,
@@ -277,8 +277,8 @@ def _sanitize_fragment(text: str) -> str:
 def _format_cost(cost_usd: float) -> str:
     """Format cost with appropriate precision."""
     if cost_usd < 0.01:
-        return f"${cost_usd:.4f}"
-    return f"${cost_usd:.2f}"
+        return f"{cost_usd:.4f}"
+    return f"{cost_usd:.2f}"
 
 
 def _format_duration(duration_ms: int) -> str:
