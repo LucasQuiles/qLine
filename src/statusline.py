@@ -40,39 +40,39 @@ DEFAULT_THEME: dict[str, Any] = {
         "glyph": "\U000f06a9 ",  # nf-md-robot (Supplementary PUA)
         "color": "#d8dee9",
         "bg": "#3b4252",
-        "bold": True,
+        "bold": False,
     },
     "dir": {
         "glyph": "\U000f0770 ",  # nf-md-folder_open (Supplementary PUA)
-        "color": "#81a1c1",
+        "color": "#9bb8d3",
         "bg": "#2e3440",
     },
     "context_bar": {
         "glyph": "\U000f0493 ",  # nf-md-chart_pie (Supplementary PUA)
-        "color": "#a3be8c",
+        "color": "#b5d4a0",
         "bg": "#2e3440",
         "width": 10,
         "warn_threshold": 40.0,
-        "warn_color": "#ebcb8b",
+        "warn_color": "#f0d399",
         "critical_threshold": 70.0,
-        "critical_color": "#bf616a",
+        "critical_color": "#d06070",
     },
     "tokens": {
-        "color": "#8fbcbb",
+        "color": "#a8d4d0",
         "bg": "#2e3440",
     },
     "cost": {
         "glyph": "\U000f0d63 ",  # nf-md-lightning_bolt (Supplementary PUA)
-        "color": "#d08770",
+        "color": "#e0956a",
         "bg": "#2e3440",
         "warn_threshold": 2.0,
-        "warn_color": "#ebcb8b",
+        "warn_color": "#f0d399",
         "critical_threshold": 5.0,
-        "critical_color": "#bf616a",
+        "critical_color": "#d06070",
     },
     "duration": {
         "glyph": "\U000f0954 ",  # nf-md-clock_outline (Supplementary PUA)
-        "color": "#6e8898",
+        "color": "#8eacb8",
         "bg": "#2e3440",
     },
     "separator": {

@@ -616,8 +616,8 @@ print('COST_COLOR:' + theme['cost']['color'])
 ")
 rm -f "$TMPTOML"
 assert_contains "CF-03a: overridden model color" "$OUT" "MODEL_COLOR:#ff0000"
-assert_contains "CF-03b: preserved model bold" "$OUT" "MODEL_BOLD:True"
-assert_contains "CF-03c: untouched cost color" "$OUT" "COST_COLOR:#d08770"
+assert_contains "CF-03b: preserved model bold" "$OUT" "MODEL_BOLD:False"
+assert_contains "CF-03c: untouched cost color" "$OUT" "COST_COLOR:#e0956a"
 
 # CF-04: Full override
 TMPTOML=$(mktemp --suffix=.toml)
