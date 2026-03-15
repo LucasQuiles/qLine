@@ -429,6 +429,119 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
     return _pill(f"{glyph}{bar}{suffix}", cfg, color, bold, theme)
 
 
+# --- Module Renderers ---
+# Each takes (state, theme) and returns str | None.
+
+
+def render_model(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render model name module."""
+    model_name = state.get("model_name")
+    if not model_name:
+        return None
+    m_cfg = theme.get("model", {})
+    text = f"{m_cfg.get('glyph', '')}{_sanitize_fragment(model_name)}"
+    return _pill(text, m_cfg, bold=m_cfg.get("bold", False), theme=theme)
+
+
+def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render directory basename module."""
+    dir_basename = state.get("dir_basename")
+    if not dir_basename:
+        return None
+    d_cfg = theme.get("dir", {})
+    text = f"{d_cfg.get('glyph', '')}{_sanitize_fragment(dir_basename)}"
+    return _pill(text, d_cfg, theme=theme)
+
+
+def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render context progress bar module."""
+    if "context_used" not in state or "context_total" not in state:
+        return None
+    pct = (state["context_used"] * 100) // state["context_total"]
+    return render_bar(pct, theme)
+
+
+def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render token counts module."""
+    if "input_tokens" not in state or "output_tokens" not in state:
+        return None
+    return format_tokens(state["input_tokens"], state["output_tokens"], theme)
+
+
+def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render cost module with threshold coloring."""
+    if "cost_usd" not in state:
+        return None
+    c_cfg = theme.get("cost", {})
+    cost_val = state["cost_usd"]
+    cost_text = f"{c_cfg.get('glyph', '')}{_format_cost(cost_val)}"
+    warn_t = c_cfg.get("warn_threshold", 2.0)
+    crit_t = c_cfg.get("critical_threshold", 5.0)
+    if cost_val >= crit_t:
+        return _pill(cost_text, c_cfg, c_cfg.get("critical_color", "#bf616a"), True, theme)
+    if cost_val >= warn_t:
+        return _pill(cost_text, c_cfg, c_cfg.get("warn_color", "#ebcb8b"), theme=theme)
+    return _pill(cost_text, c_cfg, theme=theme)
+
+
+def render_duration(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render duration module."""
+    if "duration_ms" not in state:
+        return None
+    dur_cfg = theme.get("duration", {})
+    text = f"{dur_cfg.get('glyph', '')}{_format_duration(state['duration_ms'])}"
+    return _pill(text, dur_cfg, theme=theme)
+
+
+# --- Placeholder module renderers (return None until collectors land) ---
+
+
+def render_git(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render git branch/status module. Placeholder."""
+    return None
+
+
+def render_cpu(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render CPU usage module. Placeholder."""
+    return None
+
+
+def render_memory(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render memory usage module. Placeholder."""
+    return None
+
+
+def render_disk(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render disk usage module. Placeholder."""
+    return None
+
+
+def render_agents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render active agents count module. Placeholder."""
+    return None
+
+
+def render_tmux(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render tmux session info module. Placeholder."""
+    return None
+
+
+MODULE_RENDERERS: dict[str, Any] = {
+    "model": render_model,
+    "dir": render_dir,
+    "context_bar": render_context_bar,
+    "tokens": render_tokens,
+    "cost": render_cost,
+    "duration": render_duration,
+    "git": render_git,
+    "cpu": render_cpu,
+    "memory": render_memory,
+    "disk": render_disk,
+    "agents": render_agents,
+    "tmux": render_tmux,
+}
+
+
 def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     """Render a single status line from normalized state.
 
