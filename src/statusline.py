@@ -22,7 +22,10 @@ from __future__ import annotations
 import json
 import os
 import select
+import subprocess
 import sys
+import tempfile
+import time
 import tomllib
 from typing import Any
 
@@ -32,6 +35,7 @@ MAX_STDIN_BYTES = 524_288  # 512 KB byte budget (binary read)
 READ_DEADLINE_S = 0.2      # Overall read deadline in seconds
 CONFIG_PATH = os.path.expanduser("~/.config/qline.toml")
 NO_COLOR = bool(os.environ.get("NO_COLOR"))
+PROC_DIR = os.environ.get("QLINE_PROC_DIR", "/proc")
 
 # --- Default Theme (Muted Ocean) ---
 
@@ -209,6 +213,23 @@ def style_dim(text: str) -> str:
     if NO_COLOR:
         return text
     return f"\033[2m{text}\033[0m"
+
+
+# --- Subprocess Helper ---
+
+def _run_cmd(cmd: list[str], timeout: float = 0.05,
+             env: dict[str, str] | None = None) -> str | None:
+    """Run a command with timeout, return stdout or None on any failure."""
+    try:
+        result = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=timeout, text=True, env=env,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
 
 
 # --- Reader ---
@@ -493,6 +514,150 @@ def render_duration(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     return _pill(text, dur_cfg, theme=theme)
 
 
+# --- System Collectors ---
+
+
+def collect_cpu(state: dict[str, Any]) -> None:
+    """Collect CPU load as percentage from /proc/loadavg."""
+    try:
+        with open(os.path.join(PROC_DIR, "loadavg")) as f:
+            content = f.read()
+        if not content.strip():
+            return
+        load1 = float(content.split()[0])
+        cpus = os.cpu_count()
+        if cpus is None or cpus <= 0:
+            return
+        pct = int((load1 / cpus) * 100)
+        state["cpu_percent"] = max(0, min(999, pct))
+    except Exception:
+        return
+
+
+def collect_memory(state: dict[str, Any]) -> None:
+    """Collect memory usage percentage from /proc/meminfo."""
+    try:
+        with open(os.path.join(PROC_DIR, "meminfo")) as f:
+            content = f.read()
+        if not content.strip():
+            return
+        fields: dict[str, int] = {}
+        for line in content.splitlines():
+            parts = line.split(":")
+            if len(parts) != 2:
+                continue
+            key = parts[0].strip()
+            val_parts = parts[1].strip().split()
+            if not val_parts:
+                continue
+            try:
+                fields[key] = int(val_parts[0])
+            except ValueError:
+                continue
+        if "MemTotal" not in fields or fields["MemTotal"] <= 0:
+            return
+        total = fields["MemTotal"]
+        if "MemAvailable" in fields:
+            available = fields["MemAvailable"]
+        elif "MemFree" in fields:
+            available = fields["MemFree"] + fields.get("Buffers", 0) + fields.get("Cached", 0)
+        else:
+            return
+        used = total - available
+        pct = (used * 100) // total
+        state["memory_percent"] = max(0, min(100, pct))
+    except Exception:
+        return
+
+
+def collect_disk(state: dict[str, Any]) -> None:
+    """Collect disk usage percentage via os.statvfs."""
+    try:
+        path = getattr(collect_disk, "_path", "/")
+        st = os.statvfs(path)
+        total = st.f_blocks * st.f_frsize
+        available = st.f_bavail * st.f_frsize
+        if total <= 0:
+            return
+        used = total - available
+        pct = (used * 100) // total
+        state["disk_percent"] = max(0, min(100, pct))
+    except Exception:
+        return
+
+
+# --- Placeholder collectors (return without action until subprocess collectors land) ---
+
+
+def collect_git(state: dict[str, Any]) -> None:
+    """Collect git info. Placeholder."""
+    pass
+
+
+def collect_agents(state: dict[str, Any]) -> None:
+    """Collect active agent count. Placeholder."""
+    pass
+
+
+def collect_tmux(state: dict[str, Any]) -> None:
+    """Collect tmux session info. Placeholder."""
+    pass
+
+
+# --- System Data Orchestrator ---
+
+
+def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
+    """Run all enabled system collectors.
+
+    Respects QLINE_NO_COLLECT=1 to skip all collection (testing/CI).
+    """
+    if os.environ.get("QLINE_NO_COLLECT") == "1":
+        return
+    collectors = [
+        ("git", collect_git),
+        ("cpu", collect_cpu),
+        ("memory", collect_memory),
+        ("disk", collect_disk),
+        ("agents", collect_agents),
+        ("tmux", collect_tmux),
+    ]
+    for name, fn in collectors:
+        cfg = theme.get(name, {})
+        if not cfg.get("enabled", True):
+            continue
+        if name == "disk":
+            collect_disk._path = cfg.get("path", "/")
+        try:
+            fn(state)
+        except Exception:
+            pass
+
+
+# --- Module Renderers (system) ---
+
+
+def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
+                          state_key: str, theme_key: str) -> str | None:
+    """Shared renderer for system metric modules (cpu, memory, disk)."""
+    if state_key not in state:
+        return None
+    cfg = theme.get(theme_key, {})
+    pct = state[state_key]
+    show_t = cfg.get("show_threshold", 0)
+    if pct < show_t:
+        return None
+    warn_t = cfg.get("warn_threshold", 60.0)
+    crit_t = cfg.get("critical_threshold", 85.0)
+    glyph = cfg.get("glyph", "")
+    text = f"{glyph}{pct}%"
+    if pct >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+    if pct >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
+
+
 # --- Placeholder module renderers (return None until collectors land) ---
 
 
@@ -502,18 +667,18 @@ def render_git(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_cpu(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render CPU usage module. Placeholder."""
-    return None
+    """Render CPU usage module."""
+    return _render_system_metric(state, theme, "cpu_percent", "cpu")
 
 
 def render_memory(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render memory usage module. Placeholder."""
-    return None
+    """Render memory usage module."""
+    return _render_system_metric(state, theme, "memory_percent", "memory")
 
 
 def render_disk(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render disk usage module. Placeholder."""
-    return None
+    """Render disk usage module."""
+    return _render_system_metric(state, theme, "disk_percent", "disk")
 
 
 def render_agents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -613,12 +778,13 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
 # --- Entrypoint ---
 
 def main() -> None:
-    """Status-line entrypoint. Read, normalize, render, emit."""
+    """Status-line entrypoint. Read, normalize, collect, render, emit."""
     theme = load_config()
     payload = read_stdin_bounded()
     if payload is None:
         return
     state = normalize(payload)
+    collect_system_data(state, theme)
     line = render(state, theme)
     if line:
         print(line)
