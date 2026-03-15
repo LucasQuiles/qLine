@@ -39,7 +39,7 @@ Modules:
 | cost | `` | U+F0E7 | nf-fa-bolt |
 | duration | `` | U+F017 | nf-fa-clock_o |
 
-Token counts use Unicode arrows: `↑` (U+2191) for input, `↓` (U+2193) for output.
+The tokens module has no prefix glyph. Directional arrows `↑` (U+2191) and `↓` (U+2193) are part of the formatted value, not a module prefix.
 
 ## Color Theme — Muted Ocean
 
@@ -59,18 +59,22 @@ Token counts use Unicode arrows: `↑` (U+2191) for input, `↓` (U+2193) for ou
 
 ## Progress Bar
 
-- Width: 10 characters (configurable)
+- Bar width: 10 characters (configurable via `width`). This is bar-only width; the percentage suffix is appended outside the bar.
 - Filled: `█` (U+2588 Full Block)
 - Empty: `░` (U+2591 Light Shade)
+- Percentage source: `context_window.used / context_window.total`, using integer floor division (matches existing behavior)
 - Percentage appended after bar: `80%`
 - Suffix: `~` at warn threshold, `!` at critical threshold
+- This module **replaces** the old `_format_context()` text-only renderer (`ctx:75%~`). The old function is removed.
 
 ## Token Count Formatting
 
 - Abbreviated: `12.3k`, `1.2M`, `456` (raw if <1000)
 - Input prefix: `↑`, output prefix: `↓`
-- Source: `context_window.total_input_tokens`, `context_window.total_output_tokens`
-- Fallback: omit module if fields absent
+- Source fields (within `context_window` object): `total_input_tokens`, `total_output_tokens`
+- These are runtime-added fields (version-sensitive), not in the original statusline docs
+- Fallback: omit module if either field is absent or not a number
+- Zero counts: omit module when both are 0
 
 ## Threshold Defaults
 
@@ -79,9 +83,15 @@ Token counts use Unicode arrows: `↑` (U+2191) for input, `↓` (U+2193) for ou
 | context_bar | 40% | 70% |
 | cost | $2.00 | $5.00 |
 
+These thresholds **replace** the existing `CONTEXT_WARN_PCT=70` and `CONTEXT_CRITICAL_PCT=85` constants. Existing renderer tests that assert at the old thresholds must be updated. Cost thresholds are new — cost escalation changes color only (no text suffix).
+
 ## TOML Config (`~/.config/qline.toml`)
 
-All keys optional. Missing file or malformed file = use embedded defaults silently.
+All keys optional. Any failure during config read (missing file, malformed TOML, permission denied, symlink to nonexistent target, any `OSError` or `tomllib.TOMLDecodeError`) = use embedded defaults silently. Invalid hex color values = fall back to default color for that element.
+
+**Merge semantics:** Shallow per-section merge. If a user provides `[context_bar]` with only `color`, all other `context_bar` keys (width, thresholds, etc.) retain their defaults. Top-level sections not present in the user file are entirely default.
+
+**Bold at thresholds:** Bold is always applied at critical threshold regardless of TOML config. The `bold` key in TOML controls the module's normal-state boldness only.
 
 ```toml
 [model]
@@ -129,7 +139,7 @@ dim = true
 - `load_config()` — reads `~/.config/qline.toml` via `tomllib`, merges over `DEFAULT_THEME` dict. Returns defaults on any failure.
 - `style(text, hex_color, bold=False)` — wraps text in ANSI truecolor escape sequences. Returns plain text if color is None.
 - `render_bar(pct, width, theme)` — renders `████████░░` with threshold-aware coloring.
-- `format_tokens(used, total, theme)` — formats `↑12.3k ↓4.1k` from context_window token fields.
+- `format_tokens(input_tokens, output_tokens, theme)` — formats `↑12.3k ↓4.1k` from context_window token fields.
 - Updated `render()` — uses theme dict for glyphs, colors, separators. Calls `style()` per module.
 - Updated `normalize()` — extracts `total_input_tokens` and `total_output_tokens` from context_window.
 
@@ -144,7 +154,7 @@ dim = true
 
 - Existing parser tests: unchanged
 - Existing normalizer tests: add token extraction tests
-- Renderer tests: update expected output for ANSI codes, or add a `--plain` flag / `NO_COLOR` env var support for test assertions
+- Renderer tests: update expected output for new thresholds and bar format; test under `NO_COLOR=1` for deterministic plain-text assertions
 - New tests: config loading (missing file, malformed, partial override, full override)
 - New tests: bar rendering, token formatting, threshold color selection
 - Command tests: pipe fixture JSON, verify ANSI output or plain output under `NO_COLOR=1`
