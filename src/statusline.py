@@ -36,6 +36,9 @@ READ_DEADLINE_S = 0.2      # Overall read deadline in seconds
 CONFIG_PATH = os.path.expanduser("~/.config/qline.toml")
 NO_COLOR = bool(os.environ.get("NO_COLOR"))
 PROC_DIR = os.environ.get("QLINE_PROC_DIR", "/proc")
+CACHE_PATH = os.environ.get("QLINE_CACHE_PATH", "/tmp/qline-cache.json")
+CACHE_MAX_AGE_S = 60.0
+CACHE_VERSION = 1
 
 # --- Default Theme (Muted Ocean) ---
 
@@ -647,16 +650,92 @@ def collect_tmux(state: dict[str, Any]) -> None:
         state["tmux_panes"] = 0
 
 
+# --- Cache Layer ---
+
+
+def load_cache() -> dict[str, Any]:
+    """Load cache file, return empty dict on any failure."""
+    try:
+        with open(CACHE_PATH) as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        if data.get("version") != CACHE_VERSION:
+            return {}
+        return data.get("modules", {})
+    except Exception:
+        return {}
+
+
+def save_cache(cache: dict[str, Any]) -> None:
+    """Atomically save cache to disk. Silent on failure."""
+    try:
+        data = {"version": CACHE_VERSION, "modules": cache}
+        fd = tempfile.NamedTemporaryFile(
+            mode="w", dir="/tmp", prefix="qline-", suffix=".tmp", delete=False,
+        )
+        try:
+            json.dump(data, fd)
+            fd.flush()
+            os.fsync(fd.fileno())
+            fd.close()
+            os.rename(fd.name, CACHE_PATH)
+        except Exception:
+            fd.close()
+            try:
+                os.unlink(fd.name)
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+
+_CACHE_KEYS: dict[str, list[str]] = {
+    "git": ["git_branch", "git_sha", "git_dirty"],
+    "cpu": ["cpu_percent"],
+    "memory": ["memory_percent"],
+    "disk": ["disk_percent"],
+    "agents": ["agent_count"],
+    "tmux": ["tmux_sessions", "tmux_panes"],
+}
+
+
+def _cache_module(cache: dict, state: dict, name: str, now: float) -> None:
+    """Save module data to cache dict."""
+    keys = _CACHE_KEYS.get(name, [])
+    values = {k: state[k] for k in keys if k in state}
+    if values:
+        cache[name] = {"value": values, "timestamp": now}
+
+
+def _apply_cached(state: dict, cache: dict, name: str, now: float) -> None:
+    """Apply cached data if fresh enough, marking as stale."""
+    entry = cache.get(name)
+    if not isinstance(entry, dict):
+        return
+    ts = entry.get("timestamp", 0)
+    if now - ts > CACHE_MAX_AGE_S:
+        return
+    values = entry.get("value", {})
+    if isinstance(values, dict):
+        state.update(values)
+        state[f"{name}_stale"] = True
+
+
 # --- System Data Orchestrator ---
 
 
 def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
-    """Run all enabled system collectors.
+    """Run all enabled system collectors with cache fallback.
 
     Respects QLINE_NO_COLLECT=1 to skip all collection (testing/CI).
     """
     if os.environ.get("QLINE_NO_COLLECT") == "1":
         return
+    cache = load_cache()
+    now = time.time()
+    new_cache: dict[str, Any] = {}
+
     collectors = [
         ("git", collect_git),
         ("cpu", collect_cpu),
@@ -665,6 +744,7 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
         ("agents", collect_agents),
         ("tmux", collect_tmux),
     ]
+
     for name, fn in collectors:
         cfg = theme.get(name, {})
         if not cfg.get("enabled", True):
@@ -673,8 +753,11 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
             collect_disk._path = cfg.get("path", "/")
         try:
             fn(state)
+            _cache_module(new_cache, state, name, now)
         except Exception:
-            pass
+            _apply_cached(state, cache, name, now)
+
+    save_cache(new_cache)
 
 
 # --- Module Renderers (system) ---

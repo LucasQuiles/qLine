@@ -15,6 +15,7 @@
 #   bash tests/test-statusline.sh --section ansi
 #   bash tests/test-statusline.sh --section layout
 #   bash tests/test-statusline.sh --section collector
+#   bash tests/test-statusline.sh --section cache
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -1085,6 +1086,100 @@ result = render_agents(state, DEFAULT_THEME)
 print(result or 'NONE')
 ")
 assert_equals "COL-15: agents missing hidden" "$OUT" "NONE"
+
+echo ""
+fi
+
+# ======================================================================
+# SECTION: cache — stale data cache tests
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "cache" ]; then
+echo "--- Cache Tests ---"
+
+# CACHE-01: save and load round-trip
+CACHE_TMP=$(mktemp)
+OUT=$(run_py "
+import statusline, time
+statusline.CACHE_PATH = '$CACHE_TMP'
+cache = {'cpu': {'value': {'cpu_percent': 42}, 'timestamp': time.time()}}
+statusline.save_cache(cache)
+loaded = statusline.load_cache()
+print(loaded.get('cpu', {}).get('value', {}).get('cpu_percent', 'ABSENT'))
+")
+rm -f "$CACHE_TMP"
+assert_equals "CACHE-01: round-trip" "$OUT" "42"
+
+# CACHE-02: corrupted cache -> empty
+CACHE_TMP=$(mktemp)
+echo "not json" > "$CACHE_TMP"
+OUT=$(run_py "
+import statusline
+statusline.CACHE_PATH = '$CACHE_TMP'
+loaded = statusline.load_cache()
+print(len(loaded))
+")
+rm -f "$CACHE_TMP"
+assert_equals "CACHE-02: corrupted -> empty" "$OUT" "0"
+
+# CACHE-03: wrong version -> empty
+CACHE_TMP=$(mktemp)
+echo '{"version": 999, "modules": {"cpu": {}}}' > "$CACHE_TMP"
+OUT=$(run_py "
+import statusline
+statusline.CACHE_PATH = '$CACHE_TMP'
+loaded = statusline.load_cache()
+print(len(loaded))
+")
+rm -f "$CACHE_TMP"
+assert_equals "CACHE-03: wrong version -> empty" "$OUT" "0"
+
+# CACHE-04: stale entry (>60s) not applied
+OUT=$(run_py "
+import statusline, time
+cache = {'cpu': {'value': {'cpu_percent': 99}, 'timestamp': time.time() - 120}}
+state = {}
+statusline._apply_cached(state, cache, 'cpu', time.time())
+print(state.get('cpu_percent', 'ABSENT'))
+")
+assert_equals "CACHE-04: stale not applied" "$OUT" "ABSENT"
+
+# CACHE-05: fresh entry applied with stale flag
+OUT=$(run_py "
+import statusline, time
+now = time.time()
+cache = {'cpu': {'value': {'cpu_percent': 42}, 'timestamp': now}}
+state = {}
+statusline._apply_cached(state, cache, 'cpu', now)
+print(state.get('cpu_percent', 'ABSENT'))
+print(state.get('cpu_stale', False))
+")
+assert_contains "CACHE-05a: fresh applied" "$OUT" "42"
+assert_contains "CACHE-05b: stale flag" "$OUT" "True"
+
+# CACHE-06: missing cache file -> empty dict
+OUT=$(run_py "
+import statusline
+statusline.CACHE_PATH = '/tmp/qline-nonexistent-cache-12345.json'
+loaded = statusline.load_cache()
+print(len(loaded))
+")
+assert_equals "CACHE-06: missing file -> empty" "$OUT" "0"
+
+# CACHE-07: _cache_module stores correct keys
+OUT=$(run_py "
+import statusline, time
+cache = {}
+state = {'cpu_percent': 55, 'memory_percent': 70}
+now = time.time()
+statusline._cache_module(cache, state, 'cpu', now)
+statusline._cache_module(cache, state, 'memory', now)
+print('cpu_val:' + str(cache.get('cpu', {}).get('value', {}).get('cpu_percent', 'ABSENT')))
+print('mem_val:' + str(cache.get('memory', {}).get('value', {}).get('memory_percent', 'ABSENT')))
+print('has_ts:' + str('timestamp' in cache.get('cpu', {})))
+")
+assert_contains "CACHE-07a: cpu cached" "$OUT" "cpu_val:55"
+assert_contains "CACHE-07b: mem cached" "$OUT" "mem_val:70"
+assert_contains "CACHE-07c: has timestamp" "$OUT" "has_ts:True"
 
 echo ""
 fi
