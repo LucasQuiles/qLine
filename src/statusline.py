@@ -769,7 +769,8 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
 
 
 def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
-                          state_key: str, theme_key: str) -> str | None:
+                          state_key: str, theme_key: str,
+                          compact_label: str = "") -> str | None:
     """Shared renderer for system metric modules (cpu, memory, disk)."""
     if state_key not in state:
         return None
@@ -780,8 +781,11 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
         return None
     warn_t = cfg.get("warn_threshold", 60.0)
     crit_t = cfg.get("critical_threshold", 85.0)
-    glyph = cfg.get("glyph", "")
-    text = f"{glyph}{pct}%"
+    if state.get("_compact") and compact_label:
+        text = f"{compact_label}{pct}%"
+    else:
+        glyph = cfg.get("glyph", "")
+        text = f"{glyph}{pct}%"
     if pct >= crit_t:
         return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
     if pct >= warn_t:
@@ -798,6 +802,9 @@ def render_git(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
         return None
     cfg = theme.get("git", {})
     branch = state["git_branch"]
+    max_len = 12 if state.get("_compact") else 20
+    if len(branch) > max_len:
+        branch = branch[:max_len - 1] + "\u2026"
     sha = state.get("git_sha", "")
     dirty = state.get("git_dirty", False)
     dirty_marker = cfg.get("dirty_marker", "*") if dirty else ""
@@ -810,17 +817,17 @@ def render_git(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 def render_cpu(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Render CPU usage module."""
-    return _render_system_metric(state, theme, "cpu_percent", "cpu")
+    return _render_system_metric(state, theme, "cpu_percent", "cpu", compact_label="C:")
 
 
 def render_memory(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Render memory usage module."""
-    return _render_system_metric(state, theme, "memory_percent", "memory")
+    return _render_system_metric(state, theme, "memory_percent", "memory", compact_label="M:")
 
 
 def render_disk(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Render disk usage module."""
-    return _render_system_metric(state, theme, "disk_percent", "disk")
+    return _render_system_metric(state, theme, "disk_percent", "disk", compact_label="D:")
 
 
 def render_agents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -924,6 +931,8 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         line1_modules = DEFAULT_LINE1
     if not isinstance(line2_modules, list):
         line2_modules = DEFAULT_LINE2
+
+    state["_compact"] = (num_lines == 1)
 
     if num_lines == 1:
         # Merge both lines into one

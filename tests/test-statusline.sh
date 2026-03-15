@@ -901,6 +901,51 @@ print(result or 'NONE')
 ")
 assert_not_contains "L-12: no marker" "$OUT" $'\u229b'
 
+# L-13: CPU abbreviated in compact mode
+OUT=$(run_py "
+from statusline import render_cpu, DEFAULT_THEME
+state = {'cpu_percent': 23, '_compact': True}
+result = render_cpu(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "L-13: CPU compact" "$OUT" "C:23%"
+
+# L-14: CPU full in normal mode
+OUT=$(run_py "
+from statusline import render_cpu, DEFAULT_THEME
+state = {'cpu_percent': 23, '_compact': False}
+result = render_cpu(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "L-14: CPU full" "$OUT" "CPU"
+
+# L-15: Memory abbreviated in compact mode
+OUT=$(run_py "
+from statusline import render_memory, DEFAULT_THEME
+state = {'memory_percent': 55, '_compact': True}
+result = render_memory(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "L-15: MEM compact" "$OUT" "M:55%"
+
+# L-16: Disk abbreviated in compact mode
+OUT=$(run_py "
+from statusline import render_disk, DEFAULT_THEME
+state = {'disk_percent': 80, '_compact': True}
+result = render_disk(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "L-16: DSK compact" "$OUT" "D:80%"
+
+# L-17: Git branch truncated to 12 chars in compact mode
+OUT=$(run_py "
+from statusline import render_git, DEFAULT_THEME
+state = {'git_branch': 'feature/very-long-branch-name', 'git_sha': 'abc1234', '_compact': True}
+result = render_git(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_not_contains "L-17: git compact truncation" "$OUT" "feature/very-long-branch-name"
+
 echo ""
 fi
 
