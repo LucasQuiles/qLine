@@ -37,16 +37,16 @@ NO_COLOR = bool(os.environ.get("NO_COLOR"))
 
 DEFAULT_THEME: dict[str, Any] = {
     "model": {
-        "glyph": "\uf46a ",   # nf-oct-hubot
+        "glyph": "\U000f06a9 ",  # nf-md-robot (Supplementary PUA)
         "color": "#88c0d0",
         "bold": True,
     },
     "dir": {
-        "glyph": "\uf07c ",   # nf-fa-folder_open
+        "glyph": "\U000f0770 ",  # nf-md-folder_open (Supplementary PUA)
         "color": "#81a1c1",
     },
     "context_bar": {
-        "glyph": "\uf200 ",   # nf-fa-pie_chart
+        "glyph": "\U000f0493 ",  # nf-md-chart_pie (Supplementary PUA)
         "color": "#a3be8c",
         "width": 10,
         "warn_threshold": 40.0,
@@ -58,7 +58,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "color": "#8fbcbb",
     },
     "cost": {
-        "glyph": "\uf0e7 ",   # nf-fa-bolt
+        "glyph": "\U000f0d63 ",  # nf-md-lightning_bolt (Supplementary PUA)
         "color": "#d08770",
         "warn_threshold": 2.0,
         "warn_color": "#ebcb8b",
@@ -66,7 +66,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#bf616a",
     },
     "duration": {
-        "glyph": "\uf017 ",   # nf-fa-clock_o
+        "glyph": "\U000f0954 ",  # nf-md-clock_outline (Supplementary PUA)
         "color": "#6e8898",
     },
     "separator": {
@@ -201,11 +201,20 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     # Optional: context window
     ctx_window = payload.get("context_window")
     if isinstance(ctx_window, dict):
-        used = ctx_window.get("used")
-        total = ctx_window.get("total")
-        if isinstance(used, (int, float)) and isinstance(total, (int, float)) and total > 0:
-            state["context_used"] = int(used)
-            state["context_total"] = int(total)
+        # Primary: used_percentage (directly from runtime)
+        used_pct = ctx_window.get("used_percentage")
+        ctx_size = ctx_window.get("context_window_size")
+        if isinstance(used_pct, (int, float)) and isinstance(ctx_size, (int, float)) and ctx_size > 0:
+            # Synthesize used/total from percentage and size
+            state["context_used"] = int(used_pct * ctx_size / 100)
+            state["context_total"] = int(ctx_size)
+        else:
+            # Fallback: used/total fields (older payloads, test fixtures)
+            used = ctx_window.get("used")
+            total = ctx_window.get("total")
+            if isinstance(used, (int, float)) and isinstance(total, (int, float)) and total > 0:
+                state["context_used"] = int(used)
+                state["context_total"] = int(total)
         # Token counts (version-sensitive runtime fields)
         input_tok = ctx_window.get("total_input_tokens")
         output_tok = ctx_window.get("total_output_tokens")
