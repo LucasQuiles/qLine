@@ -541,70 +541,73 @@ MODULE_RENDERERS: dict[str, Any] = {
     "tmux": render_tmux,
 }
 
+DEFAULT_LINE1 = ["model", "dir", "context_bar", "tokens", "cost", "duration"]
+DEFAULT_LINE2 = ["git", "cpu", "memory", "disk", "agents", "tmux"]
 
-def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
-    """Render a single status line from normalized state.
 
-    Module order: model -> dir -> context_bar -> tokens -> cost -> duration
-    Omits absent modules.
+def render_line(state: dict[str, Any], theme: dict[str, Any],
+                modules: list[str]) -> str:
+    """Render a single line from a list of module names.
+
+    Iterates modules, looks up each in MODULE_RENDERERS, skips unknown
+    or disabled modules, calls each renderer, collects non-None results,
+    and joins with the theme separator.
     """
-    if theme is None:
-        theme = DEFAULT_THEME
-
     parts: list[str] = []
     sep_cfg = theme.get("separator", {})
     sep_char = sep_cfg.get("char", "\u2502")
     sep_dim = sep_cfg.get("dim", True)
-    sep = f"{style_dim(sep_char) if sep_dim else sep_char}"
+    sep = style_dim(sep_char) if sep_dim else sep_char
 
-    # Module: model
-    model_name = state.get("model_name")
-    if model_name:
-        m_cfg = theme.get("model", {})
-        text = f"{m_cfg.get('glyph', '')}{_sanitize_fragment(model_name)}"
-        parts.append(_pill(text, m_cfg, bold=m_cfg.get("bold", False), theme=theme))
-
-    # Module: dir
-    dir_basename = state.get("dir_basename")
-    if dir_basename:
-        d_cfg = theme.get("dir", {})
-        text = f"{d_cfg.get('glyph', '')}{_sanitize_fragment(dir_basename)}"
-        parts.append(_pill(text, d_cfg, theme=theme))
-
-    # Module: context_bar
-    if "context_used" in state and "context_total" in state:
-        pct = (state["context_used"] * 100) // state["context_total"]
-        parts.append(render_bar(pct, theme))
-
-    # Module: tokens
-    if "input_tokens" in state and "output_tokens" in state:
-        parts.append(format_tokens(state["input_tokens"], state["output_tokens"], theme))
-
-    # Module: cost
-    if "cost_usd" in state:
-        c_cfg = theme.get("cost", {})
-        cost_val = state["cost_usd"]
-        cost_text = f"{c_cfg.get('glyph', '')}{_format_cost(cost_val)}"
-        warn_t = c_cfg.get("warn_threshold", 2.0)
-        crit_t = c_cfg.get("critical_threshold", 5.0)
-        if cost_val >= crit_t:
-            parts.append(_pill(cost_text, c_cfg, c_cfg.get("critical_color", "#bf616a"), True, theme))
-        elif cost_val >= warn_t:
-            parts.append(_pill(cost_text, c_cfg, c_cfg.get("warn_color", "#ebcb8b"), theme=theme))
-        else:
-            parts.append(_pill(cost_text, c_cfg, theme=theme))
-
-    # Module: duration
-    if "duration_ms" in state:
-        dur_cfg = theme.get("duration", {})
-        text = f"{dur_cfg.get('glyph', '')}{_format_duration(state['duration_ms'])}"
-        parts.append(_pill(text, dur_cfg, theme=theme))
+    for name in modules:
+        renderer = MODULE_RENDERERS.get(name)
+        if renderer is None:
+            continue
+        mod_cfg = theme.get(name, {})
+        if not mod_cfg.get("enabled", True):
+            continue
+        result = renderer(state, theme)
+        if result is not None:
+            parts.append(result)
 
     if not parts:
         return ""
+    return sep.join(parts)
 
-    line = sep.join(parts)
-    return line
+
+def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
+    """Render status output from normalized state using layout config.
+
+    Supports single-line (lines=1) and multi-line (lines=2) layouts.
+    Module order is determined by layout.line1 and layout.line2 arrays.
+    """
+    if theme is None:
+        theme = DEFAULT_THEME
+
+    layout = theme.get("layout", {})
+    num_lines = max(1, min(2, layout.get("lines", 1)))
+    line1_modules = layout.get("line1", DEFAULT_LINE1)
+    line2_modules = layout.get("line2", DEFAULT_LINE2)
+
+    # Validate: must be lists, fallback to defaults
+    if not isinstance(line1_modules, list):
+        line1_modules = DEFAULT_LINE1
+    if not isinstance(line2_modules, list):
+        line2_modules = DEFAULT_LINE2
+
+    if num_lines == 1:
+        # Merge both lines into one
+        merged = list(line1_modules) + list(line2_modules)
+        return render_line(state, theme, merged)
+
+    # Multi-line: render each, suppress empty lines
+    l1 = render_line(state, theme, line1_modules)
+    l2 = render_line(state, theme, line2_modules)
+
+    lines = [l for l in (l1, l2) if l]
+    if not lines:
+        return ""
+    return "\n".join(lines)
 
 
 # --- Entrypoint ---
