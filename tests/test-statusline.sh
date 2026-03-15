@@ -1059,6 +1059,33 @@ print(result or 'NONE')
 ")
 assert_equals "COL-12: tmux zero hidden" "$OUT" "NONE"
 
+# COL-13: Agents render with count
+OUT=$(run_py "
+from statusline import render_agents, DEFAULT_THEME
+state = {'agent_count': 3}
+result = render_agents(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "COL-13: agents render" "$OUT" "3"
+
+# COL-14: Agents zero -> hidden
+OUT=$(run_py "
+from statusline import render_agents, DEFAULT_THEME
+state = {'agent_count': 0}
+result = render_agents(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_equals "COL-14: agents zero hidden" "$OUT" "NONE"
+
+# COL-15: Agents missing -> hidden
+OUT=$(run_py "
+from statusline import render_agents, DEFAULT_THEME
+state = {}
+result = render_agents(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_equals "COL-15: agents missing hidden" "$OUT" "NONE"
+
 echo ""
 fi
 
