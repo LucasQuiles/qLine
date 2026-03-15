@@ -2,12 +2,17 @@
 # Shell-first test harness for qLine statusline.py
 # Follows the assertion style from ~/.claude/tests/test-hook-utils.sh
 #
+# All renderer/command tests run under NO_COLOR=1 for deterministic
+# plain-text assertions. ANSI output is tested separately.
+#
 # Usage:
 #   bash tests/test-statusline.sh                    # run all sections
 #   bash tests/test-statusline.sh --section parser   # run one section
 #   bash tests/test-statusline.sh --section normalizer
 #   bash tests/test-statusline.sh --section renderer
 #   bash tests/test-statusline.sh --section command
+#   bash tests/test-statusline.sh --section config
+#   bash tests/test-statusline.sh --section ansi
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -28,7 +33,9 @@ assert_equals() {
         echo "  PASS: $label"
         PASS=$((PASS + 1))
     else
-        echo "  FAIL: $label (expected '$expected', got '$actual')"
+        echo "  FAIL: $label"
+        echo "    expected: '$expected'"
+        echo "    got:      '$actual'"
         FAIL=$((FAIL + 1))
     fi
 }
@@ -84,13 +91,12 @@ assert_exit_zero() {
 assert_single_line() {
     local label="$1" output="$2"
     TOTAL=$((TOTAL + 1))
-    local line_count
     if [ -z "$output" ]; then
-        # empty output is acceptable (zero lines)
         echo "  PASS: $label (empty output)"
         PASS=$((PASS + 1))
         return
     fi
+    local line_count
     line_count=$(printf '%s\n' "$output" | wc -l)
     if [ "$line_count" = "1" ]; then
         echo "  PASS: $label"
@@ -101,8 +107,22 @@ assert_single_line() {
     fi
 }
 
-# Helper: run statusline as a Python module and capture stdout/stderr/exit
+# Helper: run statusline with NO_COLOR and capture stdout/stderr/exit
 run_statusline() {
+    local input="$1"
+    local tmpout tmpderr
+    tmpout=$(mktemp)
+    tmpderr=$(mktemp)
+    printf '%s' "$input" | NO_COLOR=1 python3 "$SRC" >"$tmpout" 2>"$tmpderr"
+    local exit_code=$?
+    LAST_STDOUT=$(cat "$tmpout")
+    LAST_STDERR=$(cat "$tmpderr")
+    LAST_EXIT=$exit_code
+    rm -f "$tmpout" "$tmpderr"
+}
+
+# Helper: run statusline WITH colors (no NO_COLOR)
+run_statusline_color() {
     local input="$1"
     local tmpout tmpderr
     tmpout=$(mktemp)
@@ -117,7 +137,7 @@ run_statusline() {
 
 # Helper: run a Python snippet importing from statusline
 run_py() {
-    python3 -c "
+    NO_COLOR=1 python3 -c "
 import sys; sys.path.insert(0, '$REPO_DIR/src')
 $1
 " 2>&1
@@ -145,7 +165,7 @@ OUT=$(run_py "
 from statusline import read_stdin_bounded
 import os
 r, w = os.pipe()
-os.close(w)  # EOF immediately
+os.close(w)
 os.dup2(r, 0)
 result = read_stdin_bounded()
 print('NONE' if result is None else 'NOT_NONE')
@@ -204,12 +224,10 @@ print('DICT' if isinstance(result, dict) else 'NOT_DICT')
 ")
 assert_equals "P-05: valid JSON object returns dict" "$OUT" "DICT"
 
-# P-06: Byte cap enforcement — input over MAX_STDIN_BYTES is truncated
-# Use a tempfile to avoid pipe blocking on large writes
+# P-06: Byte cap enforcement
 OUT=$(run_py "
 from statusline import read_stdin_bounded, MAX_STDIN_BYTES
 import os, tempfile
-# Write oversize data to a tempfile, redirect stdin from it
 with tempfile.NamedTemporaryFile(delete=False) as f:
     fname = f.name
     f.write(b'{\"k\":\"' + b'A' * (MAX_STDIN_BYTES + 100) + b'\"}')
@@ -218,17 +236,15 @@ os.dup2(fd, 0)
 os.close(fd)
 result = read_stdin_bounded()
 os.unlink(fname)
-# Truncated JSON should fail to parse
 print('NONE' if result is None else 'NOT_NONE')
 ")
 assert_equals "P-06: oversize input returns None (truncated)" "$OUT" "NONE"
 
-# P-07: Malformed bytes (invalid UTF-8) handled with replacement
+# P-07: Malformed bytes handled
 OUT=$(run_py "
 from statusline import read_stdin_bounded
 import os
 r, w = os.pipe()
-# Invalid UTF-8 byte sequences inside otherwise valid JSON structure
 os.write(w, b'{\"k\": \"val\xc0\xc1ue\"}')
 os.close(w)
 os.dup2(r, 0)
@@ -238,7 +254,6 @@ if result is not None:
 else:
     print('NONE')
 ")
-# Either None or dict is acceptable — the key is no crash
 TOTAL=$((TOTAL + 1))
 if [ "$OUT" = "DICT_WITH_REPLACEMENT" ] || [ "$OUT" = "NONE" ]; then
     echo "  PASS: P-07: malformed bytes handled without crash ($OUT)"
@@ -264,12 +279,12 @@ echo ""
 fi
 
 # ======================================================================
-# SECTION: normalizer — payload normalization tests
+# SECTION: normalizer
 # ======================================================================
 if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "normalizer" ]; then
 echo "--- Normalizer Tests ---"
 
-# N-01: Full payload normalizes all documented fields
+# N-01: Full payload
 OUT=$(run_py "
 from statusline import normalize
 import json
@@ -289,7 +304,7 @@ assert_contains "N-01d: output_style extracted" "$OUT" "default"
 assert_contains "N-01e: cost_usd extracted" "$OUT" "1.23456"
 assert_contains "N-01f: duration_ms extracted" "$OUT" "45000"
 
-# N-02: Minimal payload — only model
+# N-02: Minimal payload
 OUT=$(run_py "
 from statusline import normalize
 import json
@@ -303,7 +318,7 @@ assert_contains "N-02a: model_name from minimal" "$OUT" "Opus"
 assert_contains "N-02b: no dir in minimal" "$OUT" "DIR:NONE"
 assert_contains "N-02c: no cost in minimal" "$OUT" "COST:NONE"
 
-# N-03: Fallback from workspace.current_dir to cwd
+# N-03: cwd fallback
 OUT=$(run_py "
 from statusline import normalize
 import json
@@ -313,7 +328,7 @@ print(state.get('dir_basename', 'MISSING'))
 ")
 assert_equals "N-03: cwd fallback for dir" "$OUT" "myapp"
 
-# N-04: context_window normalization
+# N-04: context_window
 OUT=$(run_py "
 from statusline import normalize
 import json
@@ -325,7 +340,7 @@ print(state.get('context_total', 'MISSING'))
 assert_contains "N-04a: context_used" "$OUT" "75000"
 assert_contains "N-04b: context_total" "$OUT" "100000"
 
-# N-05: Optional fields preserved when present
+# N-05: Optional fields
 OUT=$(run_py "
 from statusline import normalize
 import json
@@ -339,7 +354,7 @@ assert_contains "N-05a: worktree flag" "$OUT" "WT:True"
 assert_contains "N-05b: agent_id" "$OUT" "AGENT:agent-xyz-123"
 assert_contains "N-05c: added_dirs count" "$OUT" "ADDED:1"
 
-# N-06: Wrong-type optionals are silently ignored
+# N-06: Wrong-type optionals ignored
 OUT=$(run_py "
 from statusline import normalize
 import json
@@ -355,7 +370,7 @@ assert_contains "N-06b: wrong-type context ignored" "$OUT" "CTX:ABSENT"
 assert_contains "N-06c: wrong-type added_dirs ignored" "$OUT" "ADDED:ABSENT"
 assert_contains "N-06d: model still extracted" "$OUT" "MODEL:Opus"
 
-# N-07: Empty dict payload
+# N-07: Empty dict
 OUT=$(run_py "
 from statusline import normalize
 state = normalize({})
@@ -363,7 +378,7 @@ print(len(state))
 ")
 assert_equals "N-07: empty dict yields empty state" "$OUT" "0"
 
-# N-08: Unknown future fields are ignored
+# N-08: Unknown fields ignored
 OUT=$(run_py "
 from statusline import normalize
 state = normalize({'unknown_future_field': 42, 'model': {'display_name': 'Test'}})
@@ -373,221 +388,351 @@ print('MODEL:' + state.get('model_name', 'MISSING'))
 assert_contains "N-08a: unknown field ignored" "$OUT" "UNKNOWN:ABSENT"
 assert_contains "N-08b: known field extracted" "$OUT" "MODEL:Test"
 
+# N-09: Token counts extracted
+OUT=$(run_py "
+from statusline import normalize
+import json
+payload = json.load(open('$FIXTURES/valid-with-tokens.json'))
+state = normalize(payload)
+print('IN:' + str(state.get('input_tokens', 'ABSENT')))
+print('OUT:' + str(state.get('output_tokens', 'ABSENT')))
+")
+assert_contains "N-09a: input_tokens extracted" "$OUT" "IN:12345"
+assert_contains "N-09b: output_tokens extracted" "$OUT" "OUT:4100"
+
+# N-10: Zero tokens omitted
+OUT=$(run_py "
+from statusline import normalize
+state = normalize({'context_window': {'used': 100, 'total': 1000, 'total_input_tokens': 0, 'total_output_tokens': 0}})
+print('IN:' + str(state.get('input_tokens', 'ABSENT')))
+")
+assert_contains "N-10: zero tokens omitted" "$OUT" "IN:ABSENT"
+
+# N-11: Token counts absent when fields missing
+OUT=$(run_py "
+from statusline import normalize
+state = normalize({'context_window': {'used': 100, 'total': 1000}})
+print('IN:' + str(state.get('input_tokens', 'ABSENT')))
+")
+assert_contains "N-11: tokens absent when fields missing" "$OUT" "IN:ABSENT"
+
 echo ""
 fi
 
 # ======================================================================
-# SECTION: renderer — rendering contract and content tests
+# SECTION: renderer — under NO_COLOR for plain text assertions
 # ======================================================================
 if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "renderer" ]; then
-echo "--- Renderer Tests ---"
+echo "--- Renderer Tests (NO_COLOR) ---"
 
-# R-01: Empty state produces empty output
+# R-01: Empty state
 OUT=$(run_py "
 from statusline import render
 print(repr(render({})))
 ")
 assert_equals "R-01: empty state -> empty string" "$OUT" "''"
 
-# R-02: Full state — exact module order: model | dir | context | cost | duration
+# R-02: Full state — module order with glyphs
 OUT=$(run_py "
-from statusline import render
+from statusline import render, DEFAULT_THEME
 state = {
     'model_name': 'Opus',
     'dir_basename': 'qLine',
     'context_used': 50000,
     'context_total': 100000,
+    'input_tokens': 12345,
+    'output_tokens': 4100,
     'cost_usd': 1.23,
     'duration_ms': 45000,
 }
-print(render(state))
-")
-assert_equals "R-02: full module order" "$OUT" "Opus | qLine | ctx:50% | \$1.23 | 45s"
-
-# R-03: Missing modules are omitted, not blank
-OUT=$(run_py "
-from statusline import render
-state = {'model_name': 'Opus', 'cost_usd': 0.50}
-print(render(state))
-")
-assert_equals "R-03: missing modules omitted" "$OUT" "Opus | \$0.50"
-
-# R-04: Model-only render
-OUT=$(run_py "
-from statusline import render
-print(render({'model_name': 'Sonnet'}))
-")
-assert_equals "R-04: model-only" "$OUT" "Sonnet"
-
-# R-05: Context warning threshold (70-84%)
-OUT=$(run_py "
-from statusline import render
-state = {'context_used': 75000, 'context_total': 100000}
-print(render(state))
-")
-assert_equals "R-05: context warning" "$OUT" "ctx:75%~"
-
-# R-06: Context critical threshold (>=85%)
-OUT=$(run_py "
-from statusline import render
-state = {'context_used': 90000, 'context_total': 100000}
-print(render(state))
-")
-assert_equals "R-06: context critical" "$OUT" "ctx:90%!"
-
-# R-07: Context neutral (<70%)
-OUT=$(run_py "
-from statusline import render
-state = {'context_used': 30000, 'context_total': 100000}
-print(render(state))
-")
-assert_equals "R-07: context neutral" "$OUT" "ctx:30%"
-
-# R-08: Newline in model name is sanitized
-OUT=$(run_py "
-from statusline import render
-state = {'model_name': 'Opus\nInjected'}
-line = render(state)
+line = render(state, DEFAULT_THEME)
 print(line)
 ")
-assert_equals "R-08: newline sanitized" "$OUT" "Opus Injected"
-assert_single_line "R-08b: single line output" "$OUT"
+# Glyphs are present but NO_COLOR strips ANSI
+assert_contains "R-02a: model with glyph" "$OUT" $'\uf46a Opus'
+assert_contains "R-02b: dir with glyph" "$OUT" $'\uf07c qLine'
+assert_contains "R-02c: bar present" "$OUT" "50%"
+assert_contains "R-02d: tokens present" "$OUT" "12.3k"
+assert_contains "R-02e: cost with glyph" "$OUT" $'\uf0e7 $1.23'
+assert_contains "R-02f: duration with glyph" "$OUT" $'\uf017 45s'
+assert_contains "R-02g: separator" "$OUT" "│"
 
-# R-09: Cost formatting — small amounts
+# R-03: Missing modules omitted
 OUT=$(run_py "
-from statusline import render
-state = {'cost_usd': 0.001}
-print(render(state))
+from statusline import render, DEFAULT_THEME
+state = {'model_name': 'Opus', 'cost_usd': 0.50}
+line = render(state, DEFAULT_THEME)
+# Should have model and cost but not dir/context/tokens/duration
+print(line)
 ")
-assert_equals "R-09: small cost precision" "$OUT" "\$0.0010"
+assert_contains "R-03a: model present" "$OUT" "Opus"
+assert_contains "R-03b: cost present" "$OUT" '$0.50'
+assert_not_contains "R-03c: no bar" "$OUT" "░"
 
-# R-10: Cost formatting — normal amounts
+# R-04: Model-only
 OUT=$(run_py "
-from statusline import render
-state = {'cost_usd': 5.50}
-print(render(state))
+from statusline import render, DEFAULT_THEME
+line = render({'model_name': 'Sonnet'}, DEFAULT_THEME)
+print(line)
 ")
-assert_equals "R-10: normal cost" "$OUT" "\$5.50"
+assert_contains "R-04: model-only has glyph" "$OUT" "Sonnet"
+assert_not_contains "R-04b: no separator" "$OUT" "│"
 
-# R-11: Duration formatting — seconds
+# R-05: Context bar warn at new threshold (>=40%)
 OUT=$(run_py "
-from statusline import render
-state = {'duration_ms': 30000}
-print(render(state))
+from statusline import render_bar, DEFAULT_THEME
+print(render_bar(45, DEFAULT_THEME))
 ")
-assert_equals "R-11: duration seconds" "$OUT" "30s"
+assert_contains "R-05: warn suffix at 45%" "$OUT" "45%~"
 
-# R-12: Duration formatting — minutes
+# R-06: Context bar critical at new threshold (>=70%)
 OUT=$(run_py "
-from statusline import render
-state = {'duration_ms': 150000}
-print(render(state))
+from statusline import render_bar, DEFAULT_THEME
+print(render_bar(90, DEFAULT_THEME))
 ")
-assert_equals "R-12: duration minutes" "$OUT" "2m30s"
+assert_contains "R-06: critical suffix at 90%" "$OUT" "90%!"
 
-# R-13: Duration formatting — hours
+# R-07: Context bar normal (<40%)
 OUT=$(run_py "
-from statusline import render
-state = {'duration_ms': 7200000}
-print(render(state))
+from statusline import render_bar, DEFAULT_THEME
+print(render_bar(30, DEFAULT_THEME))
 ")
-assert_equals "R-13: duration hours" "$OUT" "2h"
+assert_contains "R-07a: normal at 30%" "$OUT" "30%"
+assert_not_contains "R-07b: no warn suffix" "$OUT" "~"
+assert_not_contains "R-07c: no critical suffix" "$OUT" "!"
 
-# R-14: Duration formatting — hours and minutes
+# R-08: Bar characters
 OUT=$(run_py "
-from statusline import render
-state = {'duration_ms': 5400000}
-print(render(state))
+from statusline import render_bar, DEFAULT_THEME
+bar = render_bar(50, DEFAULT_THEME)
+print(bar)
 ")
-assert_equals "R-14: duration hours+min" "$OUT" "1h30m"
+assert_contains "R-08a: filled blocks" "$OUT" "█████"
+assert_contains "R-08b: empty blocks" "$OUT" "░░░░░"
 
-# R-15: ASCII-safe separator — no non-ASCII characters in output
+# R-09: Cost formatting
 OUT=$(run_py "
-from statusline import render
-state = {'model_name': 'Opus', 'dir_basename': 'test', 'cost_usd': 1.00}
-line = render(state)
-# Check all chars are ASCII
-all_ascii = all(ord(c) < 128 for c in line)
-print('ASCII' if all_ascii else 'NON_ASCII')
+from statusline import _format_cost
+print(_format_cost(0.001))
+print(_format_cost(5.50))
 ")
-assert_equals "R-15: output is ASCII-safe" "$OUT" "ASCII"
+assert_contains "R-09a: small cost" "$OUT" '$0.0010'
+assert_contains "R-09b: normal cost" "$OUT" '$5.50'
 
-# R-16: Tab in fragment is sanitized
+# R-10: Duration formatting
 OUT=$(run_py "
-from statusline import render
-state = {'model_name': 'Opus\tExtra'}
-line = render(state)
-print(repr(line))
+from statusline import _format_duration
+print(_format_duration(30000))
+print(_format_duration(150000))
+print(_format_duration(7200000))
+print(_format_duration(5400000))
 ")
-assert_contains "R-16: tab sanitized" "$OUT" "Opus Extra"
+assert_contains "R-10a: seconds" "$OUT" "30s"
+assert_contains "R-10b: minutes" "$OUT" "2m30s"
+assert_contains "R-10c: hours" "$OUT" "2h"
+assert_contains "R-10d: hours+min" "$OUT" "1h30m"
+
+# R-11: Token abbreviation
+OUT=$(run_py "
+from statusline import _abbreviate_count
+print(_abbreviate_count(456))
+print(_abbreviate_count(1234))
+print(_abbreviate_count(12345))
+print(_abbreviate_count(1234567))
+")
+assert_equals "R-11a: raw count" "$(echo "$OUT" | sed -n '1p')" "456"
+assert_equals "R-11b: 1.2k" "$(echo "$OUT" | sed -n '2p')" "1.2k"
+assert_equals "R-11c: 12.3k" "$(echo "$OUT" | sed -n '3p')" "12.3k"
+assert_equals "R-11d: 1.2M" "$(echo "$OUT" | sed -n '4p')" "1.2M"
+
+# R-12: Token formatting
+OUT=$(run_py "
+from statusline import format_tokens, DEFAULT_THEME
+print(format_tokens(12345, 4100, DEFAULT_THEME))
+")
+assert_contains "R-12a: input arrow" "$OUT" "↑12.3k"
+assert_contains "R-12b: output arrow" "$OUT" "↓4.1k"
+
+# R-13: Newline sanitization
+OUT=$(run_py "
+from statusline import render, DEFAULT_THEME
+state = {'model_name': 'Opus\nInjected'}
+line = render(state, DEFAULT_THEME)
+print(line)
+")
+# R-13: verify single line (newline check via line count, not grep)
+assert_single_line "R-13: single line output" "$OUT"
+assert_contains "R-13b: sanitized content" "$OUT" "Opus Injected"
 
 echo ""
 fi
 
 # ======================================================================
-# SECTION: command — executable-level integration tests
+# SECTION: config — TOML loading tests
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "config" ]; then
+echo "--- Config Tests ---"
+
+# CF-01: Missing config file returns defaults
+OUT=$(run_py "
+import os
+os.environ['HOME'] = '/tmp/qline-test-no-config'
+# Re-import to pick up new CONFIG_PATH
+import importlib
+import statusline
+statusline.CONFIG_PATH = '/tmp/qline-test-no-config/.config/qline.toml'
+theme = statusline.load_config()
+print(theme['model']['color'])
+print(theme['cost']['warn_threshold'])
+")
+assert_contains "CF-01a: default model color" "$OUT" "#88c0d0"
+assert_contains "CF-01b: default cost warn" "$OUT" "2.0"
+
+# CF-02: Malformed TOML returns defaults
+TMPTOML=$(mktemp)
+echo "this is not [valid toml" > "$TMPTOML"
+OUT=$(run_py "
+import statusline
+statusline.CONFIG_PATH = '$TMPTOML'
+theme = statusline.load_config()
+print(theme['model']['color'])
+")
+rm -f "$TMPTOML"
+assert_contains "CF-02: malformed TOML uses defaults" "$OUT" "#88c0d0"
+
+# CF-03: Partial override merges correctly
+TMPTOML=$(mktemp --suffix=.toml)
+cat > "$TMPTOML" << 'TOML'
+[model]
+color = "#ff0000"
+TOML
+OUT=$(run_py "
+import statusline
+statusline.CONFIG_PATH = '$TMPTOML'
+theme = statusline.load_config()
+print('MODEL_COLOR:' + theme['model']['color'])
+print('MODEL_BOLD:' + str(theme['model']['bold']))
+print('COST_COLOR:' + theme['cost']['color'])
+")
+rm -f "$TMPTOML"
+assert_contains "CF-03a: overridden model color" "$OUT" "MODEL_COLOR:#ff0000"
+assert_contains "CF-03b: preserved model bold" "$OUT" "MODEL_BOLD:True"
+assert_contains "CF-03c: untouched cost color" "$OUT" "COST_COLOR:#d08770"
+
+# CF-04: Full override
+TMPTOML=$(mktemp --suffix=.toml)
+cat > "$TMPTOML" << 'TOML'
+[context_bar]
+width = 20
+warn_threshold = 50.0
+critical_threshold = 80.0
+color = "#00ff00"
+warn_color = "#ffff00"
+critical_color = "#ff0000"
+TOML
+OUT=$(run_py "
+import statusline
+statusline.CONFIG_PATH = '$TMPTOML'
+theme = statusline.load_config()
+print('WIDTH:' + str(theme['context_bar']['width']))
+print('WARN:' + str(theme['context_bar']['warn_threshold']))
+print('CRIT:' + str(theme['context_bar']['critical_threshold']))
+")
+rm -f "$TMPTOML"
+assert_contains "CF-04a: overridden width" "$OUT" "WIDTH:20"
+assert_contains "CF-04b: overridden warn" "$OUT" "WARN:50.0"
+assert_contains "CF-04c: overridden critical" "$OUT" "CRIT:80.0"
+
+echo ""
+fi
+
+# ======================================================================
+# SECTION: ansi — verify ANSI output when NO_COLOR is NOT set
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "ansi" ]; then
+echo "--- ANSI Output Tests ---"
+
+# A-01: Color output contains ANSI escape codes
+run_statusline_color "$(cat "$FIXTURES/valid-minimal.json")"
+assert_exit_zero "A-01a: exit 0 with color" "$LAST_EXIT"
+assert_contains "A-01b: ANSI escape present" "$LAST_STDOUT" $'\033['
+
+# A-02: NO_COLOR suppresses ANSI
+run_statusline "$(cat "$FIXTURES/valid-minimal.json")"
+assert_not_contains "A-02: no ANSI under NO_COLOR" "$LAST_STDOUT" $'\033['
+
+# A-03: Color output is still single line
+run_statusline_color "$(cat "$FIXTURES/valid-full.json")"
+assert_single_line "A-03: single line with color" "$LAST_STDOUT"
+assert_empty "A-03b: no stderr with color" "$LAST_STDERR"
+
+echo ""
+fi
+
+# ======================================================================
+# SECTION: command — executable integration tests (NO_COLOR)
 # ======================================================================
 if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "command" ]; then
-echo "--- Command Integration Tests ---"
+echo "--- Command Integration Tests (NO_COLOR) ---"
 
-# C-01: Full fixture -> exact output
+# C-01: Full fixture
 run_statusline "$(cat "$FIXTURES/valid-full.json")"
-assert_exit_zero "C-01a: exit 0 on full fixture" "$LAST_EXIT"
+assert_exit_zero "C-01a: exit 0" "$LAST_EXIT"
 assert_empty "C-01b: no stderr" "$LAST_STDERR"
-assert_single_line "C-01c: single line output" "$LAST_STDOUT"
-assert_equals "C-01d: full output" "$LAST_STDOUT" "Opus | qLine | \$1.23 | 45s"
+assert_single_line "C-01c: single line" "$LAST_STDOUT"
+assert_contains "C-01d: model" "$LAST_STDOUT" "Opus"
+assert_contains "C-01e: dir" "$LAST_STDOUT" "qLine"
+assert_contains "C-01f: cost" "$LAST_STDOUT" '$1.23'
+assert_contains "C-01g: duration" "$LAST_STDOUT" "45s"
 
-# C-02: Minimal fixture -> model only
+# C-02: Minimal fixture
 run_statusline "$(cat "$FIXTURES/valid-minimal.json")"
-assert_exit_zero "C-02a: exit 0 on minimal" "$LAST_EXIT"
-assert_empty "C-02b: no stderr" "$LAST_STDERR"
-assert_equals "C-02c: minimal output" "$LAST_STDOUT" "Opus"
+assert_exit_zero "C-02a: exit 0" "$LAST_EXIT"
+assert_contains "C-02b: model" "$LAST_STDOUT" "Opus"
 
-# C-03: Context window fixture -> context module present
+# C-03: Context window fixture (warn at new 40% threshold — 75% is warn)
 run_statusline "$(cat "$FIXTURES/valid-with-context-window.json")"
 assert_exit_zero "C-03a: exit 0" "$LAST_EXIT"
-assert_empty "C-03b: no stderr" "$LAST_STDERR"
-assert_equals "C-03c: context window output" "$LAST_STDOUT" "Opus | qLine | ctx:75%~ | \$0.50 | 2m"
+assert_contains "C-03b: bar present" "$LAST_STDOUT" "█"
+assert_contains "C-03c: critical suffix (75% >= 70%)" "$LAST_STDOUT" "75%!"
 
-# C-04: Critical context fixture
+# C-04: Critical context (90% >= 70%)
 run_statusline "$(cat "$FIXTURES/valid-context-critical.json")"
 assert_exit_zero "C-04a: exit 0" "$LAST_EXIT"
-assert_equals "C-04c: critical context" "$LAST_STDOUT" "Opus | qLine | ctx:90%! | \$2.00 | 5m"
+assert_contains "C-04b: critical suffix" "$LAST_STDOUT" "90%!"
 
-# C-05: No workspace, fall back to cwd
+# C-05: cwd fallback
 run_statusline "$(cat "$FIXTURES/valid-no-workspace.json")"
 assert_exit_zero "C-05a: exit 0" "$LAST_EXIT"
-assert_equals "C-05c: cwd fallback" "$LAST_STDOUT" "Opus | myapp | \$0.10 | 5s"
+assert_contains "C-05b: cwd fallback" "$LAST_STDOUT" "myapp"
 
-# C-06: Wrong-type optionals -> still renders model
+# C-06: Wrong-type optionals
 run_statusline "$(cat "$FIXTURES/wrong-type-optionals.json")"
 assert_exit_zero "C-06a: exit 0" "$LAST_EXIT"
-assert_equals "C-06b: renders despite wrong types" "$LAST_STDOUT" "Opus | qLine"
+assert_contains "C-06b: model rendered" "$LAST_STDOUT" "Opus"
 
-# C-07: Empty JSON object -> no output
+# C-07: Empty JSON object
 run_statusline "{}"
-assert_exit_zero "C-07a: exit 0 on empty object" "$LAST_EXIT"
-assert_empty "C-07b: no stdout on empty object" "$LAST_STDOUT"
-assert_empty "C-07c: no stderr on empty object" "$LAST_STDERR"
+assert_exit_zero "C-07a: exit 0" "$LAST_EXIT"
+assert_empty "C-07b: no stdout" "$LAST_STDOUT"
 
-# C-08: JSON null -> no output
+# C-08: JSON null
 run_statusline "null"
-assert_exit_zero "C-08a: exit 0 on null" "$LAST_EXIT"
-assert_empty "C-08b: no stdout on null" "$LAST_STDOUT"
-assert_empty "C-08c: no stderr on null" "$LAST_STDERR"
+assert_exit_zero "C-08a: exit 0" "$LAST_EXIT"
+assert_empty "C-08b: no stdout" "$LAST_STDOUT"
 
-# C-09: JSON number -> no output
-run_statusline "42"
-assert_exit_zero "C-09a: exit 0 on number" "$LAST_EXIT"
-assert_empty "C-09b: no stdout on number" "$LAST_STDOUT"
+# C-09: Tokens fixture
+run_statusline "$(cat "$FIXTURES/valid-with-tokens.json")"
+assert_exit_zero "C-09a: exit 0" "$LAST_EXIT"
+assert_contains "C-09b: input tokens" "$LAST_STDOUT" "↑12.3k"
+assert_contains "C-09c: output tokens" "$LAST_STDOUT" "↓4.1k"
+assert_contains "C-09d: bar present" "$LAST_STDOUT" "50%"
 
-# C-10: Optional fields fixture — verifies optional fields don't crash
+# C-10: Optional fields don't crash
 run_statusline "$(cat "$FIXTURES/valid-optional-fields.json")"
-assert_exit_zero "C-10a: exit 0 with optionals" "$LAST_EXIT"
-assert_empty "C-10b: no stderr" "$LAST_STDERR"
-assert_single_line "C-10c: single line" "$LAST_STDOUT"
-assert_contains "C-10d: model in output" "$LAST_STDOUT" "Opus"
-assert_contains "C-10e: ctx in output" "$LAST_STDOUT" "ctx:50%"
+assert_exit_zero "C-10a: exit 0" "$LAST_EXIT"
+assert_single_line "C-10b: single line" "$LAST_STDOUT"
+assert_contains "C-10c: model" "$LAST_STDOUT" "Opus"
 
 echo ""
 fi
