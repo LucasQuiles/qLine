@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "Status",
+  "model": {
+    "id": "claude-opus-4-6",
+    "display_name": "Opus"
+  },
+  "cwd": "/home/q/Projects/myapp",
+  "cost": {
+    "total_cost_usd": 0.10,
+    "total_duration_ms": 5000
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "hook_event_name": "Status",
+  "model": {
+    "id": "claude-opus-4-6",
+    "display_name": "Opus"
+  },
+  "workspace": {
+    "current_dir": "/home/q/LAB/qLine"
+  },
+  "cost": {
+    "total_cost_usd": 2.00,
+    "total_duration_ms": 300000
+  },
+  "context_window": {
+    "used": 90000,
+    "total": 100000
+  }
+}
