@@ -449,12 +449,12 @@ line = render(state, DEFAULT_THEME)
 print(line)
 ")
 # Glyphs are present but NO_COLOR strips ANSI
-assert_contains "R-02a: model with glyph" "$OUT" $'\uf46a Opus'
-assert_contains "R-02b: dir with glyph" "$OUT" $'\uf07c qLine'
+assert_contains "R-02a: model with glyph" "$OUT" $'\U000f06a9 Opus'
+assert_contains "R-02b: dir with glyph" "$OUT" $'\U000f0770 qLine'
 assert_contains "R-02c: bar present" "$OUT" "50%"
 assert_contains "R-02d: tokens present" "$OUT" "12.3k"
-assert_contains "R-02e: cost with glyph" "$OUT" $'\uf0e7 $1.23'
-assert_contains "R-02f: duration with glyph" "$OUT" $'\uf017 45s'
+assert_contains "R-02e: cost with glyph" "$OUT" $'\U000f0d63 $1.23'
+assert_contains "R-02f: duration with glyph" "$OUT" $'\U000f0954 45s'
 assert_contains "R-02g: separator" "$OUT" "│"
 
 # R-03: Missing modules omitted
@@ -728,11 +728,19 @@ assert_contains "C-09b: input tokens" "$LAST_STDOUT" "↑12.3k"
 assert_contains "C-09c: output tokens" "$LAST_STDOUT" "↓4.1k"
 assert_contains "C-09d: bar present" "$LAST_STDOUT" "50%"
 
-# C-10: Optional fields don't crash
-run_statusline "$(cat "$FIXTURES/valid-optional-fields.json")"
+# C-10: Real payload format (used_percentage + context_window_size)
+run_statusline "$(cat "$FIXTURES/valid-real-payload.json")"
 assert_exit_zero "C-10a: exit 0" "$LAST_EXIT"
-assert_single_line "C-10b: single line" "$LAST_STDOUT"
-assert_contains "C-10c: model" "$LAST_STDOUT" "Opus"
+assert_contains "C-10b: bar present" "$LAST_STDOUT" "15%"
+assert_contains "C-10c: input tokens" "$LAST_STDOUT" "↑281k"
+assert_contains "C-10d: output tokens" "$LAST_STDOUT" "↓141k"
+assert_contains "C-10e: cost critical" "$LAST_STDOUT" '$27.29'
+
+# C-11: Optional fields don't crash
+run_statusline "$(cat "$FIXTURES/valid-optional-fields.json")"
+assert_exit_zero "C-11a: exit 0" "$LAST_EXIT"
+assert_single_line "C-11b: single line" "$LAST_STDOUT"
+assert_contains "C-11c: model" "$LAST_STDOUT" "Opus"
 
 echo ""
 fi
