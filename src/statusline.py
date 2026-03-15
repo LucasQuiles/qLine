@@ -55,6 +55,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "glyph": "\U000f0770 ",  # nf-md-folder_open (Supplementary PUA)
         "color": "#9bb8d3",
         "bg": "#2e3440",
+        "worktree_marker": "\u229b",
     },
     "context_bar": {
         "enabled": True,
@@ -473,7 +474,11 @@ def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     if not dir_basename:
         return None
     d_cfg = theme.get("dir", {})
-    text = f"{d_cfg.get('glyph', '')}{_sanitize_fragment(dir_basename)}"
+    name = _sanitize_fragment(dir_basename)
+    if state.get("is_worktree"):
+        marker = d_cfg.get("worktree_marker", "\u229b")
+        name = f"{name}{marker}"
+    text = f"{d_cfg.get('glyph', '')}{name}"
     return _pill(text, d_cfg, theme=theme)
 
 

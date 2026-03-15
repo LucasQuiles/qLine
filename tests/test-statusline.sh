@@ -881,6 +881,26 @@ print(repr(line))
 ")
 assert_equals "L-10: all modules disabled -> empty" "$OUT" "''"
 
+# L-11: Worktree marker appended
+OUT=$(run_py "
+from statusline import render_dir, DEFAULT_THEME
+state = {'dir_basename': 'qLine', 'is_worktree': True}
+result = render_dir(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "L-11: worktree marker" "$OUT" "qLine"
+# Check the marker character is present
+assert_contains "L-11b: marker char" "$OUT" $'\u229b'
+
+# L-12: No worktree marker when false
+OUT=$(run_py "
+from statusline import render_dir, DEFAULT_THEME
+state = {'dir_basename': 'qLine', 'is_worktree': False}
+result = render_dir(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_not_contains "L-12: no marker" "$OUT" $'\u229b'
+
 echo ""
 fi
 
