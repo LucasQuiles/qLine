@@ -80,8 +80,8 @@ DEFAULT_THEME: dict[str, Any] = {
         "dim": True,
     },
     "pill": {
-        "left": "\u25d6",      # ◖ Left Half Black Circle
-        "right": "\u25d7",     # ◗ Right Half Black Circle
+        "left": "",
+        "right": "",
     },
 }
 
@@ -373,7 +373,7 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     sep_cfg = theme.get("separator", {})
     sep_char = sep_cfg.get("char", "\u2502")
     sep_dim = sep_cfg.get("dim", True)
-    sep = f" {style_dim(sep_char) if sep_dim else sep_char} "
+    sep = f"{style_dim(sep_char) if sep_dim else sep_char}"
 
     # Module: model
     model_name = state.get("model_name")
