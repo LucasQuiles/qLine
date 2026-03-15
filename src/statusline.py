@@ -586,7 +586,7 @@ def collect_disk(state: dict[str, Any]) -> None:
         return
 
 
-# --- Placeholder collectors (return without action until subprocess collectors land) ---
+# --- Subprocess-based collectors ---
 
 
 def collect_git(state: dict[str, Any]) -> None:
@@ -620,8 +620,14 @@ def collect_git(state: dict[str, Any]) -> None:
 
 
 def collect_agents(state: dict[str, Any]) -> None:
-    """Collect active agent count. Placeholder."""
-    pass
+    """Count running Codex instances via pgrep."""
+    count = 0
+    codex_out = _run_cmd(["pgrep", "-x", "codex"], timeout=0.05)
+    if codex_out:
+        codex_lines = [l for l in codex_out.splitlines() if l.strip()]
+        count += len(codex_lines)
+    if count > 0:
+        state["agent_count"] = count
 
 
 def collect_tmux(state: dict[str, Any]) -> None:
@@ -695,7 +701,7 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
     return _pill(text, cfg, theme=theme)
 
 
-# --- Placeholder module renderers (return None until collectors land) ---
+# --- Subprocess-based module renderers ---
 
 
 def render_git(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -730,8 +736,22 @@ def render_disk(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_agents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render active agents count module. Placeholder."""
-    return None
+    """Render active agents count module."""
+    if "agent_count" not in state or state["agent_count"] <= 0:
+        return None
+    cfg = theme.get("agents", {})
+    count = state["agent_count"]
+    show_t = cfg.get("show_threshold", 0)
+    if count <= show_t:
+        return None
+    text = f"{cfg.get('glyph', '')}{count}"
+    warn_t = cfg.get("warn_threshold", 5)
+    crit_t = cfg.get("critical_threshold", 8)
+    if count >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+    elif count >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
 
 
 def render_tmux(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
