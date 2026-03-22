@@ -1,0 +1,137 @@
+# qLine Configuration — ~/.config/qline.toml
+# All settings are optional. Uncomment to override defaults.
+# Requires Python 3.11+ (tomllib) or `pip install tomli` for 3.10.
+
+# ─── Layout ─────────────────────────────────────────────────────────
+[layout]
+# force_single_line = true          # merge all lines into one (default: true)
+# max_width = 200                   # wrap threshold in chars (default: 200)
+# line1 = ["model", "dir", "context_bar", "cost", "duration"]
+# line2 = ["cpu", "memory", "disk"]
+# line3 = ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
+#           "obs_prompts", "obs_tasks", "obs_subagents",
+#           "obs_failures", "obs_compactions", "obs_health"]
+
+# ─── Core Modules ───────────────────────────────────────────────────
+# [model]
+# enabled = true
+# glyph = "󰚩 "                     # any string; NF glyphs recommended
+# color = "#d8dee9"                 # foreground color (#RRGGBB)
+# bg = "#3b4252"                    # pill background color
+
+# [dir]
+# enabled = true
+# worktree_marker = "⊛"
+
+# [context_bar]
+# enabled = true
+# width = 10                        # progress bar character width
+# warn_threshold = 40.0             # % context used → yellow
+# critical_threshold = 70.0         # % context used → red
+
+# [cost]
+# enabled = true
+# warn_threshold = 2.0              # USD → yellow
+# critical_threshold = 5.0          # USD → red
+
+# [duration]
+# enabled = true
+# format = "auto"                   # auto | hm | m | hms
+
+# ─── System Modules ────────────────────────────────────────────────
+# [cpu]
+# enabled = true
+# width = 5
+# warn_threshold = 60.0
+# critical_threshold = 85.0
+# show_threshold = 0                # hide below this %
+
+# [memory]
+# enabled = true
+# width = 5
+# warn_threshold = 70.0
+# critical_threshold = 90.0
+# show_threshold = 0
+
+# [disk]
+# enabled = true
+# path = "/"
+# width = 5
+# warn_threshold = 80.0
+# critical_threshold = 95.0
+# show_threshold = 0
+
+# [git]
+# enabled = true
+# dirty_marker = "*"
+
+# [agents]
+# enabled = false                   # off by default
+
+# [tmux]
+# enabled = false                   # off by default
+
+# ─── Observability Modules ──────────────────────────────────────────
+# These require the observability infrastructure (obs_utils.py + hooks).
+# All disabled by default. Enable the ones you want:
+
+# [obs_reads]
+# enabled = true                    # 󰑇 file read count
+
+# [obs_rereads]
+# enabled = true                    # 󰓦 reread % (warn at 30%, critical at 50%)
+# warn_threshold = 30
+# critical_threshold = 50
+
+# [obs_writes]
+# enabled = true                    # 󰙏 file write count
+
+# [obs_bash]
+# enabled = true                    # 󰆍 bash command count
+
+# [obs_prompts]
+# enabled = true                    # 󰅺 prompt count
+
+# [obs_tasks]
+# enabled = true                    # 󰄷 completed task count
+
+# [obs_subagents]
+# enabled = true                    # 󰓁 subagent count
+
+# [obs_failures]
+# enabled = true                    # 󰀩 tool failure count (warn at 1, critical at 5)
+# warn_threshold = 1
+# critical_threshold = 5
+
+# [obs_compactions]
+# enabled = true                    # 󱃧 context compaction count
+
+# [obs_health]
+# enabled = true                    # 󰕥 session health badge (green/yellow/red)
+
+# ─── Quick Presets ──────────────────────────────────────────────────
+# Minimal (just model + context):
+#   [layout]
+#   line1 = ["model", "context_bar", "cost"]
+#   line2 = []
+#   line3 = []
+#
+# Full observability:
+#   [obs_reads]
+#   enabled = true
+#   [obs_rereads]
+#   enabled = true
+#   [obs_writes]
+#   enabled = true
+#   [obs_bash]
+#   enabled = true
+#   [obs_prompts]
+#   enabled = true
+#   [obs_tasks]
+#   enabled = true
+#   [obs_subagents]
+#   enabled = true
+#   [obs_failures]
+#   enabled = true
+#   [obs_health]
+#   enabled = true

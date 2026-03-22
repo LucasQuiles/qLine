@@ -29,13 +29,23 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]  # pip install tomli (Python <3.11)
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore[assignment]  # TOML config disabled; defaults used
 from datetime import datetime, timezone
 from typing import Any
 
 # --- Observability integration (guarded import) ---
 try:
-    sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
+    # Look for obs_utils next to this script first, then ~/.claude/scripts/
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    for _obs_path in [_script_dir, os.path.join(os.path.expanduser("~"), ".claude", "scripts")]:
+        if _obs_path not in sys.path:
+            sys.path.insert(0, _obs_path)
     from obs_utils import resolve_package_root, update_health, _atomic_jsonl_append
     _OBS_AVAILABLE = True
 except Exception:
@@ -110,7 +120,8 @@ DEFAULT_THEME: dict[str, Any] = {
         "right": "",
     },
     "layout": {
-        "force_single_line": False,
+        "force_single_line": True,
+        "max_width": 200,
         "line1": ["model", "dir", "context_bar", "cost", "duration"],
         "line2": ["cpu", "memory", "disk"],
         "line3": ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
@@ -180,13 +191,13 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     # --- Obs: I/O group ---
     "obs_reads": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "\U000f0447 ",  # nf-md-file_document (󰑇)
         "color": "#a5b4fc",
         "bg": "#2e3440",
     },
     "obs_rereads": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "\U000f04e6 ",  # nf-md-compress (󰓦)
         "color": "#a5b4fc",
         "bg": "#2e3440",
@@ -196,39 +207,39 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "obs_writes": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "\U000f064f ",  # nf-md-lead_pencil
         "color": "#86efac",
         "bg": "#2e3440",
     },
     "obs_bash": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "\U000f018d ",  # nf-md-console
         "color": "#fcd34d",
         "bg": "#2e3440",
     },
     # --- Obs: Work group ---
     "obs_prompts": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "\U000f017a ",  # nf-md-comment_text
         "color": "#d8b4fe",
         "bg": "#2e3440",
     },
     "obs_tasks": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "\U000f0137 ",  # nf-md-clipboard_check
         "color": "#67e8f9",
         "bg": "#2e3440",
     },
     "obs_subagents": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "\U000f04c1 ",  # nf-md-source_fork
         "color": "#c4b5fd",
         "bg": "#2e3440",
     },
     # --- Obs: Health group ---
     "obs_failures": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "\U000f0029 ",  # nf-md-alert
         "color": "#fda4af",
         "bg": "#2e3440",
@@ -238,13 +249,13 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "obs_compactions": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "\U000f10e7 ",  # nf-md-archive_arrow_down
         "color": "#a8a29e",
         "bg": "#2e3440",
     },
     "obs_health": {
-        "enabled": True,
+        "enabled": False,
         "glyph": "\U000f0565 ",  # nf-md-shield_check
         "color": "#86efac",
         "bg": "#2e3440",
@@ -259,6 +270,8 @@ DEFAULT_THEME: dict[str, Any] = {
 def load_config() -> dict[str, Any]:
     """Load TOML config with shallow per-section merge over defaults."""
     theme = {k: dict(v) for k, v in DEFAULT_THEME.items()}
+    if tomllib is None:
+        return theme
     try:
         with open(CONFIG_PATH, "rb") as f:
             user = tomllib.load(f)
