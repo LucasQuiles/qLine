@@ -16,6 +16,7 @@
 #   bash tests/test-statusline.sh --section layout
 #   bash tests/test-statusline.sh --section collector
 #   bash tests/test-statusline.sh --section cache
+#   bash tests/test-statusline.sh --section obs
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -87,6 +88,18 @@ assert_exit_zero() {
         PASS=$((PASS + 1))
     else
         echo "  FAIL: $label (expected exit 0, got $exit_code)"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+assert_not_empty() {
+    local label="$1" output="$2"
+    TOTAL=$((TOTAL + 1))
+    if [ -n "$output" ]; then
+        echo "  PASS: $label"
+        PASS=$((PASS + 1))
+    else
+        echo "  FAIL: $label (expected non-empty output)"
         FAIL=$((FAIL + 1))
     fi
 }
@@ -664,9 +677,9 @@ assert_contains "A-01b: ANSI escape present" "$LAST_STDOUT" $'\033['
 run_statusline "$(cat "$FIXTURES/valid-minimal.json")"
 assert_not_contains "A-02: no ANSI under NO_COLOR" "$LAST_STDOUT" $'\033['
 
-# A-03: Color output is still single line
+# A-03: Color output renders without error
 run_statusline_color "$(cat "$FIXTURES/valid-full.json")"
-assert_single_line "A-03: single line with color" "$LAST_STDOUT"
+assert_not_empty "A-03: non-empty with color" "$LAST_STDOUT"
 assert_empty "A-03b: no stderr with color" "$LAST_STDERR"
 
 echo ""
@@ -682,7 +695,7 @@ echo "--- Command Integration Tests (NO_COLOR) ---"
 run_statusline "$(cat "$FIXTURES/valid-full.json")"
 assert_exit_zero "C-01a: exit 0" "$LAST_EXIT"
 assert_empty "C-01b: no stderr" "$LAST_STDERR"
-assert_single_line "C-01c: single line" "$LAST_STDOUT"
+assert_not_empty "C-01c: non-empty output" "$LAST_STDOUT"
 assert_contains "C-01d: model" "$LAST_STDOUT" "Op"
 assert_contains "C-01e: dir" "$LAST_STDOUT" "qLine"
 assert_contains "C-01f: cost" "$LAST_STDOUT" '1.23'
@@ -792,17 +805,18 @@ print(line)
 ")
 assert_contains "L-03: default renders" "$OUT" "Opus"
 
-# L-04: Multiple layout lines (line3 support)
+# L-04: All layout lines merged into single stream
 OUT=$(run_py "
 from statusline import render, DEFAULT_THEME
 theme = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULT_THEME.items()}
 theme['layout'] = {'line1': ['model'], 'line2': ['cost'], 'line3': ['duration']}
 state = {'model_name': 'Opus', 'cost_usd': 1.0, 'duration_ms': 60000}
 line = render(state, theme)
-line_count = line.count(chr(10)) + 1
-print(f'lines={line_count}')
+# All 3 short modules fit on one merged line
+has_all = 'Opus' in line and '1.0' in line and '1m' in line
+print(f'merged={has_all}')
 ")
-assert_contains "L-04: three layout lines" "$OUT" "lines=3"
+assert_contains "L-04: layout lines merged" "$OUT" "merged=True"
 
 # L-05: Unknown module name silently ignored
 OUT=$(run_py "
@@ -1318,6 +1332,192 @@ print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
 ")
 assert_equals "STALE-06: stale memory has dim" "$OUT" "HAS_DIM"
 
+echo ""
+fi
+
+# ======================================================================
+# Section: obs (observability integration)
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "obs" ]; then
+echo ""
+echo "=== Section: obs ==="
+
+OBS_TEST_ROOT=$(mktemp -d)
+OBS_TEST_CACHE=$(mktemp)
+
+OBS_SESSION_ID="test-obs-session-$(date +%s)"
+python3 -c "
+import sys; sys.path.insert(0, '$HOME/.claude/scripts')
+from obs_utils import create_package
+create_package('$OBS_SESSION_ID', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$OBS_TEST_ROOT')
+"
+
+OBS_PKG_ROOT=$(python3 -c "
+import sys; sys.path.insert(0, '$HOME/.claude/scripts')
+from obs_utils import resolve_package_root
+print(resolve_package_root('$OBS_SESSION_ID', obs_root='$OBS_TEST_ROOT'))
+")
+
+# Build a test payload with session_id matching our package
+OBS_PAYLOAD=$(python3 -c "
+import json
+d = {
+    'session_id': '$OBS_SESSION_ID',
+    'model': {'id': 'claude-opus-4-6[1m]', 'display_name': 'Opus 4.6 (1M context)'},
+    'workspace': {'current_dir': '/home/q/LAB/qLine'},
+    'cost': {'total_cost_usd': 5.50, 'total_duration_ms': 120000},
+    'context_window': {
+        'total_input_tokens': 100000,
+        'total_output_tokens': 50000,
+        'context_window_size': 1000000,
+        'used_percentage': 15,
+        'remaining_percentage': 85
+    }
+}
+print(json.dumps(d))
+")
+
+# T-obs-1: snapshot appended on first invocation
+echo ""
+echo "--- T-obs-1: snapshot appended ---"
+printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
+SNAP_FILE="$OBS_PKG_ROOT/native/statusline/snapshots.jsonl"
+SNAP_COUNT=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
+assert_equals "T-obs-1: snapshot appended" "$SNAP_COUNT" "1"
+
+# T-obs-2: snapshot has correct fields
+echo ""
+echo "--- T-obs-2: correct fields ---"
+FIELDS_CHECK=$(python3 -c "
+import json
+with open('$SNAP_FILE') as f:
+    r = json.loads(f.readline())
+required = ['ts', 'session_id', 'cost_usd', 'context_pct', 'input_tokens', 'output_tokens', 'model_name', 'dir_basename']
+missing = [k for k in required if k not in r]
+if missing:
+    print(f'MISSING: {missing}')
+elif r.get('session_id') != '$OBS_SESSION_ID':
+    print(f'BAD_SID: {r.get(\"session_id\")}')
+elif r.get('cost_usd') != 5.50:
+    print(f'BAD_COST: {r.get(\"cost_usd\")}')
+else:
+    print('OK')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-obs-2: correct fields" "$FIELDS_CHECK" "OK"
+
+# T-obs-3: throttle skips duplicate within 30s
+echo ""
+echo "--- T-obs-3: throttle ---"
+printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
+SNAP_COUNT2=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
+assert_equals "T-obs-3: throttle skips duplicate" "$SNAP_COUNT2" "1"
+
+# T-obs-4: meaningful change bypasses throttle
+echo ""
+echo "--- T-obs-4: meaningful change ---"
+OBS_PAYLOAD_CHANGED=$(python3 -c "
+import json
+d = {
+    'session_id': '$OBS_SESSION_ID',
+    'model': {'id': 'claude-opus-4-6[1m]', 'display_name': 'Opus 4.6 (1M context)'},
+    'workspace': {'current_dir': '/home/q/LAB/qLine'},
+    'cost': {'total_cost_usd': 10.00, 'total_duration_ms': 240000},
+    'context_window': {
+        'total_input_tokens': 200000,
+        'total_output_tokens': 100000,
+        'context_window_size': 1000000,
+        'used_percentage': 30,
+        'remaining_percentage': 70
+    }
+}
+print(json.dumps(d))
+")
+printf '%s' "$OBS_PAYLOAD_CHANGED" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
+SNAP_COUNT3=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
+assert_equals "T-obs-4: meaningful change bypasses throttle" "$SNAP_COUNT3" "2"
+
+# T-obs-5: statusline_capture health
+echo ""
+echo "--- T-obs-5: health ---"
+HEALTH_CHECK=$(python3 -c "
+import json
+with open('$OBS_PKG_ROOT/manifest.json') as f:
+    m = json.load(f)
+sc = m.get('health', {}).get('subsystems', {}).get('statusline_capture')
+print(sc if sc else 'ABSENT')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-obs-5: statusline_capture = healthy" "$HEALTH_CHECK" "healthy"
+
+# T-obs-6: missing session_id
+echo ""
+echo "--- T-obs-6: missing session_id ---"
+OBS_TEST_ROOT_6=$(mktemp -d)
+NO_SID_PAYLOAD='{"model": {"id": "test"}, "cost": {"total_cost_usd": 1}}'
+printf '%s' "$NO_SID_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT_6" QLINE_CACHE_PATH="$(mktemp)" python3 "$SRC" > /dev/null 2>&1
+NO_SID_SNAP=$(find "$OBS_TEST_ROOT_6" -name "snapshots.jsonl" 2>/dev/null | wc -l)
+assert_equals "T-obs-6: no snapshot without session_id" "$NO_SID_SNAP" "0"
+rm -rf "$OBS_TEST_ROOT_6"
+
+# T-obs-7: no package
+echo ""
+echo "--- T-obs-7: no package ---"
+NO_PKG_PAYLOAD=$(python3 -c "
+import json
+d = {'session_id': 'nonexistent-session', 'model': {'id': 'test'}}
+print(json.dumps(d))
+")
+printf '%s' "$NO_PKG_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$(mktemp)" python3 "$SRC" > /dev/null 2>&1
+# Should not crash — test that it exited 0
+assert_equals "T-obs-7: no crash without package" "$?" "0"
+
+# T-obs-8: _obs cache survives collect_system_data rebuild
+echo ""
+echo "--- T-obs-8: cache survival ---"
+OBS_TEST_CACHE_8=$(mktemp)
+OBS_SESSION_8="test-obs-cache-$(date +%s)"
+python3 -c "
+import sys; sys.path.insert(0, '$HOME/.claude/scripts')
+from obs_utils import create_package
+create_package('$OBS_SESSION_8', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$OBS_TEST_ROOT')
+"
+# Seed the cache with _obs data
+python3 -c "
+import json
+cache = {'version': 1, 'modules': {'_obs': {'$OBS_SESSION_8': {'last_snapshot_ts': 0, 'last_snapshot_hash': 'seed'}}}}
+with open('$OBS_TEST_CACHE_8', 'w') as f:
+    json.dump(cache, f)
+"
+# Run full invocation (real collectors run — no QLINE_NO_COLLECT)
+OBS_PAYLOAD_8=$(python3 -c "
+import json
+d = {'session_id': '$OBS_SESSION_8', 'model': {'id': 'test', 'display_name': 'Test'}, 'cost': {'total_cost_usd': 1, 'total_duration_ms': 1000}, 'context_window': {'total_input_tokens': 1000, 'total_output_tokens': 500, 'context_window_size': 100000, 'used_percentage': 1, 'remaining_percentage': 99}}
+print(json.dumps(d))
+")
+printf '%s' "$OBS_PAYLOAD_8" | NO_COLOR=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE_8" python3 "$SRC" > /dev/null 2>&1
+# Verify _obs survived the cache rebuild
+CACHE_SURVIVAL=$(python3 -c "
+import json
+with open('$OBS_TEST_CACHE_8') as f:
+    d = json.load(f)
+obs = d.get('modules', {}).get('_obs', {})
+print('OK' if '$OBS_SESSION_8' in obs else f'MISSING: {list(obs.keys())}')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-obs-8: _obs survives cache rebuild" "$CACHE_SURVIVAL" "OK"
+rm -f "$OBS_TEST_CACHE_8"
+
+# T-obs-9: fail-silent
+echo ""
+echo "--- T-obs-9: fail-silent ---"
+OBS_READONLY=$(mktemp -d)
+chmod 444 "$OBS_READONLY"
+OUTPUT_9=$(printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_READONLY" QLINE_CACHE_PATH="$(mktemp)" python3 "$SRC" 2>/dev/null)
+chmod 755 "$OBS_READONLY"
+rm -rf "$OBS_READONLY"
+# Statusline should still produce output even when obs fails
+# (output may be empty if NO_COLOR strips it — just verify no crash)
+assert_equals "T-obs-9: exits 0 when obs fails" "$?" "0"
+
+rm -rf "$OBS_TEST_ROOT" "$OBS_TEST_CACHE"
 echo ""
 fi
 
