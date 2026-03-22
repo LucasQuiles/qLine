@@ -169,14 +169,13 @@ The status line appears at the bottom of the Claude Code interface after restart
 
 ### Upgrading
 
-To update qLine after pulling new changes:
-
 ```bash
 cd qLine
-git pull
-./install.sh
+./update.sh
 # Restart Claude Code
 ```
+
+This pulls the latest changes and re-runs the installer. qLine does not auto-update — run this when you want the latest version.
 
 The installer always overwrites `statusline.py` and `obs_utils.py` with the repo versions. Your `~/.config/qline.toml` is never touched.
 
