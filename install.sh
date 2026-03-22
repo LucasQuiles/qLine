@@ -68,13 +68,8 @@ echo "Installed: $DEST"
 
 # Install obs_utils.py (observability support)
 if [ -f "$OBS_SRC" ]; then
-    # Don't overwrite if user has a newer/customized version
-    if [ -f "$OBS_DEST" ]; then
-        echo "obs_utils.py already exists at $OBS_DEST (skipped)"
-    else
-        cp "$OBS_SRC" "$OBS_DEST"
-        echo "Installed: $OBS_DEST"
-    fi
+    cp "$OBS_SRC" "$OBS_DEST"
+    echo "Installed: $OBS_DEST"
 else
     echo "NOTE: obs_utils.py not found in repo — obs modules will be disabled"
 fi
