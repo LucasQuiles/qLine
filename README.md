@@ -31,7 +31,7 @@ A styled status-line renderer for [Claude Code](https://docs.anthropic.com/en/do
 |---|---|---|---|
 | Python | 3.10 | 3.11+ | 3.10 works but needs `pip install tomli` for TOML config |
 | Nerd Font | Any | UbuntuSansMono | Install on the **client terminal**, not the remote server |
-| OS | Linux / macOS / WSL | Linux | System metrics (`cpu`, `memory`) use `/proc`; macOS/WSL degrade gracefully |
+| OS | Linux / macOS / WSL | Linux | `cpu` and `memory` use `/proc` (Linux only); `disk` uses `os.statvfs` (works everywhere) |
 | Claude Code | Any version with `statusLine` support | Latest | The `statusLine` command hook invokes qLine |
 | jq | — | Any | Only needed by `install.sh` to patch `settings.json`; not a runtime dependency |
 | git | Any | Any | Only needed to clone the repo |
@@ -40,7 +40,7 @@ A styled status-line renderer for [Claude Code](https://docs.anthropic.com/en/do
 
 - **Python 3.10 without tomli**: qLine still works — it uses built-in defaults. You just can't customize via `~/.config/qline.toml` until you install `tomli` or upgrade to 3.11+.
 - **No Nerd Font**: Everything works, but glyphs render as boxes (□) or question marks. The data is still there and readable.
-- **macOS or WSL without `/proc`**: Core modules (model, dir, context, cost, duration, git) work fine. System metrics (cpu, memory, disk) show nothing — they fail silently.
+- **macOS or WSL1 without `/proc`**: Core modules (model, dir, context, cost, duration, git) work fine. `cpu` and `memory` show nothing (they need `/proc`). `disk` works everywhere via `os.statvfs`. WSL2 has `/proc` so all modules work.
 - **No jq**: The install script warns you and skips patching `settings.json`. You'll need to add the `statusLine` entry manually (see [Manual Install](#manual-install)).
 
 ---
@@ -167,6 +167,19 @@ statusLine binding added to /home/you/.claude/settings.json
 
 The status line appears at the bottom of the Claude Code interface after restart. No further action needed — it works with zero configuration.
 
+### Upgrading
+
+To update qLine after pulling new changes:
+
+```bash
+cd qLine
+git pull
+./install.sh
+# Restart Claude Code
+```
+
+The installer always overwrites `statusline.py` and `obs_utils.py` with the repo versions. Your `~/.config/qline.toml` is never touched.
+
 ### Manual Install
 
 If you prefer not to run the script, or if it doesn't work on your system:
@@ -177,9 +190,11 @@ cp src/statusline.py ~/.claude/statusline.py
 cp src/obs_utils.py ~/.claude/obs_utils.py
 chmod +x ~/.claude/statusline.py
 
-# If python3 is too old, fix the shebang
-# (replace python3.12 with your version)
-sed -i '1s|.*|#!/usr/bin/env python3.12|' ~/.claude/statusline.py
+# If python3 is too old (below 3.10), fix the shebang to a newer version.
+# Replace python3.12 with whichever version you have:
+#   Linux:  sed -i '1s|.*|#!/usr/bin/env python3.12|' ~/.claude/statusline.py
+#   macOS:  sed -i '' '1s|.*|#!/usr/bin/env python3.12|' ~/.claude/statusline.py
+# Or simply edit line 1 of the file in any text editor.
 ```
 
 Then add to `~/.claude/settings.json` (create it if it doesn't exist):
@@ -240,13 +255,14 @@ After installing and restarting Claude Code, verify manually:
 
 ```bash
 # Should print a styled line with your model name
-echo '{"model":{"display_name":"Test Model"}}' | python3 ~/.claude/statusline.py
+# Use the script directly (its shebang points to the correct Python)
+echo '{"model":{"display_name":"Test Model"}}' | ~/.claude/statusline.py
 
-# With NO_COLOR for plain text
-echo '{"model":{"display_name":"Test Model"}}' | NO_COLOR=1 python3 ~/.claude/statusline.py
+# With NO_COLOR for plain text (easier to read in verification)
+echo '{"model":{"display_name":"Test Model"}}' | NO_COLOR=1 ~/.claude/statusline.py
 
 # Full payload test
-echo '{"model":{"display_name":"Opus 4.6"},"cost":{"total_cost_usd":1.50,"total_duration_ms":120000},"context_window":{"total_input_tokens":50000,"total_output_tokens":20000,"context_window_size":200000}}' | NO_COLOR=1 python3 ~/.claude/statusline.py
+echo '{"model":{"display_name":"Opus 4.6"},"cost":{"total_cost_usd":1.50,"total_duration_ms":120000},"context_window":{"total_input_tokens":50000,"total_output_tokens":20000,"context_window_size":200000}}' | NO_COLOR=1 ~/.claude/statusline.py
 ```
 
 Expected output for the full test:
@@ -579,7 +595,7 @@ Your terminal font isn't a Nerd Font. Install one on your **local machine** (the
 
 1. Check the file exists: `ls -la ~/.claude/statusline.py`
 2. Check it's executable: `chmod +x ~/.claude/statusline.py`
-3. Test it directly: `echo '{"model":{"display_name":"Test"}}' | python3 ~/.claude/statusline.py`
+3. Test it directly: `echo '{"model":{"display_name":"Test"}}' | ~/.claude/statusline.py`
 4. Check Python version: `python3 --version` (needs 3.10+)
 5. Check the shebang: `head -1 ~/.claude/statusline.py` — does it point to a valid Python?
 
@@ -631,7 +647,7 @@ Or disable modules you don't need to reduce width.
 
 ### CPU/memory bars show nothing
 
-These modules read `/proc/stat` and `/proc/meminfo`. They only work on Linux. On macOS, WSL1, or containers without `/proc`, they silently produce no output. This is expected.
+These modules read `/proc/stat` and `/proc/meminfo`. They only work on Linux. On macOS, WSL1, or containers without `/proc`, they silently produce no output. This is expected. The `disk` module uses `os.statvfs` and works on all platforms.
 
 ---
 
