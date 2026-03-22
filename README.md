@@ -254,6 +254,13 @@ For conda: activate the environment first. For virtualenv: qLine has no pip depe
 After installing and restarting Claude Code, verify manually:
 
 ```bash
+# Check installed version matches the repo
+cd /path/to/qLine
+git log --oneline -1           # note the commit hash
+grep -c '"enabled": False' ~/.claude/statusline.py
+# Should show 12 (agents, tmux, + 10 obs modules)
+# If it shows fewer, re-run: git pull && ./install.sh
+
 # Should print a styled line with your model name
 # Use the script directly (its shebang points to the correct Python)
 echo '{"model":{"display_name":"Test Model"}}' | ~/.claude/statusline.py
@@ -269,6 +276,8 @@ Expected output for the full test:
 ```
 󰚩 Op4.6│↑50.0k↓20.0k 󰋑 ███░░░░░░░ 35%│$1.50│󰥔 2m
 ```
+
+> **Note:** If obs modules appear as enabled when you expect them disabled, your installed copy may be from an older commit. Run `git pull && ./install.sh` to update.
 
 If you see boxes instead of glyphs, your terminal font isn't a Nerd Font (see [Step 3](#3-install-a-nerd-font)).
 
