@@ -304,9 +304,9 @@ If you see nothing, check `python3 --version` and that `~/.claude/statusline.py`
 | `agents` | 󰓌 | Active Claude agent count | `[agents]` `enabled = true` |
 | `tmux` | `tmux` | tmux session/pane count | `[tmux]` `enabled = true` |
 
-### Observability (disabled by default)
+### Observability (disabled by default, listed in layout)
 
-Session telemetry modules. Require the observability infrastructure — see [Observability Setup](#observability-setup).
+Session telemetry modules. Each is `enabled = false` by default. They are listed in the default `line3` layout array so that enabling them in TOML is all you need — no layout editing required. They also require the observability hook infrastructure to produce data — see [Observability Setup](#observability-setup).
 
 | Module | Glyph | Shows | Threshold colors |
 |---|---|---|---|
@@ -595,9 +595,9 @@ Your terminal font isn't a Nerd Font. Install one on your **local machine** (the
 
 1. Check the file exists: `ls -la ~/.claude/statusline.py`
 2. Check it's executable: `chmod +x ~/.claude/statusline.py`
-3. Test it directly: `echo '{"model":{"display_name":"Test"}}' | ~/.claude/statusline.py`
-4. Check Python version: `python3 --version` (needs 3.10+)
-5. Check the shebang: `head -1 ~/.claude/statusline.py` — does it point to a valid Python?
+3. Check the shebang: `head -1 ~/.claude/statusline.py` — does it point to a valid Python 3.10+?
+4. Test the shebang interpreter: run the command from the shebang line with `--version` (e.g., `/usr/bin/env python3 --version`)
+5. Test it directly: `echo '{"model":{"display_name":"Test"}}' | ~/.claude/statusline.py`
 
 ### Status line shows in terminal but not in Claude Code
 
