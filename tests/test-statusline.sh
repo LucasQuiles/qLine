@@ -1147,6 +1147,34 @@ else:
 rm -rf "$MOCK_PROC"
 assert_equals "COL-01: CPU from valid loadavg -> number" "$OUT" "NUMBER"
 
+# COL-01b: CPU capped at 100% even with high load average
+MOCK_PROC=$(mktemp -d)
+echo "20.0 10.0 5.0 1/234 5678" > "$MOCK_PROC/loadavg"
+OUT=$(run_py "
+import os
+os.cpu_count = lambda: 2  # 2 cores with load 20.0 = 1000%
+import statusline
+statusline.PROC_DIR = '$MOCK_PROC'
+state = {}
+statusline.collect_cpu(state)
+print(state.get('cpu_percent', 'ABSENT'))
+")
+rm -rf "$MOCK_PROC"
+assert_equals "COL-01b: CPU capped at 100" "$OUT" "100"
+
+# COL-01c: System metric bar doesn't overflow at 100%
+OUT=$(run_py "
+from statusline import render_cpu, DEFAULT_THEME
+state = {'cpu_percent': 100, '_compact': False}
+result = render_cpu(state, DEFAULT_THEME)
+# Bar should be exactly 5 filled blocks (width=5)
+if result and len([c for c in result if c == chr(9608)]) == 5:
+    print('OK')
+else:
+    print('BAD:' + repr(result))
+")
+assert_equals "COL-01c: bar correct at 100%" "$OUT" "OK"
+
 # COL-02: CPU from missing file (block macOS fallback too)
 MOCK_PROC=$(mktemp -d)
 OUT=$(run_py "

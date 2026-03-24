@@ -777,8 +777,8 @@ def _collect_cpu_linux(state: dict[str, Any]) -> bool:
         cpus = os.cpu_count()
         if cpus is None or cpus <= 0:
             return False
-        pct = int((load1 / cpus) * 100)
-        state["cpu_percent"] = max(0, min(999, pct))
+        pct = round(load1 / cpus * 100)
+        state["cpu_percent"] = max(0, min(100, pct))
         return True
     except Exception:
         return False
@@ -800,8 +800,8 @@ def _collect_cpu_macos(state: dict[str, Any]) -> bool:
     cpus = os.cpu_count()
     if cpus is None or cpus <= 0:
         return False
-    pct = int((load1 / cpus) * 100)
-    state["cpu_percent"] = max(0, min(999, pct))
+    pct = round(load1 / cpus * 100)
+    state["cpu_percent"] = max(0, min(100, pct))
     return True
 
 
@@ -1118,9 +1118,9 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
     warn_t = cfg.get("warn_threshold", 60.0)
     crit_t = cfg.get("critical_threshold", 85.0)
 
-    # Mini progress bar
+    # Mini progress bar (clamp filled to width to prevent overflow)
     width = cfg.get("width", 5)
-    filled = round(pct * width / 100)
+    filled = min(width, max(0, round(pct * width / 100)))
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
     if state.get("_compact") and compact_label:
