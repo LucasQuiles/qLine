@@ -668,16 +668,20 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     warn_t = cfg.get("warn_threshold", 40.0)
     crit_t = cfg.get("critical_threshold", 70.0)
 
+    # Remaining tokens suffix (e.g., "580k left")
+    remaining = state["context_total"] - state["context_used"]
+    remaining_str = f" {_abbreviate_count(max(0, remaining))}\u2190" if remaining > 0 else ""
+
     if pct >= crit_t:
-        suffix = f" {pct}%!"
+        suffix = f" {pct}%!{remaining_str}"
         color = cfg.get("critical_color", "#d06070")
         bold = True
     elif pct >= warn_t:
-        suffix = f" {pct}%~"
+        suffix = f" {pct}%~{remaining_str}"
         color = cfg.get("warn_color", "#f0d399")
         bold = False
     else:
-        suffix = f" {pct}%"
+        suffix = f" {pct}%{remaining_str}"
         color = cfg.get("color", "#b5d4a0")
         bold = False
 

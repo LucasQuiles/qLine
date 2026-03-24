@@ -609,6 +609,15 @@ print(_format_duration(0))
 ")
 assert_equals "R-10f: zero duration -> 0s" "$OUT" "0s"
 
+# R-10g-pre: Context bar shows remaining tokens
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {'context_used': 420000, 'context_total': 1000000}
+result = render_context_bar(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "R-10g-pre: remaining shown" "$OUT" "580k"
+
 # R-10g: Context bar with zero total -> None (no crash)
 OUT=$(run_py "
 from statusline import render_context_bar, DEFAULT_THEME
