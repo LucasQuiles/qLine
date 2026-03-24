@@ -546,6 +546,33 @@ print(bar)
 assert_contains "R-08a: filled blocks" "$OUT" "█████"
 assert_contains "R-08b: empty blocks" "$OUT" "░░░░░"
 
+# R-08c: Cost rate shown when duration > 60s
+OUT=$(run_py "
+from statusline import render_cost, DEFAULT_THEME
+state = {'cost_usd': 5.0, 'duration_ms': 3600000}
+result = render_cost(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "R-08c: cost rate present" "$OUT" "@5.00/h"
+
+# R-08d: Cost rate hidden when duration < 60s
+OUT=$(run_py "
+from statusline import render_cost, DEFAULT_THEME
+state = {'cost_usd': 0.50, 'duration_ms': 30000}
+result = render_cost(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_not_contains "R-08d: no rate under 60s" "$OUT" "@"
+
+# R-08e: Cost rate with fractional hour (2.50 in 30min = 5.00/hr)
+OUT=$(run_py "
+from statusline import render_cost, DEFAULT_THEME
+state = {'cost_usd': 2.50, 'duration_ms': 1800000}
+result = render_cost(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "R-08e: rate calc correct" "$OUT" "@5.00/h"
+
 # R-09: Cost formatting
 OUT=$(run_py "
 from statusline import _format_cost

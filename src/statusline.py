@@ -700,12 +700,19 @@ def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render cost module with threshold coloring."""
+    """Render cost module with threshold coloring and $/hr rate."""
     if "cost_usd" not in state:
         return None
     c_cfg = theme.get("cost", {})
     cost_val = state["cost_usd"]
-    cost_text = f"{c_cfg.get('glyph', '')}{_format_cost(cost_val)}"
+    # Compute $/hr rate when duration is available and >60s
+    rate_suffix = ""
+    duration_ms = state.get("duration_ms")
+    if isinstance(duration_ms, (int, float)) and duration_ms > 60_000 and cost_val > 0:
+        hours = duration_ms / 3_600_000
+        rate = cost_val / hours
+        rate_suffix = f" @{_format_cost(rate)}/h"
+    cost_text = f"{c_cfg.get('glyph', '')}{_format_cost(cost_val)}{rate_suffix}"
     warn_t = c_cfg.get("warn_threshold", 2.0)
     crit_t = c_cfg.get("critical_threshold", 5.0)
     if cost_val >= crit_t:
