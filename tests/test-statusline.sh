@@ -603,8 +603,19 @@ from statusline import _format_cost
 print(_format_cost(0.001))
 print(_format_cost(5.50))
 ")
-assert_contains "R-09a: small cost" "$OUT" '0.0010'
+assert_contains "R-09a: small cost in cents" "$OUT" '0.1'
 assert_contains "R-09b: normal cost" "$OUT" '5.50'
+
+# R-09c: Tiny cost shows cents notation
+OUT=$(run_py "
+from statusline import _format_cost
+print(_format_cost(0.0005))
+print(_format_cost(0.005))
+print(_format_cost(100.5))
+")
+assert_contains "R-09c: very tiny cost" "$OUT" "0.05"
+assert_contains "R-09d: sub-cent" "$OUT" "0.5"
+assert_contains "R-09e: large cost integer" "$OUT" "100"
 
 # R-10: Duration formatting
 OUT=$(run_py "

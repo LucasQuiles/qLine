@@ -493,9 +493,17 @@ def _sanitize_fragment(text: str) -> str:
 
 
 def _format_cost(cost_usd: float) -> str:
-    """Format cost with appropriate precision."""
+    """Format cost with appropriate precision.
+
+    Tiers: <$0.01 → show cents (0.3¢), $0.01-$99 → 2 decimals, >=$100 → integer.
+    """
     if cost_usd < 0.01:
-        return f"{cost_usd:.4f}"
+        cents = cost_usd * 100
+        if cents < 0.1:
+            return f"{cents:.2f}\u00a2"
+        return f"{cents:.1f}\u00a2"
+    if cost_usd >= 100:
+        return f"{int(cost_usd)}"
     return f"{cost_usd:.2f}"
 
 
