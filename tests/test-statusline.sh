@@ -1329,6 +1329,35 @@ else:
 assert_contains "COL-06c: memory within 5pp of top" "$OUT" "PASS:"
 fi
 
+# COL-06d: Live macOS CPU cross-validation vs top (skipped on Linux)
+if [ "$(uname)" = "Darwin" ]; then
+OUT=$(python3 -c "
+import sys, subprocess, os
+sys.path.insert(0, '$REPO_DIR/src')
+os.environ['NO_COLOR'] = '1'
+from statusline import _collect_cpu_macos
+state = {}
+_collect_cpu_macos(state)
+qline = state.get('cpu_percent', -1)
+top = subprocess.run(['top', '-l', '1', '-n', '0'], capture_output=True, text=True)
+top_cpu = -1
+for line in top.stdout.splitlines():
+    if 'CPU usage' in line:
+        parts = line.split(',')
+        user = float(parts[0].split(':')[1].strip().replace('% user', ''))
+        sys_p = float(parts[1].strip().replace('% sys', ''))
+        top_cpu = round(user + sys_p)
+        break
+delta = abs(qline - top_cpu)
+# 20pp tolerance — load avg is trailing, top is instantaneous
+if delta <= 20:
+    print(f'PASS:{delta}pp')
+else:
+    print(f'FAIL:qline={qline} top={top_cpu} delta={delta}pp')
+" 2>&1)
+assert_contains "COL-06d: CPU within 20pp of top" "$OUT" "PASS:"
+fi
+
 # COL-07: Disk from real statvfs -> percentage between 0 and 100
 OUT=$(run_py "
 import statusline
