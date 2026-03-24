@@ -1307,26 +1307,31 @@ from statusline import _collect_memory_macos
 state = {}
 _collect_memory_macos(state)
 qline = state.get('memory_percent', -1)
-# Get top ground truth
-top = subprocess.run(['top', '-l', '1', '-n', '0'], capture_output=True, text=True)
-top_pct = -1
-for line in top.stdout.splitlines():
-    if 'PhysMem' in line:
-        parts = line.split(',')
-        used_s = parts[0].split(':')[1].strip().split()[0]
-        unused_s = parts[-1].strip().split()[0]
-        u = float(used_s.replace('G','').replace('M','')) * (1 if 'G' in used_s else 1/1024)
-        f = float(unused_s.replace('G','').replace('M','')) * (1 if 'G' in unused_s else 1/1024)
-        top_pct = round(u / (u + f) * 100)
-        break
-delta = abs(qline - top_pct)
-# Allow 5pp tolerance (memory fluctuates between measurements)
+# Independent Activity Monitor formula as ground truth
+import resource
+hw = int(subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, text=True).stdout.strip())
+vm = subprocess.run(['vm_stat'], capture_output=True, text=True).stdout
+ps = resource.getpagesize()
+ps_hdr = vm.splitlines()[0] if vm.splitlines() else ''
+if 'page size of' in ps_hdr:
+    try: ps = int(ps_hdr.split('page size of')[1].strip().split()[0])
+    except: pass
+f = {}
+for ln in vm.splitlines()[1:]:
+    if ':' not in ln: continue
+    k, _, v = ln.partition(':')
+    try: f[k.strip()] = int(v.strip().rstrip('.'))
+    except: pass
+am_used = (f.get('Anonymous pages',0) + f.get('Pages wired down',0) + f.get('Pages occupied by compressor',0)) * ps
+am_pct = round(am_used * 100 / hw)
+delta = abs(qline - am_pct)
+# 5pp tolerance (memory fluctuates between measurements)
 if delta <= 5:
-    print(f'PASS:{delta}pp')
+    print(f'PASS:{delta}pp (qline={qline} am={am_pct})')
 else:
-    print(f'FAIL:qline={qline} top={top_pct} delta={delta}pp')
+    print(f'FAIL:qline={qline} am={am_pct} delta={delta}pp')
 " 2>&1)
-assert_contains "COL-06c: memory within 5pp of top" "$OUT" "PASS:"
+assert_contains "COL-06c: memory within 5pp of Activity Monitor" "$OUT" "PASS:"
 fi
 
 # COL-06d: Live macOS CPU cross-validation vs top (skipped on Linux)

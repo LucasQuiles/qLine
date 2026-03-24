@@ -888,11 +888,14 @@ def _collect_memory_macos(state: dict[str, Any]) -> bool:
             fields[key] = int(val)
         except ValueError:
             continue
-    # Only free + speculative pages are truly unused (matches `top` PhysMem).
-    # Inactive pages are physically resident and shown as "used" by top/Activity Monitor.
-    free_pages = fields.get("Pages free", 0) + fields.get("Pages speculative", 0)
-    available_bytes = free_pages * page_size
-    used_bytes = total_bytes - available_bytes
+    # Match Activity Monitor: Used = App Memory (anonymous) + Wired + Compressed.
+    # File-backed (cached) pages are instantly reclaimable and not "used" from
+    # a user perspective. top counts them as used, but AM doesn't — AM is what
+    # users expect when they see a memory percentage.
+    anonymous = fields.get("Anonymous pages", 0)
+    wired = fields.get("Pages wired down", 0)
+    compressor = fields.get("Pages occupied by compressor", 0)
+    used_bytes = (anonymous + wired + compressor) * page_size
     pct = round(used_bytes * 100 / total_bytes)
     state["memory_percent"] = max(0, min(100, pct))
     return True
