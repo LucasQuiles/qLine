@@ -1371,6 +1371,28 @@ else:
 ")
 assert_equals "COL-07: Disk from real statvfs -> valid pct" "$OUT" "VALID"
 
+# COL-07b: Disk nonexistent path -> ABSENT (no crash)
+OUT=$(run_py "
+import statusline
+state = {}
+statusline.collect_disk(state, path='/nonexistent/path/12345')
+print(state.get('disk_percent', 'ABSENT'))
+")
+assert_equals "COL-07b: nonexistent disk path -> ABSENT" "$OUT" "ABSENT"
+
+# COL-07c: Disk 0-100% range enforced
+OUT=$(run_py "
+import statusline
+state = {}
+statusline.collect_disk(state)
+val = state.get('disk_percent', -1)
+if isinstance(val, int) and 0 <= val <= 100:
+    print('IN_RANGE')
+else:
+    print(f'OUT_OF_RANGE:{val}')
+")
+assert_equals "COL-07c: disk in 0-100 range" "$OUT" "IN_RANGE"
+
 # COL-08: Git in a repo
 GIT_TMP=$(mktemp -d)
 (cd "$GIT_TMP" && git init -q && git commit --allow-empty -m "init" -q)
