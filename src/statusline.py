@@ -907,17 +907,16 @@ def collect_memory(state: dict[str, Any]) -> None:
         return
 
 
-def collect_disk(state: dict[str, Any]) -> None:
+def collect_disk(state: dict[str, Any], path: str = "/") -> None:
     """Collect disk usage percentage via os.statvfs."""
     try:
-        path = getattr(collect_disk, "_path", "/")
         st = os.statvfs(path)
         total = st.f_blocks * st.f_frsize
         available = st.f_bavail * st.f_frsize
         if total <= 0:
             return
         used = total - available
-        pct = (used * 100) // total
+        pct = round(used * 100 / total)
         state["disk_percent"] = max(0, min(100, pct))
     except Exception:
         return
@@ -1087,10 +1086,11 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
         cfg = theme.get(name, {})
         if not cfg.get("enabled", True):
             continue
-        if name == "disk":
-            collect_disk._path = cfg.get("path", "/")
         try:
-            fn(state)
+            if name == "disk":
+                fn(state, path=cfg.get("path", "/"))
+            else:
+                fn(state)
             _cache_module(new_cache, state, name, now)
         except Exception:
             _apply_cached(state, cache, name, now)
