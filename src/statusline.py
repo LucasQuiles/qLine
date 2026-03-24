@@ -570,7 +570,7 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
     """Render context progress bar with threshold coloring."""
     cfg = theme.get("context_bar", {})
     width = cfg.get("width", 10)
-    filled = (pct * width) // 100
+    filled = round(pct * width / 100)
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
     warn_t = cfg.get("warn_threshold", 40.0)
@@ -658,9 +658,9 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     if "context_used" not in state or "context_total" not in state:
         return None
     cfg = theme.get("context_bar", {})
-    pct = (state["context_used"] * 100) // state["context_total"]
+    pct = round(state["context_used"] * 100 / state["context_total"])
     width = cfg.get("width", 10)
-    filled = (pct * width) // 100
+    filled = round(pct * width / 100)
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
     warn_t = cfg.get("warn_threshold", 40.0)
@@ -728,30 +728,61 @@ def render_duration(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 # --- System Collectors ---
 
 
-def collect_cpu(state: dict[str, Any]) -> None:
-    """Collect CPU load as percentage from /proc/loadavg."""
+def _collect_cpu_linux(state: dict[str, Any]) -> bool:
+    """Collect CPU from /proc/loadavg (Linux). Returns True on success."""
     try:
         with open(os.path.join(PROC_DIR, "loadavg")) as f:
             content = f.read()
         if not content.strip():
-            return
+            return False
         load1 = float(content.split()[0])
         cpus = os.cpu_count()
         if cpus is None or cpus <= 0:
-            return
+            return False
         pct = int((load1 / cpus) * 100)
         state["cpu_percent"] = max(0, min(999, pct))
+        return True
+    except Exception:
+        return False
+
+
+def _collect_cpu_macos(state: dict[str, Any]) -> bool:
+    """Collect CPU from sysctl vm.loadavg (macOS). Returns True on success."""
+    out = _run_cmd(["sysctl", "-n", "vm.loadavg"], timeout=0.05)
+    if out is None:
+        return False
+    # Output format: "{ 1.23 4.56 7.89 }" — extract 1-minute load
+    parts = out.strip().strip("{}").split()
+    if not parts:
+        return False
+    try:
+        load1 = float(parts[0])
+    except (ValueError, IndexError):
+        return False
+    cpus = os.cpu_count()
+    if cpus is None or cpus <= 0:
+        return False
+    pct = int((load1 / cpus) * 100)
+    state["cpu_percent"] = max(0, min(999, pct))
+    return True
+
+
+def collect_cpu(state: dict[str, Any]) -> None:
+    """Collect CPU load as percentage. Tries /proc (Linux), falls back to sysctl (macOS)."""
+    try:
+        if not _collect_cpu_linux(state):
+            _collect_cpu_macos(state)
     except Exception:
         return
 
 
-def collect_memory(state: dict[str, Any]) -> None:
-    """Collect memory usage percentage from /proc/meminfo."""
+def _collect_memory_linux(state: dict[str, Any]) -> bool:
+    """Collect memory from /proc/meminfo (Linux). Returns True on success."""
     try:
         with open(os.path.join(PROC_DIR, "meminfo")) as f:
             content = f.read()
         if not content.strip():
-            return
+            return False
         fields: dict[str, int] = {}
         for line in content.splitlines():
             parts = line.split(":")
@@ -766,17 +797,74 @@ def collect_memory(state: dict[str, Any]) -> None:
             except ValueError:
                 continue
         if "MemTotal" not in fields or fields["MemTotal"] <= 0:
-            return
+            return False
         total = fields["MemTotal"]
         if "MemAvailable" in fields:
             available = fields["MemAvailable"]
         elif "MemFree" in fields:
             available = fields["MemFree"] + fields.get("Buffers", 0) + fields.get("Cached", 0)
         else:
-            return
+            return False
         used = total - available
         pct = (used * 100) // total
         state["memory_percent"] = max(0, min(100, pct))
+        return True
+    except Exception:
+        return False
+
+
+def _collect_memory_macos(state: dict[str, Any]) -> bool:
+    """Collect memory from vm_stat + sysctl (macOS). Returns True on success."""
+    # Get total physical memory
+    hw_out = _run_cmd(["sysctl", "-n", "hw.memsize"], timeout=0.05)
+    if hw_out is None:
+        return False
+    try:
+        total_bytes = int(hw_out.strip())
+    except (ValueError, TypeError):
+        return False
+    if total_bytes <= 0:
+        return False
+    # Get page-level breakdown from vm_stat
+    vm_out = _run_cmd(["vm_stat"], timeout=0.05)
+    if vm_out is None:
+        return False
+    # Parse vm_stat output — each line: "Pages <type>:  <count>."
+    page_size = 16384  # default on Apple Silicon
+    ps_line = vm_out.splitlines()[0] if vm_out.splitlines() else ""
+    if "page size of" in ps_line:
+        try:
+            page_size = int(ps_line.split("page size of")[1].strip().split()[0])
+        except (ValueError, IndexError):
+            pass
+    fields: dict[str, int] = {}
+    for line in vm_out.splitlines()[1:]:
+        if ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip()
+        val = val.strip().rstrip(".")
+        try:
+            fields[key] = int(val)
+        except ValueError:
+            continue
+    # Used = wired + compressor + active + inactive - purgeable
+    # Available ≈ free + speculative + purgeable
+    free_pages = fields.get("Pages free", 0) + fields.get("Pages speculative", 0)
+    inactive_pages = fields.get("Pages inactive", 0)
+    purgeable = fields.get("Pages purgeable", 0)
+    available_bytes = (free_pages + inactive_pages + purgeable) * page_size
+    used_bytes = total_bytes - available_bytes
+    pct = (used_bytes * 100) // total_bytes
+    state["memory_percent"] = max(0, min(100, pct))
+    return True
+
+
+def collect_memory(state: dict[str, Any]) -> None:
+    """Collect memory usage percentage. Tries /proc (Linux), falls back to vm_stat (macOS)."""
+    try:
+        if not _collect_memory_linux(state):
+            _collect_memory_macos(state)
     except Exception:
         return
 
@@ -994,7 +1082,7 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
 
     # Mini progress bar
     width = cfg.get("width", 5)
-    filled = (pct * width) // 100
+    filled = round(pct * width / 100)
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
     if state.get("_compact") and compact_label:

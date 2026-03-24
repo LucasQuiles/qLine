@@ -113,7 +113,7 @@ assert_single_line() {
         return
     fi
     local line_count
-    line_count=$(printf '%s\n' "$output" | wc -l)
+    line_count=$(printf '%s\n' "$output" | wc -l | tr -d ' ')
     if [ "$line_count" = "1" ]; then
         echo "  PASS: $label"
         PASS=$((PASS + 1))
@@ -465,12 +465,15 @@ line = render(state, DEFAULT_THEME)
 print(line)
 ")
 # Glyphs are present but NO_COLOR strips ANSI
-assert_contains "R-02a: model with glyph" "$OUT" $'\U000f06a9 Opus'
-assert_contains "R-02b: dir with glyph" "$OUT" $'\U000f0770 qLine'
+GLYPH_MODEL=$(printf '\xf3\xb0\x9a\xa9')   # U+F06A9
+GLYPH_DIR=$(printf '\xf3\xb0\x9d\xb0')     # U+F0770
+GLYPH_CLOCK=$(printf '\xf3\xb0\xa5\x94')   # U+F0954
+assert_contains "R-02a: model with glyph" "$OUT" "$GLYPH_MODEL Opus"
+assert_contains "R-02b: dir with glyph" "$OUT" "$GLYPH_DIR qLine"
 assert_contains "R-02c: bar present" "$OUT" "50%"
 assert_contains "R-02d: tokens present" "$OUT" "12.3k"
 assert_contains "R-02e: cost with glyph" "$OUT" '$1.23'
-assert_contains "R-02f: duration with glyph" "$OUT" $'\U000f0954 45s'
+assert_contains "R-02f: duration with glyph" "$OUT" "$GLYPH_CLOCK 45s"
 assert_contains "R-02g: separator" "$OUT" "│"
 
 # R-03: Missing modules omitted
@@ -516,6 +519,23 @@ print(render_bar(30, DEFAULT_THEME))
 assert_contains "R-07a: normal at 30%" "$OUT" "30%"
 assert_not_contains "R-07b: no warn suffix" "$OUT" "~"
 assert_not_contains "R-07c: no critical suffix" "$OUT" "!"
+
+# R-07d: Precision at 15% — round(15*10/100)=round(1.5)=2 filled (vs int div=1)
+OUT=$(run_py "
+from statusline import render_bar, DEFAULT_THEME
+print(render_bar(15, DEFAULT_THEME))
+")
+assert_contains "R-07d: 15% shows 2 filled" "$OUT" "██░"
+assert_contains "R-07d-b: 15% label" "$OUT" "15%"
+
+# R-07e: Context bar precision — 0.8% rounds to 1%
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {'context_used': 8000, 'context_total': 1000000}
+result = render_context_bar(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "R-07e: sub-1% rounds to 1%" "$OUT" "1%"
 
 # R-08: Bar characters
 OUT=$(run_py "
@@ -617,7 +637,7 @@ rm -f "$TMPTOML"
 assert_contains "CF-02: malformed TOML uses defaults" "$OUT" "#d8dee9"
 
 # CF-03: Partial override merges correctly
-TMPTOML=$(mktemp --suffix=.toml)
+TMPTOML=$(mktemp)
 cat > "$TMPTOML" << 'TOML'
 [model]
 color = "#ff0000"
@@ -636,7 +656,7 @@ assert_contains "CF-03b: preserved model bold" "$OUT" "MODEL_BOLD:False"
 assert_contains "CF-03c: untouched cost color" "$OUT" "COST_COLOR:#e0956a"
 
 # CF-04: Full override
-TMPTOML=$(mktemp --suffix=.toml)
+TMPTOML=$(mktemp)
 cat > "$TMPTOML" << 'TOML'
 [context_bar]
 width = 20
@@ -903,7 +923,8 @@ print(result or 'NONE')
 ")
 assert_contains "L-11: worktree marker" "$OUT" "qLine"
 # Check the marker character is present
-assert_contains "L-11b: marker char" "$OUT" $'\u229b'
+GLYPH_WORKTREE=$(printf '\xe2\x8a\x9b')  # U+229B
+assert_contains "L-11b: marker char" "$OUT" "$GLYPH_WORKTREE"
 
 # L-12: No worktree marker when false
 OUT=$(run_py "
@@ -989,11 +1010,12 @@ else:
 rm -rf "$MOCK_PROC"
 assert_equals "COL-01: CPU from valid loadavg -> number" "$OUT" "NUMBER"
 
-# COL-02: CPU from missing file
+# COL-02: CPU from missing file (block macOS fallback too)
 MOCK_PROC=$(mktemp -d)
 OUT=$(run_py "
 import statusline
 statusline.PROC_DIR = '$MOCK_PROC'
+statusline._run_cmd = lambda *a, **kw: None  # block sysctl fallback
 state = {}
 statusline.collect_cpu(state)
 print(state.get('cpu_percent', 'ABSENT'))
@@ -1001,12 +1023,13 @@ print(state.get('cpu_percent', 'ABSENT'))
 rm -rf "$MOCK_PROC"
 assert_equals "COL-02: CPU from missing file -> ABSENT" "$OUT" "ABSENT"
 
-# COL-03: CPU from empty file
+# COL-03: CPU from empty file (block macOS fallback too)
 MOCK_PROC=$(mktemp -d)
 echo -n "" > "$MOCK_PROC/loadavg"
 OUT=$(run_py "
 import statusline
 statusline.PROC_DIR = '$MOCK_PROC'
+statusline._run_cmd = lambda *a, **kw: None  # block sysctl fallback
 state = {}
 statusline.collect_cpu(state)
 print(state.get('cpu_percent', 'ABSENT'))
@@ -1054,11 +1077,12 @@ rm -rf "$MOCK_PROC"
 # used = 16384000 - 5500000 = 10884000, pct = (10884000 * 100) // 16384000 = 66
 assert_equals "COL-05: Memory fallback -> 66%" "$OUT" "66"
 
-# COL-06: Memory from missing file
+# COL-06: Memory from missing file (block macOS fallback too)
 MOCK_PROC=$(mktemp -d)
 OUT=$(run_py "
 import statusline
 statusline.PROC_DIR = '$MOCK_PROC'
+statusline._run_cmd = lambda *a, **kw: None  # block vm_stat fallback
 state = {}
 statusline.collect_memory(state)
 print(state.get('memory_percent', 'ABSENT'))
@@ -1168,6 +1192,62 @@ result = render_agents(state, DEFAULT_THEME)
 print(result or 'NONE')
 ")
 assert_equals "COL-15: agents missing hidden" "$OUT" "NONE"
+
+# COL-16: macOS CPU fallback (mock sysctl output)
+OUT=$(run_py "
+import statusline
+statusline.PROC_DIR = '/nonexistent'  # block Linux path
+statusline._run_cmd = lambda cmd, **kw: '{ 2.50 1.20 0.80 }\n' if 'vm.loadavg' in cmd else None
+import os
+os.cpu_count = lambda: 4
+state = {}
+statusline.collect_cpu(state)
+val = state.get('cpu_percent', 'ABSENT')
+# 2.50 / 4 * 100 = 62
+print(val)
+")
+assert_equals "COL-16: macOS CPU from sysctl -> 62" "$OUT" "62"
+
+# COL-17: macOS memory fallback (mock vm_stat + sysctl output)
+OUT=$(run_py "
+import statusline
+statusline.PROC_DIR = '/nonexistent'  # block Linux path
+def mock_cmd(cmd, **kw):
+    if 'hw.memsize' in cmd:
+        return '17179869184\n'  # 16 GB
+    if cmd == ['vm_stat']:
+        return '''Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                               50000.
+Pages active:                            200000.
+Pages inactive:                          100000.
+Pages speculative:                         5000.
+Pages throttled:                              0.
+Pages wired down:                        150000.
+Pages purgeable:                          10000.
+Pages compressor:                         80000.
+'''
+    return None
+statusline._run_cmd = mock_cmd
+state = {}
+statusline.collect_memory(state)
+val = state.get('memory_percent', 'ABSENT')
+if isinstance(val, int) and 0 <= val <= 100:
+    print('VALID:' + str(val))
+else:
+    print('INVALID:' + str(val))
+")
+assert_contains "COL-17: macOS memory from vm_stat -> valid" "$OUT" "VALID:"
+
+# COL-18: macOS CPU sysctl failure -> ABSENT
+OUT=$(run_py "
+import statusline
+statusline.PROC_DIR = '/nonexistent'
+statusline._run_cmd = lambda *a, **kw: None
+state = {}
+statusline.collect_cpu(state)
+print(state.get('cpu_percent', 'ABSENT'))
+")
+assert_equals "COL-18: macOS CPU sysctl fail -> ABSENT" "$OUT" "ABSENT"
 
 echo ""
 fi
@@ -1347,13 +1427,13 @@ OBS_TEST_CACHE=$(mktemp)
 
 OBS_SESSION_ID="test-obs-session-$(date +%s)"
 python3 -c "
-import sys; sys.path.insert(0, '$HOME/.claude/scripts')
+import sys; sys.path.insert(0, '$REPO_DIR/src'); sys.path.insert(0, '$HOME/.claude')
 from obs_utils import create_package
 create_package('$OBS_SESSION_ID', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$OBS_TEST_ROOT')
 "
 
 OBS_PKG_ROOT=$(python3 -c "
-import sys; sys.path.insert(0, '$HOME/.claude/scripts')
+import sys; sys.path.insert(0, '$REPO_DIR/src'); sys.path.insert(0, '$HOME/.claude')
 from obs_utils import resolve_package_root
 print(resolve_package_root('$OBS_SESSION_ID', obs_root='$OBS_TEST_ROOT'))
 ")
@@ -1382,7 +1462,7 @@ echo ""
 echo "--- T-obs-1: snapshot appended ---"
 printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
 SNAP_FILE="$OBS_PKG_ROOT/native/statusline/snapshots.jsonl"
-SNAP_COUNT=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
+SNAP_COUNT=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-1: snapshot appended" "$SNAP_COUNT" "1"
 
 # T-obs-2: snapshot has correct fields
@@ -1409,7 +1489,7 @@ assert_equals "T-obs-2: correct fields" "$FIELDS_CHECK" "OK"
 echo ""
 echo "--- T-obs-3: throttle ---"
 printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
-SNAP_COUNT2=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
+SNAP_COUNT2=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-3: throttle skips duplicate" "$SNAP_COUNT2" "1"
 
 # T-obs-4: meaningful change bypasses throttle
@@ -1433,7 +1513,7 @@ d = {
 print(json.dumps(d))
 ")
 printf '%s' "$OBS_PAYLOAD_CHANGED" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
-SNAP_COUNT3=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
+SNAP_COUNT3=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-4: meaningful change bypasses throttle" "$SNAP_COUNT3" "2"
 
 # T-obs-5: statusline_capture health
@@ -1454,7 +1534,7 @@ echo "--- T-obs-6: missing session_id ---"
 OBS_TEST_ROOT_6=$(mktemp -d)
 NO_SID_PAYLOAD='{"model": {"id": "test"}, "cost": {"total_cost_usd": 1}}'
 printf '%s' "$NO_SID_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT_6" QLINE_CACHE_PATH="$(mktemp)" python3 "$SRC" > /dev/null 2>&1
-NO_SID_SNAP=$(find "$OBS_TEST_ROOT_6" -name "snapshots.jsonl" 2>/dev/null | wc -l)
+NO_SID_SNAP=$(find "$OBS_TEST_ROOT_6" -name "snapshots.jsonl" 2>/dev/null | wc -l | tr -d ' ')
 assert_equals "T-obs-6: no snapshot without session_id" "$NO_SID_SNAP" "0"
 rm -rf "$OBS_TEST_ROOT_6"
 
@@ -1476,7 +1556,7 @@ echo "--- T-obs-8: cache survival ---"
 OBS_TEST_CACHE_8=$(mktemp)
 OBS_SESSION_8="test-obs-cache-$(date +%s)"
 python3 -c "
-import sys; sys.path.insert(0, '$HOME/.claude/scripts')
+import sys; sys.path.insert(0, '$REPO_DIR/src'); sys.path.insert(0, '$HOME/.claude')
 from obs_utils import create_package
 create_package('$OBS_SESSION_8', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$OBS_TEST_ROOT')
 "
