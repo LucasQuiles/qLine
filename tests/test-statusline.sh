@@ -1539,6 +1539,19 @@ print(state.get('cpu_percent', 'ABSENT'))
 ")
 assert_equals "COL-18: macOS CPU sysctl fail -> ABSENT" "$OUT" "ABSENT"
 
+# COL-19: End-to-end real collectors produce sane output (macOS only)
+if [ "$(uname)" = "Darwin" ]; then
+PAYLOAD='{"model":{"display_name":"Test"},"cost":{"total_cost_usd":1.0,"total_duration_ms":60000},"context_window":{"context_window_size":100000,"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":500}}'
+E2E_OUT=$(printf '%s' "$PAYLOAD" | NO_COLOR=1 python3 "$SRC" 2>/dev/null)
+E2E_EXIT=$?
+assert_exit_zero "COL-19a: e2e exit 0" "$E2E_EXIT"
+assert_not_empty "COL-19b: e2e non-empty" "$E2E_OUT"
+# Should contain CPU and memory modules (macOS collectors now work)
+assert_contains "COL-19c: e2e has CPU" "$E2E_OUT" "C:"
+assert_contains "COL-19d: e2e has memory" "$E2E_OUT" "M:"
+assert_contains "COL-19e: e2e has disk" "$E2E_OUT" "D:"
+fi
+
 echo ""
 fi
 
