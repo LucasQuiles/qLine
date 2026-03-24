@@ -1227,6 +1227,32 @@ print(state.get('memory_percent', 'ABSENT'))
 rm -rf "$MOCK_PROC"
 assert_equals "COL-06: Memory missing file -> ABSENT" "$OUT" "ABSENT"
 
+# COL-06b: macOS memory with malformed vm_stat header still works (page_size fallback)
+OUT=$(run_py "
+import statusline
+statusline.PROC_DIR = '/nonexistent'
+def mock_cmd(cmd, **kw):
+    if 'hw.memsize' in cmd:
+        return '17179869184\n'
+    if cmd == ['vm_stat']:
+        # Missing page size line — fallback should use resource.getpagesize()
+        return '''Pages free:                               50000.
+Pages active:                            200000.
+Pages speculative:                         5000.
+Pages wired down:                        150000.
+'''
+    return None
+statusline._run_cmd = mock_cmd
+state = {}
+statusline._collect_memory_macos(state)
+val = state.get('memory_percent', 'ABSENT')
+if isinstance(val, int) and 0 <= val <= 100:
+    print('VALID:' + str(val))
+else:
+    print('INVALID:' + str(val))
+")
+assert_contains "COL-06b: page_size fallback works" "$OUT" "VALID:"
+
 # COL-07: Disk from real statvfs -> percentage between 0 and 100
 OUT=$(run_py "
 import statusline

@@ -868,7 +868,9 @@ def _collect_memory_macos(state: dict[str, Any]) -> bool:
     if vm_out is None:
         return False
     # Parse vm_stat output — each line: "Pages <type>:  <count>."
-    page_size = 16384  # default on Apple Silicon
+    # Page size: parse from vm_stat header, fall back to OS (works on both Intel 4096 and ARM 16384)
+    import resource
+    page_size = resource.getpagesize()  # correct for running architecture
     ps_line = vm_out.splitlines()[0] if vm_out.splitlines() else ""
     if "page size of" in ps_line:
         try:
