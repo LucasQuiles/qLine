@@ -868,14 +868,12 @@ def _collect_memory_macos(state: dict[str, Any]) -> bool:
             fields[key] = int(val)
         except ValueError:
             continue
-    # Used = wired + compressor + active + inactive - purgeable
-    # Available ≈ free + speculative + purgeable
+    # Available = free + speculative + inactive (purgeable is subset of inactive)
     free_pages = fields.get("Pages free", 0) + fields.get("Pages speculative", 0)
     inactive_pages = fields.get("Pages inactive", 0)
-    purgeable = fields.get("Pages purgeable", 0)
-    available_bytes = (free_pages + inactive_pages + purgeable) * page_size
+    available_bytes = (free_pages + inactive_pages) * page_size
     used_bytes = total_bytes - available_bytes
-    pct = (used_bytes * 100) // total_bytes
+    pct = round(used_bytes * 100 / total_bytes)
     state["memory_percent"] = max(0, min(100, pct))
     return True
 
