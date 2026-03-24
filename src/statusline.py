@@ -937,12 +937,12 @@ def collect_git(state: dict[str, Any]) -> None:
 
 
 def collect_agents(state: dict[str, Any]) -> None:
-    """Count running Codex instances via pgrep."""
+    """Count running Claude Code / Codex instances via pgrep."""
     count = 0
-    codex_out = _run_cmd(["pgrep", "-x", "codex"], timeout=0.05)
-    if codex_out:
-        codex_lines = [l for l in codex_out.splitlines() if l.strip()]
-        count += len(codex_lines)
+    for proc_name in ("claude", "codex"):
+        out = _run_cmd(["pgrep", "-x", proc_name], timeout=0.05)
+        if out:
+            count += sum(1 for l in out.splitlines() if l.strip())
     if count > 0:
         state["agent_count"] = count
 
