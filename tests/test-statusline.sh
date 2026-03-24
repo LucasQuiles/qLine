@@ -1297,6 +1297,38 @@ else:
 ")
 assert_contains "COL-06b: page_size fallback works" "$OUT" "VALID:"
 
+# COL-06c: Live macOS memory cross-validation vs top (skipped on Linux)
+if [ "$(uname)" = "Darwin" ]; then
+OUT=$(python3 -c "
+import sys, subprocess, os
+sys.path.insert(0, '$REPO_DIR/src')
+os.environ['NO_COLOR'] = '1'
+from statusline import _collect_memory_macos
+state = {}
+_collect_memory_macos(state)
+qline = state.get('memory_percent', -1)
+# Get top ground truth
+top = subprocess.run(['top', '-l', '1', '-n', '0'], capture_output=True, text=True)
+top_pct = -1
+for line in top.stdout.splitlines():
+    if 'PhysMem' in line:
+        parts = line.split(',')
+        used_s = parts[0].split(':')[1].strip().split()[0]
+        unused_s = parts[-1].strip().split()[0]
+        u = float(used_s.replace('G','').replace('M','')) * (1 if 'G' in used_s else 1/1024)
+        f = float(unused_s.replace('G','').replace('M','')) * (1 if 'G' in unused_s else 1/1024)
+        top_pct = round(u / (u + f) * 100)
+        break
+delta = abs(qline - top_pct)
+# Allow 5pp tolerance (memory fluctuates between measurements)
+if delta <= 5:
+    print(f'PASS:{delta}pp')
+else:
+    print(f'FAIL:qline={qline} top={top_pct} delta={delta}pp')
+" 2>&1)
+assert_contains "COL-06c: memory within 5pp of top" "$OUT" "PASS:"
+fi
+
 # COL-07: Disk from real statvfs -> percentage between 0 and 100
 OUT=$(run_py "
 import statusline
