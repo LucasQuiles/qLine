@@ -501,7 +501,7 @@ def _format_duration(duration_ms: int, fmt: str = "auto") -> str:
       "m"     — total minutes only: 2m, 75m
       "hms"   — hours, minutes, seconds: 0h 2m 30s, 1h 15m 0s
     """
-    seconds = duration_ms // 1000
+    seconds = max(0, duration_ms) // 1000
     minutes = seconds // 60
     hours = minutes // 60
     remaining_m = minutes % 60
@@ -657,8 +657,10 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     """
     if "context_used" not in state or "context_total" not in state:
         return None
+    if state["context_total"] <= 0:
+        return None
     cfg = theme.get("context_bar", {})
-    pct = round(state["context_used"] * 100 / state["context_total"])
+    pct = max(0, min(100, round(state["context_used"] * 100 / state["context_total"])))
     width = cfg.get("width", 10)
     filled = round(pct * width / 100)
     bar = "\u2588" * filled + "\u2591" * (width - filled)

@@ -595,6 +595,36 @@ assert_contains "R-10b: minutes" "$OUT" "2m30s"
 assert_contains "R-10c: hours" "$OUT" "2h"
 assert_contains "R-10d: hours+min" "$OUT" "1h30m"
 
+# R-10e: Negative duration clamps to 0s
+OUT=$(run_py "
+from statusline import _format_duration
+print(_format_duration(-5000))
+")
+assert_equals "R-10e: negative duration -> 0s" "$OUT" "0s"
+
+# R-10f: Zero duration
+OUT=$(run_py "
+from statusline import _format_duration
+print(_format_duration(0))
+")
+assert_equals "R-10f: zero duration -> 0s" "$OUT" "0s"
+
+# R-10g: Context bar with zero total -> None (no crash)
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+result = render_context_bar({'context_used': 100, 'context_total': 0}, DEFAULT_THEME)
+print(result if result is not None else 'NONE')
+")
+assert_equals "R-10g: zero context total -> NONE" "$OUT" "NONE"
+
+# R-10h: Context bar clamps pct to 0-100
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+result = render_context_bar({'context_used': 1200000, 'context_total': 1000000}, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "R-10h: over-100% clamped to 100" "$OUT" "100%"
+
 # R-11: Token abbreviation
 OUT=$(run_py "
 from statusline import _abbreviate_count
