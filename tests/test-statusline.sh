@@ -1016,6 +1016,24 @@ assert_contains "L-11: worktree marker" "$OUT" "qLine"
 GLYPH_WORKTREE=$(printf '\xe2\x8a\x9b')  # U+229B
 assert_contains "L-11b: marker char" "$OUT" "$GLYPH_WORKTREE"
 
+# L-11c: Added dirs shown in dir pill
+OUT=$(run_py "
+from statusline import render_dir, DEFAULT_THEME
+state = {'dir_basename': 'myproj', 'added_dirs': ['/tmp/extra', '/tmp/other']}
+result = render_dir(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "L-11c: added dirs count" "$OUT" "+2dir"
+
+# L-11d: No added dirs when list empty
+OUT=$(run_py "
+from statusline import render_dir, DEFAULT_THEME
+state = {'dir_basename': 'myproj', 'added_dirs': []}
+result = render_dir(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_not_contains "L-11d: no dirs when empty" "$OUT" "+0dir"
+
 # L-12: No worktree marker when false
 OUT=$(run_py "
 from statusline import render_dir, DEFAULT_THEME

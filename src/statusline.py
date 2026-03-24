@@ -650,6 +650,11 @@ def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
         else:
             parts.append(f"{branch}{dirty_marker}")
 
+    # Added dirs count (multi-directory scope)
+    added_dirs = state.get("added_dirs")
+    if isinstance(added_dirs, list) and len(added_dirs) > 0:
+        parts.append(f"+{len(added_dirs)}dir")
+
     glyph = d_cfg.get("glyph", "")
     text = f"{glyph}{' '.join(parts)}"
     is_stale = state.get("git_stale", False)
