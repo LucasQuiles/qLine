@@ -1242,6 +1242,22 @@ rm -rf "$MOCK_PROC"
 # used = 16384000 - 5500000 = 10884000, pct = (10884000 * 100) // 16384000 = 66
 assert_equals "COL-05: Memory fallback -> 66%" "$OUT" "66"
 
+# COL-05b: Memory MemAvailable > MemTotal (kernel edge case) -> clamp to 0%
+MOCK_PROC=$(mktemp -d)
+cat > "$MOCK_PROC/meminfo" << 'MEMINFO'
+MemTotal:       16384000 kB
+MemAvailable:   20000000 kB
+MEMINFO
+OUT=$(run_py "
+import statusline
+statusline.PROC_DIR = '$MOCK_PROC'
+state = {}
+statusline.collect_memory(state)
+print(state.get('memory_percent', 'ABSENT'))
+")
+rm -rf "$MOCK_PROC"
+assert_equals "COL-05b: MemAvailable > MemTotal -> 0%" "$OUT" "0"
+
 # COL-06: Memory from missing file (block macOS fallback too)
 MOCK_PROC=$(mktemp -d)
 OUT=$(run_py "

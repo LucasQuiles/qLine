@@ -843,8 +843,8 @@ def _collect_memory_linux(state: dict[str, Any]) -> bool:
             available = fields["MemFree"] + fields.get("Buffers", 0) + fields.get("Cached", 0)
         else:
             return False
-        used = total - available
-        pct = (used * 100) // total
+        used = max(0, total - available)
+        pct = round(used * 100 / total)
         state["memory_percent"] = max(0, min(100, pct))
         return True
     except Exception:
