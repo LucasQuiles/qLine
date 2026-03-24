@@ -432,6 +432,30 @@ print('IN:' + str(state.get('input_tokens', 'ABSENT')))
 ")
 assert_contains "N-11: tokens absent when fields missing" "$OUT" "IN:ABSENT"
 
+# N-12: Model id fallback when display_name missing
+OUT=$(run_py "
+from statusline import normalize
+state = normalize({'model': {'id': 'claude-opus-4-6[1m]'}})
+print('MODEL:' + state.get('model_name', 'ABSENT'))
+")
+assert_contains "N-12a: model id fallback" "$OUT" "MODEL:opus-4-6"
+
+# N-13: Model id fallback when display_name empty
+OUT=$(run_py "
+from statusline import normalize
+state = normalize({'model': {'id': 'claude-sonnet-4-6', 'display_name': ''}})
+print('MODEL:' + state.get('model_name', 'ABSENT'))
+")
+assert_contains "N-13: empty display_name uses id" "$OUT" "MODEL:sonnet-4-6"
+
+# N-14: display_name still takes priority over id
+OUT=$(run_py "
+from statusline import normalize
+state = normalize({'model': {'id': 'claude-opus-4-6[1m]', 'display_name': 'Opus 4.6 (1M context)'}})
+print('MODEL:' + state.get('model_name', 'ABSENT'))
+")
+assert_contains "N-14: display_name preferred" "$OUT" "MODEL:Op4.6"
+
 echo ""
 fi
 

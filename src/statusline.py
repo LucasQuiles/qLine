@@ -384,7 +384,7 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     """Create a normalized internal state from the raw payload."""
     state: dict[str, Any] = {}
 
-    # Model name
+    # Model name — prefer display_name, fall back to id
     model = payload.get("model")
     if isinstance(model, dict):
         name = model.get("display_name")
@@ -396,6 +396,13 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
                 name = name.replace(full, short)
             name = name.replace(" (", "[").replace(")", "]").replace(" ", "")
             state["model_name"] = name
+        else:
+            # Fallback: use model id, abbreviated
+            model_id = model.get("id")
+            if isinstance(model_id, str) and model_id:
+                # "claude-opus-4-6[1m]" → "opus-4-6"
+                short_id = model_id.replace("claude-", "").split("[")[0].rstrip("-")
+                state["model_name"] = short_id
 
     # Directory — prefer workspace.current_dir, fall back to cwd
     workspace = payload.get("workspace")
