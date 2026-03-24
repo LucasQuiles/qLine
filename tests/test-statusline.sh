@@ -472,6 +472,24 @@ print(repr(render({})))
 ")
 assert_equals "R-01: empty state -> empty string" "$OUT" "''"
 
+# R-01b: Output style shown when non-default
+OUT=$(run_py "
+from statusline import render_model, DEFAULT_THEME
+state = {'model_name': 'Op4.6', 'output_style': 'verbose'}
+result = render_model(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_contains "R-01b: output style shown" "$OUT" "Op4.6:verbose"
+
+# R-01c: Default output style hidden
+OUT=$(run_py "
+from statusline import render_model, DEFAULT_THEME
+state = {'model_name': 'Op4.6', 'output_style': 'default'}
+result = render_model(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_not_contains "R-01c: default style hidden" "$OUT" ":default"
+
 # R-02: Full state — module order with glyphs
 OUT=$(run_py "
 from statusline import render, DEFAULT_THEME

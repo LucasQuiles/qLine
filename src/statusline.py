@@ -613,12 +613,17 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
 
 
 def render_model(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render model name module."""
+    """Render model name module with optional output style indicator."""
     model_name = state.get("model_name")
     if not model_name:
         return None
     m_cfg = theme.get("model", {})
-    text = f"{m_cfg.get('glyph', '')}{_sanitize_fragment(model_name)}"
+    # Append output_style if non-default
+    style_name = state.get("output_style", "")
+    style_suffix = ""
+    if style_name and style_name != "default":
+        style_suffix = f":{style_name}"
+    text = f"{m_cfg.get('glyph', '')}{_sanitize_fragment(model_name)}{style_suffix}"
     return _pill(text, m_cfg, bold=m_cfg.get("bold", False), theme=theme)
 
 
