@@ -331,6 +331,48 @@ def _visible_len(text: str) -> int:
     return len(_ANSI_RE.sub("", text))
 
 
+# --- Terminal Width Detection ---
+
+def _detect_terminal_width() -> int:
+    """Detect real terminal width, even when stdout is piped.
+
+    Tries in order:
+      1. COLUMNS env var (if set and > 0)
+      2. shutil.get_terminal_size (works with TTY on stdout)
+      3. tput cols (works when piped, reads controlling terminal)
+      4. Falls back to 120
+    """
+    # 1. COLUMNS env var
+    cols_env = os.environ.get("COLUMNS")
+    if cols_env:
+        try:
+            c = int(cols_env)
+            if c > 0:
+                return c
+        except ValueError:
+            pass
+    # 2. shutil (works if stdout is a TTY)
+    try:
+        sz = shutil.get_terminal_size((-1, -1))
+        if sz.columns > 0:
+            return sz.columns
+    except (ValueError, OSError):
+        pass
+    # 3. tput cols (works even from pipes — reads controlling terminal)
+    try:
+        result = subprocess.run(
+            ["tput", "cols"], capture_output=True, text=True, timeout=0.05,
+        )
+        if result.returncode == 0:
+            c = int(result.stdout.strip())
+            if c > 0:
+                return c
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
+        pass
+    # 4. Fallback
+    return 120
+
+
 # --- Subprocess Helper ---
 
 def _run_cmd(cmd: list[str], timeout: float = 0.05,
@@ -1407,10 +1449,13 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
     if not parts:
         return ""
 
-    # Get terminal width — layout.max_width overrides auto-detection
-    # (Claude Code runs without a TTY, so auto-detect falls back to 80)
+    # Get terminal width — dynamic detection, with config as cap/override.
+    # Claude Code pipes statusline so stdout has no TTY; use tput for real width.
     layout_cfg = theme.get("layout", {})
-    term_width = layout_cfg.get("max_width") or shutil.get_terminal_size((200, 24)).columns
+    term_width = _detect_terminal_width()
+    max_w = layout_cfg.get("max_width")
+    if max_w and max_w > 0:
+        term_width = min(term_width, max_w)
 
     # Pack modules into rows
     rows: list[list[str]] = []
@@ -1469,10 +1514,15 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
 
     state["_compact"] = force_single
 
-    # Always merge all layout lines and auto-wrap at max_width.
+    # Merge all layout lines into one flat module list
     merged: list[str] = []
     for modules in layout_lines:
         merged.extend(modules)
+
+    if force_single:
+        # Single line — no wrapping, join everything with separator
+        return render_line(state, theme, merged)
+    # Multi-line — auto-wrap at detected terminal width
     return _render_wrapped(state, theme, merged)
 
 
