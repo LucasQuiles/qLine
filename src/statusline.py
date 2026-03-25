@@ -587,7 +587,7 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
     """Render context progress bar with threshold coloring."""
     cfg = theme.get("context_bar", {})
     width = cfg.get("width", 10)
-    filled = round(pct * width / 100)
+    filled = min(width, max(0, round(pct * width / 100)))
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
     warn_t = cfg.get("warn_threshold", 40.0)
@@ -689,7 +689,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     cfg = theme.get("context_bar", {})
     pct = max(0, min(100, round(state["context_used"] * 100 / state["context_total"])))
     width = cfg.get("width", 10)
-    filled = round(pct * width / 100)
+    filled = min(width, max(0, round(pct * width / 100)))
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
     warn_t = cfg.get("warn_threshold", 40.0)
