@@ -91,6 +91,27 @@ elif [ "$PYTHON" != "python3" ]; then
     fi
 fi
 
+# --- Install hooks (observability) ---
+
+HOOKS_SRC="$SCRIPT_DIR/src/hooks"
+HOOKS_DEST="$DEST_DIR/hooks"
+
+if [ -d "$HOOKS_SRC" ]; then
+    mkdir -p "$HOOKS_DEST"
+    HOOK_COUNT=0
+    for hook in "$HOOKS_SRC"/obs-*.py "$HOOKS_SRC"/hook_utils.py; do
+        [ -f "$hook" ] || continue
+        cp "$hook" "$HOOKS_DEST/"
+        chmod +x "$HOOKS_DEST/$(basename "$hook")"
+        HOOK_COUNT=$((HOOK_COUNT + 1))
+    done
+    # Also install obs_utils.py alongside hooks (they import it)
+    if [ -f "$OBS_SRC" ]; then
+        cp "$OBS_SRC" "$HOOKS_DEST/"
+    fi
+    echo "Installed: $HOOK_COUNT hook scripts to $HOOKS_DEST/"
+fi
+
 # --- Patch settings.json ---
 
 if [ "$JQ_AVAILABLE" = true ] && [ -f "$SETTINGS" ]; then
@@ -116,6 +137,30 @@ elif [ ! -f "$SETTINGS" ]; then
     echo "NOTE: $SETTINGS not found — creating minimal config"
     echo '{"statusLine":{"type":"command","command":"'"$DEST"'"}}' | jq . > "$SETTINGS" 2>/dev/null || \
     echo '{"statusLine":{"type":"command","command":"'"$DEST"'"}}' > "$SETTINGS"
+fi
+
+# --- Patch hooks into settings.json ---
+
+HOOKS_JSON="$HOOKS_SRC/hooks.json"
+if [ "$JQ_AVAILABLE" = true ] && [ -f "$SETTINGS" ] && [ -f "$HOOKS_JSON" ]; then
+    # Replace HOOKS_DIR placeholder with actual path
+    HOOKS_RESOLVED=$(sed "s|HOOKS_DIR|$HOOKS_DEST|g" "$HOOKS_JSON")
+
+    # Check if hooks key exists
+    if jq -e 'has("hooks")' "$SETTINGS" > /dev/null 2>&1; then
+        echo "hooks key already present in $SETTINGS — skipping hook registration"
+        echo "  To install obs hooks manually, merge src/hooks/hooks.json into your settings."
+    else
+        TMP=$(mktemp)
+        echo "$HOOKS_RESOLVED" | jq --slurpfile settings "$SETTINGS" '$settings[0] + {"hooks": .}' > "$TMP"
+        if jq -e '.' "$TMP" > /dev/null 2>&1; then
+            mv "$TMP" "$SETTINGS"
+            echo "Observability hooks registered in $SETTINGS"
+        else
+            rm -f "$TMP"
+            echo "WARNING: failed to register hooks — add them manually (see README)"
+        fi
+    fi
 fi
 
 # --- Post-install summary ---

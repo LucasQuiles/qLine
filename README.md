@@ -69,8 +69,9 @@ cd qLine
 The installer will:
 1. Find the newest Python 3.10+ on your system
 2. Copy `statusline.py` and `obs_utils.py` to `~/.claude/`
-3. Fix the shebang if your default `python3` is too old
-4. Add the `statusLine` hook to `~/.claude/settings.json` (with a backup, because we're not monsters)
+3. Copy the observability hooks to `~/.claude/hooks/`
+4. Fix the shebang if your default `python3` is too old
+5. Add the `statusLine` command and hook registrations to `~/.claude/settings.json` (with a backup, because we're not monsters)
 
 Restart Claude Code and you should see the status line appear.
 
@@ -88,9 +89,16 @@ This does a `git pull` and re-runs the installer. Your `~/.config/qline.toml` is
 If you don't trust shell scripts (fair), or the installer doesn't work on your setup:
 
 ```bash
+# Core files
 cp src/statusline.py ~/.claude/statusline.py
 cp src/obs_utils.py ~/.claude/obs_utils.py
 chmod +x ~/.claude/statusline.py
+
+# Hooks (for observability modules)
+mkdir -p ~/.claude/hooks
+cp src/hooks/obs-*.py src/hooks/hook_utils.py ~/.claude/hooks/
+cp src/obs_utils.py ~/.claude/hooks/
+chmod +x ~/.claude/hooks/obs-*.py
 ```
 
 Then add to `~/.claude/settings.json`:
@@ -104,6 +112,8 @@ Then add to `~/.claude/settings.json`:
 ```
 
 The path **must be absolute**. `~/` won't work. If the file already has stuff in it, merge the `statusLine` key in — don't replace the whole thing.
+
+For the obs hooks, you also need to register them. See `src/hooks/hooks.json` for the full registration template — replace `HOOKS_DIR` with your actual hooks path (e.g., `/home/YOU/.claude/hooks`) and merge the `hooks` key into your `settings.json`.
 
 ### Uninstall
 
@@ -333,7 +343,7 @@ Set `show_breakdown = false` if you just want a single number. Sometimes simple 
 
 ## Observability modules
 
-These are the `obs_*` modules. They show session telemetry — file reads, writes, bash commands, tool failures, context compactions, that sort of thing. They're all disabled by default because they need the observability hook infrastructure to produce data.
+These are the `obs_*` modules. They show session telemetry — file reads, writes, bash commands, tool failures, context compactions, that sort of thing. They're all disabled by default, but the hook scripts that produce the data ship with qLine in `src/hooks/` and are installed automatically by `install.sh`.
 
 | Module | What it tracks | Default threshold |
 |---|---|---|
@@ -348,9 +358,29 @@ These are the `obs_*` modules. They show session telemetry — file reads, write
 | `obs_compactions` | Context compactions | — |
 | `obs_health` | Session health badge | green/yellow/red |
 
-The data comes from hook event logs at `~/.claude/observability/sessions/`. qLine scans them every 30 seconds using fast string matching (no JSON parsing) and caches the results. If the hooks aren't set up, these modules just show nothing. No errors, no fuss.
+### How it works
 
-To enable them:
+The hooks in `src/hooks/` are Claude Code lifecycle hooks that fire on events like tool use, prompt submit, session start/end, etc. They write structured events to session packages at `~/.claude/observability/sessions/`. qLine scans those files every 30 seconds using fast string matching (no JSON parsing) and caches the results. If the hooks aren't installed or haven't fired yet, these modules just show nothing. No errors, no fuss.
+
+The hooks and their event registrations:
+
+| Hook | Event | Matcher | What it records |
+|---|---|---|---|
+| `obs-session-start.py` | SessionStart | `.*` | Creates session package, records start |
+| `obs-pretool-read.py` | PreToolUse | `Read` | File reads and re-reads |
+| `obs-posttool-write.py` | PostToolUse | `Write` | File writes |
+| `obs-posttool-edit.py` | PostToolUse | `Edit` | File edits |
+| `obs-posttool-bash.py` | PostToolUse | `Bash` | Bash command executions |
+| `obs-posttool-failure.py` | PostToolUseFailure | `.*` | Tool failures |
+| `obs-prompt-submit.py` | UserPromptSubmit | `.*` | User prompts |
+| `obs-precompact.py` | PreCompact | `.*` | Context compactions |
+| `obs-subagent-stop.py` | SubagentStop | `.*` | Sub-agent lifecycle |
+| `obs-task-completed.py` | TaskCompleted | `.*` | Task completions |
+| `obs-session-end.py` | SessionEnd | `.*` | Session summary and health |
+
+All hooks depend on `hook_utils.py` (input parsing) and `obs_utils.py` (session package management). Both are installed alongside the hooks.
+
+To enable the obs modules in the status line:
 ```toml
 [obs_reads]
 enabled = true
