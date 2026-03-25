@@ -577,8 +577,8 @@ def _pill(text: str, cfg: dict[str, Any], color: str | None = None,
 
 
 def format_tokens(input_tokens: int, output_tokens: int, theme: dict[str, Any]) -> str:
-    """Format token counts as ↑12.3k ↓4.1k."""
-    text = f"\u2191{_abbreviate_count(input_tokens)} \u2193{_abbreviate_count(output_tokens)}"
+    """Format token counts as ↑12.3k↓4.1k."""
+    text = f"\u2191{_abbreviate_count(input_tokens)}\u2193{_abbreviate_count(output_tokens)}"
     tok_cfg = theme.get("tokens", {})
     return _pill(text, tok_cfg, theme=theme)
 

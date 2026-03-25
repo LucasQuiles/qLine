@@ -727,7 +727,7 @@ OUT=$(run_py "
 from statusline import format_tokens, DEFAULT_THEME
 print(format_tokens(12345, 4100, DEFAULT_THEME))
 ")
-assert_contains "R-12a: input arrow" "$OUT" "↑12.3k"
+assert_contains "R-12a: input arrow" "$OUT" "↑12.3k↓"
 assert_contains "R-12b: output arrow" "$OUT" "↓4.1k"
 
 # R-13: Newline sanitization
