@@ -6,6 +6,7 @@
 [layout]
 # force_single_line = true          # merge all lines into one (default: true)
 # max_width = 200                   # wrap threshold in chars (default: 200)
+# display_mode = "both"             # "icon" | "text" | "both" (global default)
 # line1 = ["model", "dir", "context_bar", "cost", "duration"]
 # line2 = ["cpu", "memory", "disk"]
 # line3 = ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
@@ -66,7 +67,18 @@
 # dirty_marker = "*"
 
 # [agents]
-# enabled = false                   # off by default
+# enabled = true                    # on by default; detects claude/codex processes
+# display_mode = ""                 # "" = use global; or "icon" / "text" / "both"
+# show_breakdown = true             # false = single total count (legacy)
+# glyph = "󰚩 "                     # icon for claude main instances
+# sub_glyph = "󰜗 "                 # icon for sub-agents
+# codex_glyph = "󰄷 "               # icon for codex instances
+# label = "Claude"                  # text label for claude main
+# sub_label = "Sub"                 # text label for sub-agents
+# codex_label = "Codex"             # text label for codex
+# inner_separator = " │ "           # separator between breakdown segments
+# warn_threshold = 5                # total count → yellow
+# critical_threshold = 8            # total count → red
 
 # [tmux]
 # enabled = false                   # off by default

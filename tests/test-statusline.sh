@@ -1603,6 +1603,215 @@ fi
 fi
 
 echo ""
+
+# --- Agent Detection & Display Mode Tests ---
+
+# COL-AGT-01: 3 main claude processes (parent is zsh)
+OUT=$(run_py "
+import statusline
+def mock_ps(*a, **kw):
+    return '''  100   1 launchd
+  200 100 zsh
+  300 200 claude
+  400 100 zsh
+  500 400 claude
+  600 100 zsh
+  700 600 claude
+'''
+statusline._run_cmd = mock_ps
+state = {}
+statusline.collect_agents(state)
+print(f\"{state.get('claude_main_count',0)},{state.get('claude_sub_count',0)},{state.get('codex_main_count',0)},{state.get('codex_sub_count',0)},{state.get('agent_total',0)}\")
+")
+assert_equals "COL-AGT-01: 3 main claude" "$OUT" "3,0,0,0,3"
+
+# COL-AGT-02: 2 main claude + 1 sub-agent (claude -> node -> claude)
+OUT=$(run_py "
+import statusline
+def mock_ps(*a, **kw):
+    return '''  100   1 launchd
+  200 100 zsh
+  300 200 claude
+  400 100 zsh
+  500 400 claude
+  600 300 node
+  700 600 claude
+'''
+statusline._run_cmd = mock_ps
+state = {}
+statusline.collect_agents(state)
+print(f\"{state.get('claude_main_count',0)},{state.get('claude_sub_count',0)},{state.get('agent_total',0)}\")
+")
+assert_equals "COL-AGT-02: 2 main + 1 sub" "$OUT" "2,1,3"
+
+# COL-AGT-03: Mixed claude + codex
+OUT=$(run_py "
+import statusline
+def mock_ps(*a, **kw):
+    return '''  100   1 launchd
+  200 100 zsh
+  300 200 claude
+  400 100 zsh
+  500 400 codex
+  600 300 node
+  700 600 claude
+'''
+statusline._run_cmd = mock_ps
+state = {}
+statusline.collect_agents(state)
+print(f\"{state.get('claude_main_count',0)},{state.get('claude_sub_count',0)},{state.get('codex_main_count',0)},{state.get('codex_sub_count',0)},{state.get('agent_total',0)}\")
+")
+assert_equals "COL-AGT-03: mixed claude+codex" "$OUT" "1,1,1,0,3"
+
+# COL-AGT-04: ps returns None -> no state keys
+OUT=$(run_py "
+import statusline
+statusline._run_cmd = lambda *a, **kw: None
+state = {}
+statusline.collect_agents(state)
+print(state.get('agent_total', 'ABSENT'))
+")
+assert_equals "COL-AGT-04: ps None -> ABSENT" "$OUT" "ABSENT"
+
+# COL-AGT-05: Empty ps output -> no state keys
+OUT=$(run_py "
+import statusline
+statusline._run_cmd = lambda *a, **kw: ''
+state = {}
+statusline.collect_agents(state)
+print(state.get('agent_total', 'ABSENT'))
+")
+assert_equals "COL-AGT-05: empty ps -> ABSENT" "$OUT" "ABSENT"
+
+# COL-AGT-06: agent_count backward compat equals agent_total
+OUT=$(run_py "
+import statusline
+def mock_ps(*a, **kw):
+    return '''  100   1 launchd
+  200 100 zsh
+  300 200 claude
+  400 200 codex
+'''
+statusline._run_cmd = mock_ps
+state = {}
+statusline.collect_agents(state)
+print(f\"{state.get('agent_count',0)},{state.get('agent_total',0)}\")
+")
+assert_equals "COL-AGT-06: agent_count == agent_total" "$OUT" "2,2"
+
+# REN-AGT-01: Breakdown, display_mode=icon
+OUT=$(NO_COLOR=1 run_py "
+from statusline import render_agents, DEFAULT_THEME
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['layout']['display_mode'] = 'icon'
+state = {'claude_main_count': 3, 'claude_sub_count': 2, 'codex_main_count': 0, 'codex_sub_count': 0, 'agent_total': 5, 'agent_count': 5}
+result = render_agents(state, theme)
+print(result or 'NONE')
+")
+assert_contains "REN-AGT-01: icon mode has count" "$OUT" "3"
+assert_contains "REN-AGT-01b: icon mode has sub count" "$OUT" "2"
+assert_not_contains "REN-AGT-01c: icon mode no text label" "$OUT" "Claude"
+
+# REN-AGT-02: Breakdown, display_mode=text
+OUT=$(NO_COLOR=1 run_py "
+from statusline import render_agents, DEFAULT_THEME
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['layout']['display_mode'] = 'text'
+state = {'claude_main_count': 3, 'claude_sub_count': 2, 'codex_main_count': 0, 'codex_sub_count': 0, 'agent_total': 5, 'agent_count': 5}
+result = render_agents(state, theme)
+print(result or 'NONE')
+")
+assert_contains "REN-AGT-02: text mode has label" "$OUT" "Claude 3"
+assert_contains "REN-AGT-02b: text mode has sub label" "$OUT" "Sub 2"
+
+# REN-AGT-03: Breakdown, display_mode=both
+OUT=$(NO_COLOR=1 run_py "
+from statusline import render_agents, DEFAULT_THEME
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['layout']['display_mode'] = 'both'
+state = {'claude_main_count': 3, 'claude_sub_count': 2, 'codex_main_count': 0, 'codex_sub_count': 0, 'agent_total': 5, 'agent_count': 5}
+result = render_agents(state, theme)
+print(result or 'NONE')
+")
+assert_contains "REN-AGT-03: both mode has label" "$OUT" "Claude 3"
+assert_contains "REN-AGT-03b: both mode has sub label" "$OUT" "Sub 2"
+
+# REN-AGT-04: Legacy single-count mode (show_breakdown=false)
+OUT=$(NO_COLOR=1 run_py "
+from statusline import render_agents, DEFAULT_THEME
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['agents']['show_breakdown'] = False
+theme['layout']['display_mode'] = 'both'
+state = {'claude_main_count': 3, 'claude_sub_count': 2, 'agent_total': 5, 'agent_count': 5}
+result = render_agents(state, theme)
+print(result or 'NONE')
+")
+assert_contains "REN-AGT-04: legacy shows total" "$OUT" "5"
+assert_not_contains "REN-AGT-04b: legacy no Sub" "$OUT" "Sub"
+
+# REN-AGT-05: Zero total -> None
+OUT=$(NO_COLOR=1 run_py "
+from statusline import render_agents, DEFAULT_THEME
+state = {'agent_total': 0, 'agent_count': 0}
+result = render_agents(state, DEFAULT_THEME)
+print(result or 'NONE')
+")
+assert_equals "REN-AGT-05: zero -> NONE" "$OUT" "NONE"
+
+# REN-AGT-06: Only codex, no claude
+OUT=$(NO_COLOR=1 run_py "
+from statusline import render_agents, DEFAULT_THEME
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['layout']['display_mode'] = 'text'
+state = {'claude_main_count': 0, 'claude_sub_count': 0, 'codex_main_count': 2, 'codex_sub_count': 0, 'agent_total': 2, 'agent_count': 2}
+result = render_agents(state, theme)
+print(result or 'NONE')
+")
+assert_contains "REN-AGT-06: only codex shown" "$OUT" "Codex 2"
+assert_not_contains "REN-AGT-06b: no claude shown" "$OUT" "Claude"
+
+# REN-AGT-07: Per-module display_mode overrides global
+OUT=$(NO_COLOR=1 run_py "
+from statusline import render_agents, DEFAULT_THEME
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['layout']['display_mode'] = 'icon'
+theme['agents']['display_mode'] = 'text'
+state = {'claude_main_count': 2, 'claude_sub_count': 0, 'codex_main_count': 0, 'codex_sub_count': 0, 'agent_total': 2, 'agent_count': 2}
+result = render_agents(state, theme)
+print(result or 'NONE')
+")
+assert_contains "REN-AGT-07: per-module override to text" "$OUT" "Claude 2"
+
+# DM-01: _resolve_display_mode — module override wins
+OUT=$(run_py "
+from statusline import _resolve_display_mode
+theme = {'layout': {'display_mode': 'icon'}, 'agents': {'display_mode': 'text'}}
+print(_resolve_display_mode(theme, 'agents'))
+")
+assert_equals "DM-01: module override wins" "$OUT" "text"
+
+# DM-02: _resolve_display_mode — empty module falls back to global
+OUT=$(run_py "
+from statusline import _resolve_display_mode
+theme = {'layout': {'display_mode': 'icon'}, 'agents': {'display_mode': ''}}
+print(_resolve_display_mode(theme, 'agents'))
+")
+assert_equals "DM-02: fallback to global" "$OUT" "icon"
+
+# DM-03: _resolve_display_mode — invalid global defaults to both
+OUT=$(run_py "
+from statusline import _resolve_display_mode
+theme = {'layout': {'display_mode': 'garbage'}, 'agents': {}}
+print(_resolve_display_mode(theme, 'agents'))
+")
+assert_equals "DM-03: invalid global -> both" "$OUT" "both"
+
 fi
 
 # ======================================================================

@@ -122,8 +122,9 @@ DEFAULT_THEME: dict[str, Any] = {
     "layout": {
         "force_single_line": True,
         "max_width": 200,
+        "display_mode": "both",  # "icon" | "text" | "both"
         "line1": ["model", "dir", "context_bar", "cost", "duration"],
-        "line2": ["cpu", "memory", "disk"],
+        "line2": ["cpu", "memory", "disk", "agents", "tmux"],
         "line3": ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
                   "obs_prompts", "obs_tasks", "obs_subagents",
                   "obs_failures", "obs_compactions", "obs_health"],
@@ -173,8 +174,13 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "agents": {
-        "enabled": False,
-        "glyph": "\U000f04cc ",
+        "enabled": True,
+        "glyph": "\U000f06a9 ",           # nf-md-robot (claude main icon)
+        "sub_glyph": "\U000f0717 ",       # nf-md-arrow_decision (sub-agent icon)
+        "codex_glyph": "\U000f0137 ",     # nf-md-clipboard_check (codex icon)
+        "label": "Claude",
+        "sub_label": "Sub",
+        "codex_label": "Codex",
         "color": "#b48ead",
         "bg": "#2e3440",
         "warn_threshold": 5,
@@ -182,6 +188,9 @@ DEFAULT_THEME: dict[str, Any] = {
         "warn_color": "#f0d399",
         "critical_color": "#d06070",
         "show_threshold": 0,
+        "show_breakdown": True,
+        "inner_separator": " \u2502 ",    # " │ " box-drawing pipe
+        "display_mode": "",               # empty = use global layout.display_mode
     },
     "tmux": {
         "enabled": False,
@@ -665,6 +674,46 @@ def _pill(text: str, cfg: dict[str, Any], color: str | None = None,
     return style(text, c, bold)
 
 
+def _resolve_display_mode(theme: dict[str, Any], module_name: str) -> str:
+    """Resolve effective display mode for a module.
+
+    Priority: module-specific > global layout > default "both".
+    """
+    mod_cfg = theme.get(module_name, {})
+    mod_mode = mod_cfg.get("display_mode", "")
+    if mod_mode in ("icon", "text", "both"):
+        return mod_mode
+    global_mode = theme.get("layout", {}).get("display_mode", "both")
+    return global_mode if global_mode in ("icon", "text", "both") else "both"
+
+
+def _format_agent_label(glyph: str, label: str, count: int, mode: str) -> str:
+    """Format a single agent category label based on display mode."""
+    if mode == "icon":
+        return f"{glyph}{count}"
+    elif mode == "text":
+        return f"{label} {count}"
+    else:  # "both"
+        return f"{glyph}{label} {count}"
+
+
+def _build_agent_segments(state: dict[str, Any], cfg: dict[str, Any],
+                          mode: str) -> list[str]:
+    """Build display segments for each agent category with non-zero count."""
+    segments: list[str] = []
+    categories = [
+        ("claude_main_count", cfg.get("glyph", ""), cfg.get("label", "Claude")),
+        ("claude_sub_count", cfg.get("sub_glyph", ""), cfg.get("sub_label", "Sub")),
+        ("codex_main_count", cfg.get("codex_glyph", ""), cfg.get("codex_label", "Codex")),
+        ("codex_sub_count", cfg.get("codex_glyph", ""), cfg.get("codex_label", "Codex") + " Sub"),
+    ]
+    for state_key, glyph, label in categories:
+        count = state.get(state_key, 0)
+        if count > 0:
+            segments.append(_format_agent_label(glyph, label, count, mode))
+    return segments
+
+
 def format_tokens(input_tokens: int, output_tokens: int, theme: dict[str, Any]) -> str:
     """Format token counts as ↑12.3k↓4.1k."""
     text = f"\u2191{_abbreviate_count(input_tokens)}\u2193{_abbreviate_count(output_tokens)}"
@@ -1054,15 +1103,72 @@ def collect_git(state: dict[str, Any]) -> None:
     state["git_dirty"] = len(lines) > 1
 
 
+_SHELL_NAMES = frozenset({
+    "zsh", "-zsh", "bash", "-bash", "fish", "-fish", "sh", "-sh",
+    "login", "launchd", "init", "systemd", "sshd",
+})
+
+
 def collect_agents(state: dict[str, Any]) -> None:
-    """Count running Claude Code / Codex instances via pgrep."""
-    count = 0
-    for proc_name in ("claude", "codex"):
-        out = _run_cmd(["pgrep", "-x", proc_name], timeout=0.05)
-        if out:
-            count += sum(1 for l in out.splitlines() if l.strip())
-    if count > 0:
-        state["agent_count"] = count
+    """Detect running Claude/Codex instances with parent/child classification.
+
+    Uses a single ``ps`` call to get the full process table, then classifies:
+    - main: parent is a shell, login, init, or launchd
+    - sub-agent: parent is ``node`` whose parent is ``claude`` (spawn chain)
+    """
+    out = _run_cmd(["ps", "-eo", "pid=,ppid=,comm="], timeout=0.05)
+    if out is None:
+        return
+
+    # Build PID -> (PPID, comm_basename) map
+    pid_info: dict[int, tuple[int, str]] = {}
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            pid = int(parts[0])
+            ppid = int(parts[1])
+        except ValueError:
+            continue
+        comm = parts[2].strip().rsplit("/", 1)[-1]  # basename
+        pid_info[pid] = (ppid, comm)
+
+    claude_main = 0
+    claude_sub = 0
+    codex_main = 0
+    codex_sub = 0
+
+    for pid, (ppid, comm) in pid_info.items():
+        if comm == "claude":
+            parent_comm = pid_info.get(ppid, (0, ""))[1]
+            if parent_comm in _SHELL_NAMES:
+                claude_main += 1
+            elif parent_comm == "node":
+                # Check grandparent for sub-agent pattern: claude -> node -> claude
+                gp_ppid = pid_info.get(ppid, (0, ""))[0]
+                gp_comm = pid_info.get(gp_ppid, (0, ""))[1]
+                if gp_comm == "claude":
+                    claude_sub += 1
+                else:
+                    claude_main += 1
+            else:
+                claude_main += 1
+        elif comm == "codex":
+            parent_comm = pid_info.get(ppid, (0, ""))[1]
+            if parent_comm in _SHELL_NAMES or parent_comm == "node":
+                codex_main += 1
+            else:
+                codex_sub += 1
+
+    total = claude_main + claude_sub + codex_main + codex_sub
+    if total > 0:
+        state["claude_main_count"] = claude_main
+        state["claude_sub_count"] = claude_sub
+        state["codex_main_count"] = codex_main
+        state["codex_sub_count"] = codex_sub
+        state["agent_total"] = total
+        state["agent_count"] = total  # backward compat
 
 
 def collect_tmux(state: dict[str, Any]) -> None:
@@ -1127,7 +1233,9 @@ _CACHE_KEYS: dict[str, list[str]] = {
     "cpu": ["cpu_percent"],
     "memory": ["memory_percent"],
     "disk": ["disk_percent"],
-    "agents": ["agent_count"],
+    "agents": ["claude_main_count", "claude_sub_count",
+               "codex_main_count", "codex_sub_count",
+               "agent_total", "agent_count"],
     "tmux": ["tmux_sessions", "tmux_panes"],
 }
 
@@ -1260,21 +1368,48 @@ def render_disk(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_agents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render active agents count module."""
-    if "agent_count" not in state or state["agent_count"] <= 0:
+    """Render active agents module with optional process type breakdown.
+
+    Display modes (from display_mode config):
+      "both":  󰚩 Claude 3 │ 󰓁 Sub 2
+      "icon":  󰚩 3 │ 󰓁 2
+      "text":  Claude 3 │ Sub 2
+
+    When show_breakdown=False, falls back to single total.
+    """
+    total = state.get("agent_total", state.get("agent_count", 0))
+    if total <= 0:
         return None
+
     cfg = theme.get("agents", {})
-    count = state["agent_count"]
     show_t = cfg.get("show_threshold", 0)
-    if count <= show_t:
+    if total <= show_t:
         return None
-    text = f"{cfg.get('glyph', '')}{count}"
+
+    is_stale = state.get("agents_stale", False)
+    show_breakdown = cfg.get("show_breakdown", True)
+    mode = _resolve_display_mode(theme, "agents")
+
+    if show_breakdown and "claude_main_count" in state:
+        segments = _build_agent_segments(state, cfg, mode)
+    else:
+        # Legacy single-count mode
+        segments = [_format_agent_label(cfg.get("glyph", ""),
+                                        cfg.get("label", "Claude"),
+                                        total, mode)]
+
+    inner_sep = cfg.get("inner_separator", " \u2502 ")
+    text = inner_sep.join(s for s in segments if s)
+
+    if not text:
+        return None
+
+    # Threshold coloring on total count
     warn_t = cfg.get("warn_threshold", 5)
     crit_t = cfg.get("critical_threshold", 8)
-    is_stale = state.get("agents_stale", False)
-    if count >= crit_t:
+    if total >= crit_t:
         return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme, dim=is_stale)
-    elif count >= warn_t:
+    elif total >= warn_t:
         return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme, dim=is_stale)
     return _pill(text, cfg, theme=theme, dim=is_stale)
 
@@ -1435,7 +1570,7 @@ MODULE_RENDERERS: dict[str, Any] = {
 }
 
 DEFAULT_LINE1 = ["model", "dir", "context_bar", "cost", "duration"]
-DEFAULT_LINE2 = ["cpu", "memory", "disk"]
+DEFAULT_LINE2 = ["cpu", "memory", "disk", "agents", "tmux"]
 DEFAULT_LINE3 = ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
                  "obs_prompts", "obs_tasks", "obs_subagents",
                  "obs_failures", "obs_compactions", "obs_health"]
