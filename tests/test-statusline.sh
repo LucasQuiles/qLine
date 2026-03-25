@@ -700,6 +700,19 @@ assert_equals "R-11b: 1.2k" "$(echo "$OUT" | sed -n '2p')" "1.2k"
 assert_equals "R-11c: 12.3k" "$(echo "$OUT" | sed -n '3p')" "12.3k"
 assert_equals "R-11d: 1.2M" "$(echo "$OUT" | sed -n '4p')" "1.2M"
 
+# R-11e: Abbreviation boundary — 99999 -> 100k (not 100.0k)
+OUT=$(run_py "
+from statusline import _abbreviate_count
+print(_abbreviate_count(99999))
+print(_abbreviate_count(100000))
+print(_abbreviate_count(99999999))
+print(_abbreviate_count(100000000))
+")
+assert_equals "R-11e: 99999 -> 100k" "$(echo "$OUT" | sed -n '1p')" "100k"
+assert_equals "R-11f: 100000 -> 100k" "$(echo "$OUT" | sed -n '2p')" "100k"
+assert_equals "R-11g: 99999999 -> 100M" "$(echo "$OUT" | sed -n '3p')" "100M"
+assert_equals "R-11h: 100000000 -> 100M" "$(echo "$OUT" | sed -n '4p')" "100M"
+
 # R-12: Token formatting
 OUT=$(run_py "
 from statusline import format_tokens, DEFAULT_THEME
@@ -888,7 +901,7 @@ run_statusline "$(cat "$FIXTURES/valid-real-payload.json")"
 assert_exit_zero "C-10a: exit 0" "$LAST_EXIT"
 assert_contains "C-10b: bar present" "$LAST_STDOUT" "15%"
 assert_contains "C-10c: input tokens" "$LAST_STDOUT" "↑281k"
-assert_contains "C-10d: output tokens" "$LAST_STDOUT" "↓141k"
+assert_contains "C-10d: output tokens" "$LAST_STDOUT" "↓142k"
 assert_contains "C-10e: cost critical" "$LAST_STDOUT" '27.29'
 
 # C-11: Optional fields don't crash

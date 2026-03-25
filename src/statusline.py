@@ -547,9 +547,9 @@ def _abbreviate_count(n: int) -> str:
         return str(n)
     if n < 1_000_000:
         val = n / 1000
-        return f"{val:.1f}k" if val < 100 else f"{int(val)}k"
+        return f"{val:.1f}k" if round(val, 1) < 100 else f"{round(val)}k"
     val = n / 1_000_000
-    return f"{val:.1f}M" if val < 100 else f"{int(val)}M"
+    return f"{val:.1f}M" if round(val, 1) < 100 else f"{round(val)}M"
 
 
 def _pill(text: str, cfg: dict[str, Any], color: str | None = None,
