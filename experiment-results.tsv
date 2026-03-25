@@ -1,0 +1,7 @@
+commit	tests	overhead_ms	status	description
+6dbcb1e	232	-	keep	baseline
+ee0b8fd	236	-	keep	fix: abbrev boundary 99999->100k not 100.0k
+cafc67b	238	-	keep	fix: cost zero/negative formatting
+7368aaa	238	-	keep	fix: clamp all bar fills consistently
+700ef97	238	-	keep	fix: consistent token formatting (no space)
+ad84d2f	240	-	keep	fix: cost dollar-cent mixing, rate prefix
