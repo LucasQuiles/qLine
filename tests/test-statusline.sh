@@ -1588,9 +1588,18 @@ E2E_EXIT=$?
 assert_exit_zero "COL-19a: e2e exit 0" "$E2E_EXIT"
 assert_not_empty "COL-19b: e2e non-empty" "$E2E_OUT"
 # Should contain CPU and memory modules (macOS collectors now work)
-assert_contains "COL-19c: e2e has CPU" "$E2E_OUT" "C:"
-assert_contains "COL-19d: e2e has memory" "$E2E_OUT" "M:"
-assert_contains "COL-19e: e2e has disk" "$E2E_OUT" "D:"
+# Check for CPU/memory/disk percentage pattern (works in both compact and full mode)
+assert_contains "COL-19c: e2e has CPU" "$E2E_OUT" "%"
+TOTAL=$((TOTAL + 1))
+# Verify at least 3 percentage values (CPU, memory, disk)
+PCT_COUNT=$(printf '%s' "$E2E_OUT" | grep -o '[0-9]*%' | wc -l | tr -d ' ')
+if [ "$PCT_COUNT" -ge 3 ]; then
+    echo "  PASS: COL-19d: e2e has 3+ system metrics ($PCT_COUNT found)"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: COL-19d: expected 3+ system metrics, got $PCT_COUNT"
+    FAIL=$((FAIL + 1))
+fi
 fi
 
 echo ""

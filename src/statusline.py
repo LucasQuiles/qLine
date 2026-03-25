@@ -336,14 +336,16 @@ def _visible_len(text: str) -> int:
 def _detect_terminal_width() -> int:
     """Detect real terminal width, even when stdout is piped.
 
-    Tries in order:
-      1. COLUMNS env var (if set and > 0)
+    Claude Code runs statusline in a PTY fixed at 80 cols, hiding the
+    real terminal width. Tries multiple strategies in order:
+      1. QLINE_COLUMNS env var (explicit override)
       2. shutil.get_terminal_size (works with TTY on stdout)
-      3. tput cols (works when piped, reads controlling terminal)
-      4. Falls back to 120
+      3. macOS: osascript to query Terminal.app / iTerm2 window width
+      4. tput cols (returns PTY width — less reliable under Claude Code)
+      5. Falls back to 200
     """
-    # 1. COLUMNS env var
-    cols_env = os.environ.get("COLUMNS")
+    # 1. Explicit override
+    cols_env = os.environ.get("QLINE_COLUMNS") or os.environ.get("COLUMNS")
     if cols_env:
         try:
             c = int(cols_env)
@@ -358,7 +360,24 @@ def _detect_terminal_width() -> int:
             return sz.columns
     except (ValueError, OSError):
         pass
-    # 3. tput cols (works even from pipes — reads controlling terminal)
+    # 3. macOS: query the actual terminal emulator window
+    if sys.platform == "darwin":
+        for script in [
+            'tell application "Terminal" to get number of columns of front window',
+            'tell application "iTerm2" to tell current session of current window to get columns',
+        ]:
+            try:
+                result = subprocess.run(
+                    ["osascript", "-e", script],
+                    capture_output=True, text=True, timeout=0.1,
+                )
+                if result.returncode == 0:
+                    c = int(result.stdout.strip())
+                    if c > 0:
+                        return c
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
+                continue
+    # 4. tput cols (may return PTY width, not real terminal)
     try:
         result = subprocess.run(
             ["tput", "cols"], capture_output=True, text=True, timeout=0.05,
@@ -369,8 +388,8 @@ def _detect_terminal_width() -> int:
                 return c
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
         pass
-    # 4. Fallback
-    return 120
+    # 5. Fallback
+    return 200
 
 
 # --- Subprocess Helper ---
