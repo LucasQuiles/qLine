@@ -635,6 +635,15 @@ assert_contains "R-09c: very tiny cost" "$OUT" "0.05"
 assert_contains "R-09d: sub-cent" "$OUT" "0.5"
 assert_contains "R-09e: large cost integer" "$OUT" "100"
 
+# R-09f: Zero and negative cost
+OUT=$(run_py "
+from statusline import _format_cost
+print(_format_cost(0))
+print(_format_cost(-1.5))
+")
+assert_equals "R-09f: zero cost" "$(echo "$OUT" | sed -n '1p')" "0.00"
+assert_equals "R-09g: negative cost" "$(echo "$OUT" | sed -n '2p')" "0.00"
+
 # R-10: Duration formatting
 OUT=$(run_py "
 from statusline import _format_duration
