@@ -99,17 +99,23 @@ HOOKS_DEST="$DEST_DIR/hooks"
 if [ -d "$HOOKS_SRC" ]; then
     mkdir -p "$HOOKS_DEST"
     HOOK_COUNT=0
-    for hook in "$HOOKS_SRC"/obs-*.py "$HOOKS_SRC"/hook_utils.py; do
+    for hook in "$HOOKS_SRC"/obs-*.py; do
         [ -f "$hook" ] || continue
+        # Skip temporary/probe scripts
+        case "$(basename "$hook")" in obs-contract-probe*) continue ;; esac
         cp "$hook" "$HOOKS_DEST/"
         chmod +x "$HOOKS_DEST/$(basename "$hook")"
         HOOK_COUNT=$((HOOK_COUNT + 1))
     done
-    # Also install obs_utils.py alongside hooks (they import it)
+    # Install shared libraries where hooks import from (~/.claude/scripts/)
+    SCRIPTS_DIR="$DEST_DIR/scripts"
+    mkdir -p "$SCRIPTS_DIR"
+    cp "$HOOKS_SRC/hook_utils.py" "$SCRIPTS_DIR/"
     if [ -f "$OBS_SRC" ]; then
-        cp "$OBS_SRC" "$HOOKS_DEST/"
+        cp "$OBS_SRC" "$SCRIPTS_DIR/"
     fi
     echo "Installed: $HOOK_COUNT hook scripts to $HOOKS_DEST/"
+    echo "Installed: hook_utils.py, obs_utils.py to $SCRIPTS_DIR/"
 fi
 
 # --- Patch settings.json ---
@@ -151,6 +157,12 @@ if [ "$JQ_AVAILABLE" = true ] && [ -f "$SETTINGS" ] && [ -f "$HOOKS_JSON" ]; the
         echo "hooks key already present in $SETTINGS — skipping hook registration"
         echo "  To install obs hooks manually, merge src/hooks/hooks.json into your settings."
     else
+        # Backup before modifying
+        HOOKS_BACKUP="$DEST_DIR/backups/hooks-install-$(date +%Y%m%d-%H%M%S)"
+        mkdir -p "$HOOKS_BACKUP"
+        cp "$SETTINGS" "$HOOKS_BACKUP/settings.json.bak"
+        echo "Backup: $HOOKS_BACKUP/settings.json.bak"
+
         TMP=$(mktemp)
         echo "$HOOKS_RESOLVED" | jq --slurpfile settings "$SETTINGS" '$settings[0] + {"hooks": .}' > "$TMP"
         if jq -e '.' "$TMP" > /dev/null 2>&1; then

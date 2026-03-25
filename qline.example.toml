@@ -8,7 +8,7 @@
 # max_width = 200                   # wrap threshold in chars (default: 200)
 # display_mode = "both"             # "icon" | "text" | "both" (global default)
 # line1 = ["model", "dir", "context_bar", "cost", "duration"]
-# line2 = ["cpu", "memory", "disk"]
+# line2 = ["cpu", "memory", "disk", "agents", "tmux"]
 # line3 = ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
 #           "obs_prompts", "obs_tasks", "obs_subagents",
 #           "obs_failures", "obs_compactions", "obs_health"]
@@ -144,6 +144,8 @@
 #   [obs_subagents]
 #   enabled = true
 #   [obs_failures]
+#   enabled = true
+#   [obs_compactions]
 #   enabled = true
 #   [obs_health]
 #   enabled = true

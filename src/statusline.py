@@ -1676,7 +1676,7 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         theme = DEFAULT_THEME
 
     layout = theme.get("layout", {})
-    force_single = layout.get("force_single_line", False)
+    force_single = layout.get("force_single_line", True)
 
     # Collect all configured lines (line1, line2, line3, ...)
     has_any_line_key = any(layout.get(f"line{i}") is not None for i in range(1, 6))

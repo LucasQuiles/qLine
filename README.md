@@ -544,7 +544,7 @@ bash tests/test-statusline.sh --section collector # just collectors
 bash tests/test-statusline.sh --section obs      # just observability
 ```
 
-261 tests across 10 sections. They run under `NO_COLOR=1` for deterministic plain-text assertions. The test file is a bash script because that's what you test CLI tools with.
+261 tests across 11 sections (parser, normalizer, renderer, config, ansi, command, layout, collector, cache, stale, obs). They run under `NO_COLOR=1` for deterministic plain-text assertions. The test file is a bash script because that's what you test CLI tools with.
 
 ---
 
