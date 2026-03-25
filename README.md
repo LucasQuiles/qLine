@@ -121,7 +121,14 @@ For the obs hooks, you also need to register them. See `src/hooks/hooks.json` fo
 ./uninstall.sh
 ```
 
-Or manually: delete `~/.claude/statusline.py` and `~/.claude/obs_utils.py`, remove the `statusLine` key from `~/.claude/settings.json`. Your config at `~/.config/qline.toml` is left alone — delete it yourself if you want.
+This removes:
+- `~/.claude/statusline.py` and `~/.claude/obs_utils.py`
+- All `~/.claude/hooks/obs-*.py` hook scripts
+- `~/.claude/scripts/hook_utils.py` and `~/.claude/scripts/obs_utils.py`
+- The `statusLine` binding from `~/.claude/settings.json`
+- Hook registrations from `~/.claude/settings.json` (only if all hooks are qLine obs hooks — leaves your own hooks alone)
+
+Your config at `~/.config/qline.toml` is left alone — delete it yourself if you want.
 
 ---
 
