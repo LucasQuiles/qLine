@@ -595,7 +595,7 @@ state = {'cost_usd': 5.0, 'duration_ms': 3600000}
 result = render_cost(state, DEFAULT_THEME)
 print(result or 'NONE')
 ")
-assert_contains "R-08c: cost rate present" "$OUT" "@5.00/h"
+assert_contains "R-08c: cost rate present" "$OUT" '@$5.00/h'
 
 # R-08d: Cost rate hidden when duration < 60s
 OUT=$(run_py "
@@ -613,7 +613,7 @@ state = {'cost_usd': 2.50, 'duration_ms': 1800000}
 result = render_cost(state, DEFAULT_THEME)
 print(result or 'NONE')
 ")
-assert_contains "R-08e: rate calc correct" "$OUT" "@5.00/h"
+assert_contains "R-08e: rate calc correct" "$OUT" '@$5.00/h'
 
 # R-09: Cost formatting
 OUT=$(run_py "
@@ -643,6 +643,20 @@ print(_format_cost(-1.5))
 ")
 assert_equals "R-09f: zero cost" "$(echo "$OUT" | sed -n '1p')" "0.00"
 assert_equals "R-09g: negative cost" "$(echo "$OUT" | sed -n '2p')" "0.00"
+
+# R-09h: Sub-cent cost doesn't show "$X¢" (no dollar-cent mix)
+OUT=$(run_py "
+from statusline import _format_cost, render_cost, DEFAULT_THEME
+# _format_cost alone
+fmt = _format_cost(0.005)
+print('FMT:' + fmt)
+# Full render (no rate to avoid confusion)
+state = {'cost_usd': 0.005}
+result = render_cost(state, DEFAULT_THEME)
+print('RENDER:' + (result or 'NONE'))
+")
+assert_contains "R-09h: has cent symbol" "$OUT" "¢"
+assert_not_contains "R-09h-b: format not dollar-cent" "$OUT" 'FMT:$'
 
 # R-10: Duration formatting
 OUT=$(run_py "

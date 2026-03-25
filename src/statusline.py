@@ -744,8 +744,13 @@ def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     if isinstance(duration_ms, (int, float)) and duration_ms > 60_000 and cost_val > 0:
         hours = duration_ms / 3_600_000
         rate = cost_val / hours
-        rate_suffix = f" @{_format_cost(rate)}/h"
-    cost_text = f"{c_cfg.get('glyph', '')}{_format_cost(cost_val)}{rate_suffix}"
+        rate_fmt = _format_cost(rate)
+        rate_prefix = "" if "\u00a2" in rate_fmt else "$"
+        rate_suffix = f" @{rate_prefix}{rate_fmt}/h"
+    formatted = _format_cost(cost_val)
+    # Skip $ glyph when cost uses ¢ notation to avoid "$0.1¢"
+    glyph = "" if "\u00a2" in formatted else c_cfg.get("glyph", "")
+    cost_text = f"{glyph}{formatted}{rate_suffix}"
     warn_t = c_cfg.get("warn_threshold", 2.0)
     crit_t = c_cfg.get("critical_threshold", 5.0)
     if cost_val >= crit_t:
