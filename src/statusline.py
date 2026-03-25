@@ -327,8 +327,21 @@ _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 
 def _visible_len(text: str) -> int:
-    """Return visible character count, stripping ANSI escape sequences."""
-    return len(_ANSI_RE.sub("", text))
+    """Return visible column count, accounting for ANSI escapes and wide glyphs.
+
+    Nerd Font glyphs (PUA: E000-F8FF, Supplementary PUA: F0000-FFFFF) render
+    as 2 columns wide in terminals but Python counts them as 1 character.
+    """
+    stripped = _ANSI_RE.sub("", text)
+    cols = 0
+    for ch in stripped:
+        cp = ord(ch)
+        # Nerd Font PUA ranges render double-width in most terminals
+        if (0xE000 <= cp <= 0xF8FF) or (0xF0000 <= cp <= 0xFFFFF):
+            cols += 2
+        else:
+            cols += 1
+    return cols
 
 
 # --- Terminal Width Detection ---
@@ -360,8 +373,18 @@ def _detect_terminal_width() -> int:
             return sz.columns
     except (ValueError, OSError):
         pass
-    # 3. macOS: query the actual terminal emulator window
+    # 3. macOS: query the actual terminal emulator window (cached 5s to avoid 75ms overhead)
     if sys.platform == "darwin":
+        cache_file = "/tmp/qline-termwidth.cache"
+        try:
+            st = os.stat(cache_file)
+            if time.time() - st.st_mtime < 5.0:
+                with open(cache_file) as f:
+                    c = int(f.read().strip())
+                    if c > 0:
+                        return c
+        except (OSError, ValueError):
+            pass
         for script in [
             'tell application "Terminal" to get number of columns of front window',
             'tell application "iTerm2" to tell current session of current window to get columns',
@@ -369,11 +392,16 @@ def _detect_terminal_width() -> int:
             try:
                 result = subprocess.run(
                     ["osascript", "-e", script],
-                    capture_output=True, text=True, timeout=0.1,
+                    capture_output=True, text=True, timeout=0.15,
                 )
                 if result.returncode == 0:
                     c = int(result.stdout.strip())
                     if c > 0:
+                        try:
+                            with open(cache_file, "w") as f:
+                                f.write(str(c))
+                        except OSError:
+                            pass
                         return c
             except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
                 continue
