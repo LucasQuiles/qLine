@@ -8,7 +8,8 @@
 # max_width = 200                   # wrap threshold in chars (default: 200)
 # display_mode = "both"             # "icon" | "text" | "both" (global default)
 # line1 = ["model", "dir", "context_bar", "cost", "duration"]
-# line2 = ["cpu", "memory", "disk", "agents", "tmux"]
+# line2 = ["cpu", "cpu_temp", "memory", "gpu_util", "gpu_mem",
+#           "gpu_temp", "gpu_power", "disk", "local_models", "agents", "tmux"]
 # line3 = ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
 #           "obs_prompts", "obs_tasks", "obs_subagents",
 #           "obs_failures", "obs_compactions", "obs_health"]
@@ -42,6 +43,8 @@
 # ─── System Modules ────────────────────────────────────────────────
 # [cpu]
 # enabled = true
+# label = "CPU"                     # text label for "text"/"both" display modes
+# display_mode = ""                 # "" = use global; or "icon" / "text" / "both"
 # width = 5
 # warn_threshold = 60.0
 # critical_threshold = 85.0
@@ -49,6 +52,8 @@
 
 # [memory]
 # enabled = true
+# label = "MEM"
+# display_mode = ""
 # width = 5
 # warn_threshold = 70.0
 # critical_threshold = 90.0
@@ -56,6 +61,8 @@
 
 # [disk]
 # enabled = true
+# label = "DSK"
+# display_mode = ""
 # path = "/"
 # width = 5
 # warn_threshold = 80.0
@@ -82,6 +89,63 @@
 
 # [tmux]
 # enabled = false                   # off by default
+
+# ─── GPU Modules ────────────────────────────────────────────────────
+# Requires nvidia-smi (NVIDIA) or rocm-smi (AMD). Auto-hidden if not present.
+# All GPU modules share a single nvidia-smi/rocm-smi call (50ms budget).
+
+# [gpu_util]
+# enabled = true                    # GPU utilization % with mini bar
+# label = "GPU"
+# display_mode = ""                 # "" = use global; or "icon" / "text" / "both"
+# width = 5
+# warn_threshold = 80.0
+# critical_threshold = 95.0
+# show_threshold = 0
+
+# [gpu_mem]
+# enabled = true                    # GPU VRAM usage % with mini bar + used/total
+# label = "VRAM"
+# display_mode = ""
+# width = 5
+# warn_threshold = 80.0
+# critical_threshold = 95.0
+# show_threshold = 0
+
+# [gpu_temp]
+# enabled = false                   # GPU temperature in °C
+# label = "GT"
+# display_mode = ""
+# warn_threshold = 75               # °C → yellow
+# critical_threshold = 90           # °C → red
+
+# [gpu_power]
+# enabled = false                   # GPU power draw in watts (shows limit if available)
+# label = "PWR"
+# display_mode = ""
+# warn_threshold = 200              # watts → yellow
+# critical_threshold = 300          # watts → red
+
+# ─── Temperature Module ────────────────────────────────────────────
+# CPU temperature from /sys/class/thermal (Linux) or osx-cpu-temp (macOS).
+# Auto-hidden if thermal zones are not accessible.
+
+# [cpu_temp]
+# enabled = false                   # CPU temperature in °C
+# label = "TEMP"
+# display_mode = ""
+# warn_threshold = 70               # °C → yellow
+# critical_threshold = 90           # °C → red
+
+# ─── Local Models Module ───────────────────────────────────────────
+# Detects running local inference servers: Ollama, llama.cpp, vLLM, TGI, LMStudio.
+
+# [local_models]
+# enabled = true                    # shows running model servers
+# label = "LM"
+# display_mode = ""                 # "" = use global; or "icon" / "text" / "both"
+# inner_separator = " │ "           # separator between server names
+# show_threshold = 0
 
 # ─── Observability Modules ──────────────────────────────────────────
 # These require the observability infrastructure (obs_utils.py + hooks).

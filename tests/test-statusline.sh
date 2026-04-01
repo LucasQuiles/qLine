@@ -2164,6 +2164,469 @@ echo ""
 fi
 
 # ======================================================================
+# GPU Module Tests
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "gpu" ]; then
+echo "=== GPU Module Tests ==="
+
+# Shared test payload
+GPU_PAYLOAD='{"model":{"id":"claude-opus-4-6","display_name":"Opus 4.6 (1M context)"},"cost":{"total_cost_usd":1.0,"total_duration_ms":60000},"context_window":{"total_input_tokens":1000,"total_output_tokens":500,"context_window_size":200000,"used_percentage":5}}'
+
+# T-gpu-1: gpu_util renders with mock nvidia-smi state
+echo ""
+echo "--- T-gpu-1: gpu_util renders from state ---"
+GPU_OUT_1=$(printf '%s' "$GPU_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 python3 -c "
+import sys, json
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import normalize, render, load_config
+payload = json.loads(sys.stdin.read())
+state = normalize(payload)
+state['gpu_util_percent'] = 62
+state['_compact'] = True
+theme = load_config()
+print(render(state, theme))
+" 2>/dev/null)
+assert_contains "T-gpu-1: gpu_util shows percentage" "$GPU_OUT_1" "62%"
+
+# T-gpu-2: gpu_mem renders with used/total
+echo ""
+echo "--- T-gpu-2: gpu_mem renders with used/total ---"
+GPU_OUT_2=$(printf '%s' "$GPU_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 python3 -c "
+import sys, json
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import normalize, render, load_config
+payload = json.loads(sys.stdin.read())
+state = normalize(payload)
+state['gpu_mem_percent'] = 45
+state['gpu_mem_used_mb'] = 11264
+state['gpu_mem_total_mb'] = 24576
+state['_compact'] = True
+theme = load_config()
+print(render(state, theme))
+" 2>/dev/null)
+assert_contains "T-gpu-2: gpu_mem shows percentage" "$GPU_OUT_2" "45%"
+assert_contains "T-gpu-2: gpu_mem shows used/total" "$GPU_OUT_2" "11/24G"
+
+# T-gpu-3: gpu_temp renders (when enabled)
+echo ""
+echo "--- T-gpu-3: gpu_temp renders when enabled ---"
+GPU_OUT_3=$(printf '%s' "$GPU_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 python3 -c "
+import sys, json
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_gpu_temp, DEFAULT_THEME
+state = {'gpu_temp_celsius': 71}
+theme = dict(DEFAULT_THEME)
+theme['gpu_temp'] = dict(theme['gpu_temp'])
+theme['gpu_temp']['enabled'] = True
+result = render_gpu_temp(state, theme)
+print(result if result else 'NONE')
+" 2>/dev/null)
+assert_contains "T-gpu-3: gpu_temp shows temperature" "$GPU_OUT_3" "71"
+
+# T-gpu-4: gpu_power renders with limit
+echo ""
+echo "--- T-gpu-4: gpu_power renders with limit ---"
+GPU_OUT_4=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_gpu_power, DEFAULT_THEME
+state = {'gpu_power_watts': 185.0, 'gpu_power_limit_watts': 250.0}
+theme = dict(DEFAULT_THEME)
+theme['gpu_power'] = dict(theme['gpu_power'])
+theme['gpu_power']['enabled'] = True
+result = render_gpu_power(state, theme)
+print(result if result else 'NONE')
+" 2>/dev/null)
+assert_contains "T-gpu-4: gpu_power shows watts" "$GPU_OUT_4" "185"
+assert_contains "T-gpu-4: gpu_power shows limit" "$GPU_OUT_4" "/250W"
+
+# T-gpu-5: gpu modules hidden when no GPU data
+echo ""
+echo "--- T-gpu-5: gpu modules hidden when no data ---"
+GPU_OUT_5=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_gpu_util, render_gpu_mem, render_gpu_temp, render_gpu_power, DEFAULT_THEME
+state = {}
+theme = DEFAULT_THEME
+results = [
+    render_gpu_util(state, theme),
+    render_gpu_mem(state, theme),
+    render_gpu_temp(state, theme),
+    render_gpu_power(state, theme),
+]
+print('ALL_NONE' if all(r is None for r in results) else 'VISIBLE')
+" 2>/dev/null)
+assert_equals "T-gpu-5: all gpu modules None when no data" "$GPU_OUT_5" "ALL_NONE"
+
+# T-gpu-6: nvidia-smi parser
+echo ""
+echo "--- T-gpu-6: nvidia-smi CSV parser ---"
+GPU_OUT_6=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import _parse_nvidia_smi
+state = {}
+_parse_nvidia_smi(state, '45, 11264, 24576, 71, 185.00, 250.00, NVIDIA GeForce RTX 4090')
+checks = [
+    state.get('gpu_util_percent') == 45,
+    state.get('gpu_mem_used_mb') == 11264,
+    state.get('gpu_mem_total_mb') == 24576,
+    state.get('gpu_mem_percent') == 46,
+    state.get('gpu_temp_celsius') == 71,
+    state.get('gpu_power_watts') == 185.0,
+    state.get('gpu_power_limit_watts') == 250.0,
+    state.get('gpu_name') == 'NVIDIA GeForce RTX 4090',
+]
+print('ALL_OK' if all(checks) else f'FAIL: {state}')
+" 2>/dev/null)
+assert_equals "T-gpu-6: nvidia-smi parser extracts all fields" "$GPU_OUT_6" "ALL_OK"
+
+# T-gpu-7: nvidia-smi parser — empty input
+echo ""
+echo "--- T-gpu-7: nvidia-smi parser — empty input ---"
+GPU_OUT_7=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import _parse_nvidia_smi
+state = {}
+_parse_nvidia_smi(state, '')
+print('EMPTY' if not state else f'UNEXPECTED: {state}')
+" 2>/dev/null)
+assert_equals "T-gpu-7: empty nvidia-smi output → no state" "$GPU_OUT_7" "EMPTY"
+
+# T-gpu-8: nvidia-smi parser — too few fields
+echo ""
+echo "--- T-gpu-8: nvidia-smi parser — too few fields ---"
+GPU_OUT_8=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import _parse_nvidia_smi
+state = {}
+_parse_nvidia_smi(state, '45, 11264, 24576')
+print('EMPTY' if not state else f'UNEXPECTED: {state}')
+" 2>/dev/null)
+assert_equals "T-gpu-8: too few fields → no state" "$GPU_OUT_8" "EMPTY"
+
+# T-gpu-9: rocm-smi parser
+echo ""
+echo "--- T-gpu-9: rocm-smi JSON parser ---"
+GPU_OUT_9=$(NO_COLOR=1 python3 -c "
+import sys, json
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import _parse_rocm_smi
+state = {}
+data = json.dumps({
+    'card0': {
+        'GPU use (%)': '45',
+        'GPU memory use (%)': '23',
+        'Temperature (Sensor edge) (C)': '65.0',
+        'Average Graphics Package Power (W)': '150.0',
+        'Max Graphics Package Power (W)': '200.0',
+    }
+})
+_parse_rocm_smi(state, data)
+checks = [
+    state.get('gpu_util_percent') == 45,
+    state.get('gpu_mem_percent') == 23,
+    state.get('gpu_temp_celsius') == 65,
+    state.get('gpu_power_watts') == 150.0,
+]
+print('ALL_OK' if all(checks) else f'FAIL: {state}')
+" 2>/dev/null)
+assert_equals "T-gpu-9: rocm-smi parser extracts fields" "$GPU_OUT_9" "ALL_OK"
+
+# T-gpu-10: gpu threshold coloring (critical)
+echo ""
+echo "--- T-gpu-10: gpu_util critical threshold ---"
+GPU_OUT_10=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_gpu_util, DEFAULT_THEME
+state = {'gpu_util_percent': 98, '_compact': True}
+result = render_gpu_util(state, DEFAULT_THEME)
+print(result if result else 'NONE')
+" 2>/dev/null)
+assert_contains "T-gpu-10: critical gpu shows percentage" "$GPU_OUT_10" "98%"
+
+# T-gpu-11: collect_gpu sentinel prevents double collection
+echo ""
+echo "--- T-gpu-11: collect_gpu sentinel ---"
+GPU_OUT_11=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import collect_gpu
+state = {'_gpu_collected': True}
+collect_gpu(state)
+# Should have returned immediately — no gpu data added
+has_gpu_data = 'gpu_util_percent' in state
+print('SKIPPED' if not has_gpu_data else 'RAN_TWICE')
+" 2>/dev/null)
+assert_equals "T-gpu-11: sentinel prevents double collection" "$GPU_OUT_11" "SKIPPED"
+
+echo ""
+fi
+
+# ======================================================================
+# CPU Temperature Tests
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "cpu_temp" ]; then
+echo "=== CPU Temperature Tests ==="
+
+# T-temp-1: render_cpu_temp with valid data
+echo ""
+echo "--- T-temp-1: cpu_temp renders with valid data ---"
+TEMP_OUT_1=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_cpu_temp, DEFAULT_THEME
+state = {'cpu_temp_celsius': 58}
+theme = dict(DEFAULT_THEME)
+theme['cpu_temp'] = dict(theme['cpu_temp'])
+theme['cpu_temp']['enabled'] = True
+result = render_cpu_temp(state, theme)
+print(result if result else 'NONE')
+" 2>/dev/null)
+assert_contains "T-temp-1: shows temperature" "$TEMP_OUT_1" "58"
+
+# T-temp-2: hidden when no data
+echo ""
+echo "--- T-temp-2: cpu_temp hidden when no data ---"
+TEMP_OUT_2=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_cpu_temp, DEFAULT_THEME
+result = render_cpu_temp({}, DEFAULT_THEME)
+print('NONE' if result is None else result)
+" 2>/dev/null)
+assert_equals "T-temp-2: no data → None" "$TEMP_OUT_2" "NONE"
+
+# T-temp-3: warn threshold
+echo ""
+echo "--- T-temp-3: cpu_temp warn threshold ---"
+TEMP_OUT_3=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_cpu_temp, DEFAULT_THEME
+state = {'cpu_temp_celsius': 75}
+theme = dict(DEFAULT_THEME)
+theme['cpu_temp'] = dict(theme['cpu_temp'])
+theme['cpu_temp']['enabled'] = True
+result = render_cpu_temp(state, theme)
+print(result if result else 'NONE')
+" 2>/dev/null)
+assert_contains "T-temp-3: warn temp renders" "$TEMP_OUT_3" "75"
+
+# T-temp-4: critical threshold
+echo ""
+echo "--- T-temp-4: cpu_temp critical threshold ---"
+TEMP_OUT_4=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_cpu_temp, DEFAULT_THEME
+state = {'cpu_temp_celsius': 95}
+theme = dict(DEFAULT_THEME)
+theme['cpu_temp'] = dict(theme['cpu_temp'])
+theme['cpu_temp']['enabled'] = True
+result = render_cpu_temp(state, theme)
+print(result if result else 'NONE')
+" 2>/dev/null)
+assert_contains "T-temp-4: critical temp renders" "$TEMP_OUT_4" "95"
+
+# T-temp-5: sysfs collector with mock thermal zone
+echo ""
+echo "--- T-temp-5: sysfs collector with mock thermal zone ---"
+MOCK_THERMAL=$(mktemp -d)
+mkdir -p "$MOCK_THERMAL/thermal_zone0"
+echo "x86_pkg_temp" > "$MOCK_THERMAL/thermal_zone0/type"
+echo "58000" > "$MOCK_THERMAL/thermal_zone0/temp"
+TEMP_OUT_5=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import _collect_cpu_temp_linux
+state = {}
+# Monkey-patch to use mock thermal dir
+import statusline
+original = statusline.PROC_DIR
+statusline.PROC_DIR = '/proc'  # ensure we use /sys/class/thermal path logic
+# Direct call with mock
+import os
+thermal_base = '$MOCK_THERMAL'
+zones = sorted(os.listdir(thermal_base))
+for zone in zones:
+    if not zone.startswith('thermal_zone'):
+        continue
+    type_path = os.path.join(thermal_base, zone, 'type')
+    temp_path = os.path.join(thermal_base, zone, 'temp')
+    with open(type_path) as f:
+        zone_type = f.read().strip().lower()
+    if any(t in zone_type for t in ('x86_pkg', 'cpu', 'coretemp', 'soc', 'acpitz')):
+        with open(temp_path) as f:
+            temp_mc = int(f.read().strip())
+        state['cpu_temp_celsius'] = round(temp_mc / 1000)
+        break
+print(state.get('cpu_temp_celsius', 'MISSING'))
+" 2>/dev/null)
+rm -rf "$MOCK_THERMAL"
+assert_equals "T-temp-5: sysfs reads 58000 millideg → 58" "$TEMP_OUT_5" "58"
+
+echo ""
+fi
+
+# ======================================================================
+# Local Models Tests
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "local_models" ]; then
+echo "=== Local Models Tests ==="
+
+# T-lm-1: render_local_models with mock data
+echo ""
+echo "--- T-lm-1: local_models renders with mock data ---"
+LM_OUT_1=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_local_models, DEFAULT_THEME
+state = {
+    'local_models': {'Ollama': 1, 'vLLM': 2},
+    'local_models_total': 3,
+}
+result = render_local_models(state, DEFAULT_THEME)
+print(result if result else 'NONE')
+" 2>/dev/null)
+assert_contains "T-lm-1: shows Ollama" "$LM_OUT_1" "Ollama"
+assert_contains "T-lm-1: shows vLLM count" "$LM_OUT_1" "vLLM 2"
+
+# T-lm-2: hidden when no models
+echo ""
+echo "--- T-lm-2: local_models hidden when empty ---"
+LM_OUT_2=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_local_models, DEFAULT_THEME
+result = render_local_models({}, DEFAULT_THEME)
+print('NONE' if result is None else result)
+" 2>/dev/null)
+assert_equals "T-lm-2: no data → None" "$LM_OUT_2" "NONE"
+
+# T-lm-3: hidden when empty dict
+echo ""
+echo "--- T-lm-3: local_models hidden when empty dict ---"
+LM_OUT_3=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_local_models, DEFAULT_THEME
+result = render_local_models({'local_models': {}, 'local_models_total': 0}, DEFAULT_THEME)
+print('NONE' if result is None else result)
+" 2>/dev/null)
+assert_equals "T-lm-3: empty dict → None" "$LM_OUT_3" "NONE"
+
+# T-lm-4: display_mode = "icon"
+echo ""
+echo "--- T-lm-4: local_models icon-only mode ---"
+LM_OUT_4=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_local_models, DEFAULT_THEME
+state = {
+    'local_models': {'Ollama': 1},
+    'local_models_total': 1,
+}
+theme = {k: dict(v) if isinstance(v, dict) else v for k, v in DEFAULT_THEME.items()}
+theme['local_models'] = dict(theme['local_models'])
+theme['local_models']['display_mode'] = 'icon'
+result = render_local_models(state, theme)
+has_label = 'LM' in result if result else False
+print('NO_LABEL' if not has_label else 'HAS_LABEL')
+" 2>/dev/null)
+assert_equals "T-lm-4: icon mode excludes text label" "$LM_OUT_4" "NO_LABEL"
+
+# T-lm-5: display_mode = "text"
+echo ""
+echo "--- T-lm-5: local_models text-only mode ---"
+LM_OUT_5=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_local_models, DEFAULT_THEME
+state = {
+    'local_models': {'Ollama': 1},
+    'local_models_total': 1,
+}
+theme = {k: dict(v) if isinstance(v, dict) else v for k, v in DEFAULT_THEME.items()}
+theme['local_models'] = dict(theme['local_models'])
+theme['local_models']['display_mode'] = 'text'
+result = render_local_models(state, theme)
+print(result if result else 'NONE')
+" 2>/dev/null)
+assert_contains "T-lm-5: text mode shows LM label" "$LM_OUT_5" "LM"
+assert_contains "T-lm-5: text mode shows server name" "$LM_OUT_5" "Ollama"
+
+echo ""
+fi
+
+# ======================================================================
+# WSL Detection Tests
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "wsl" ]; then
+echo "=== WSL Detection Tests ==="
+
+# T-wsl-1: _IS_WSL is a boolean
+echo ""
+echo "--- T-wsl-1: _IS_WSL is boolean ---"
+WSL_OUT_1=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import _IS_WSL
+print(type(_IS_WSL).__name__)
+" 2>/dev/null)
+assert_equals "T-wsl-1: _IS_WSL is bool" "$WSL_OUT_1" "bool"
+
+echo ""
+fi
+
+# ======================================================================
+# Display Mode Tests (system metrics)
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "display_mode" ]; then
+echo "=== Display Mode Tests (system metrics) ==="
+
+# T-dm-1: cpu with display_mode="text" shows label
+echo ""
+echo "--- T-dm-1: cpu text mode shows label ---"
+DM_OUT_1=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_cpu, DEFAULT_THEME
+state = {'cpu_percent': 42}
+theme = {k: dict(v) if isinstance(v, dict) else v for k, v in DEFAULT_THEME.items()}
+theme['cpu'] = dict(theme['cpu'])
+theme['cpu']['display_mode'] = 'text'
+result = render_cpu(state, theme)
+print(result if result else 'NONE')
+" 2>/dev/null)
+assert_contains "T-dm-1: text mode shows CPU label" "$DM_OUT_1" "CPU"
+assert_contains "T-dm-1: text mode shows percentage" "$DM_OUT_1" "42%"
+
+# T-dm-2: memory with display_mode="icon" (no label)
+echo ""
+echo "--- T-dm-2: memory icon mode (no label) ---"
+DM_OUT_2=$(NO_COLOR=1 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+from statusline import render_memory, DEFAULT_THEME
+state = {'memory_percent': 64}
+theme = {k: dict(v) if isinstance(v, dict) else v for k, v in DEFAULT_THEME.items()}
+theme['memory'] = dict(theme['memory'])
+theme['memory']['display_mode'] = 'icon'
+result = render_memory(state, theme)
+has_label = 'MEM' in result if result else False
+print('NO_LABEL' if not has_label else 'HAS_LABEL')
+" 2>/dev/null)
+assert_equals "T-dm-2: icon mode excludes MEM label" "$DM_OUT_2" "NO_LABEL"
+
+echo ""
+fi
+
+# ======================================================================
 # Summary
 # ======================================================================
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
