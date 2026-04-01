@@ -1386,13 +1386,17 @@ def collect_gpu(state: dict[str, Any]) -> None:
         return
     state["_gpu_collected"] = True
 
-    # Try NVIDIA (works natively on Linux, macOS, and WSL2)
-    out = _run_cmd([
-        "nvidia-smi",
-        "--query-gpu=utilization.gpu,memory.used,memory.total,"
-        "temperature.gpu,power.draw,power.limit,name",
-        "--format=csv,noheader,nounits",
-    ], timeout=0.05)
+    # Try NVIDIA — check PATH first, then WSL2-specific location
+    nvidia_smi = "nvidia-smi"
+    if _IS_WSL and not shutil.which("nvidia-smi"):
+        wsl_path = "/usr/lib/wsl/lib/nvidia-smi"
+        if os.path.isfile(wsl_path):
+            nvidia_smi = wsl_path
+
+    query = ("--query-gpu=utilization.gpu,memory.used,memory.total,"
+             "temperature.gpu,power.draw,power.limit,name")
+    out = _run_cmd([nvidia_smi, query, "--format=csv,noheader,nounits"],
+                   timeout=0.05)
     if out is not None:
         _parse_nvidia_smi(state, out)
         return
