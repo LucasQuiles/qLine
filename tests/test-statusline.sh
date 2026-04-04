@@ -1729,7 +1729,7 @@ state2 = {
     'last_cache_create': 500,
 }
 bar = render_context_bar(state2, DEFAULT_THEME)
-assert '**500' in bar, f'should show **500 in bar: {repr(bar)}'
+assert '500' in bar, f'should show 500 in bar: {repr(bar)}'
 print('OK')
 ")
 assert_equals "spike below notable" "$LAST_STDOUT" "OK"
@@ -1742,13 +1742,13 @@ state_notable = {
     'last_cache_create': 1001,
 }
 bar = render_context_bar(state_notable, DEFAULT_THEME)
-assert '**1.0k' in bar, f'should show **1.0k: {repr(bar)}'
+assert '1.0k' in bar, f'should show 1.0k: {repr(bar)}'
 state_spike = {
     'context_used': 100000, 'context_total': 1000000,
     'last_cache_create': 5001,
 }
 bar2 = render_context_bar(state_spike, DEFAULT_THEME)
-assert '**5.0k' in bar2, f'should show **5.0k: {repr(bar2)}'
+assert '5.0k' in bar2, f'should show 5.0k: {repr(bar2)}'
 print('OK')
 ")
 assert_equals "spike at notable" "$LAST_STDOUT" "OK"
@@ -2275,7 +2275,7 @@ assert '\033[' not in result, f'unexpected ANSI in NO_COLOR mode: {repr(result)}
 # Bar blocks + overhead + segments separated by |
 assert '\u2588' in result, f'sys blocks missing: {repr(result)}'
 assert '\u2593' in result, f'conv blocks missing: {repr(result)}'
-assert '|' in result, f'segments should be pipe-separated: {repr(result)}'
+assert '[' in result, f'segments should be bracket-delimited: {repr(result)}'
 assert '300k' in result, f'overhead should show in bar: {repr(result)}'
 print('OK')
 ")

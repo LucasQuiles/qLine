@@ -718,18 +718,18 @@ def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render unified context health bar.
+    """Render unified context health bar as a sequence of pills.
 
-    Format: ↑1.1M↓194k [██████░░░░░░░░░░░░░░]󰋑 49% 󰳲38.2k *65% **740
+    Format: [↑1.1M][↓194k][███▓▓▓░░░░ 󰋑][49%][󰳲 38.2k][󰁍 740][󰓅 65%]
 
-    Segments (left to right):
-      ↑in↓out    — cumulative input/output token counts
-      [bar]      — dual-color progress bar (█=sys overhead, ▓=conversation, ░=free)
-      glyph      — 󰋑 heart (context health)
-      pct%       — context usage percentage (corrected for output tokens)
-      󰳲overhead  — system overhead tokens (brain glyph)
-      *rate%     — cache hit rate (* prefix)
-      **writes   — per-turn cache writes (** prefix)
+    Each segment is an independent pill with its own color:
+      [↑count]    — input tokens (severity color)
+      [↓count]    — output tokens (severity color)
+      [bar 󰋑]    — dual-color progress bar + heart glyph
+      [pct%]      — context percentage (severity color)
+      [󰳲 tokens]  — system overhead (nord9 blue)
+      [󰁍 count]  — per-turn cache writes (threshold-colored)
+      [󰓅 rate%]  — cache hit rate (nord7 teal)
     """
     if "context_used" not in state or "context_total" not in state:
         return None
@@ -741,8 +741,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     if width <= 0:
         import shutil as _shutil
         term_w = _shutil.get_terminal_size((120, 24)).columns
-        # Tighter: tokens(~14) + bar(w) + glyph(1) + pct(4) + overhead(~8) + rate(5) + writes(5) + separators(~8)
-        width = max(10, term_w - 50)
+        width = max(10, term_w - 55)
     filled = (total_pct * width) // 100
 
     # Dual-bar: sys overhead vs conversation within filled portion
@@ -804,53 +803,52 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
     glyph = cfg.get("glyph", "\U000f02d1")  # 󰋑 heart
 
-    # ── Build segments ──
-
-    # 1. Token counts: ↑1.1M↓194k
-    token_seg = ""
-    if "input_tokens" in state and "output_tokens" in state:
-        inp = state["input_tokens"]
-        out = state["output_tokens"]
-        if inp > 0 or out > 0:
-            token_seg = f"\u2191{_abbreviate_count(inp)}\u2193{_abbreviate_count(out)}"
-
-    # 2. Percentage with severity indicator
+    # Percentage suffix
     if sev == 2:
-        pct_seg = f"{total_pct}%!"
+        pct_text = f"{total_pct}%!"
     elif sev == 1:
-        pct_seg = f"{total_pct}%~"
+        pct_text = f"{total_pct}%~"
     else:
-        pct_seg = f"{total_pct}%"
+        pct_text = f"{total_pct}%"
 
-    # 3. System overhead: 󰳲38.2k
-    overhead_seg = ""
-    if has_overhead:
-        oh_glyph = "\U000f0cf2"  # 󰳲 brain
-        oh_tokens = state["sys_overhead_tokens"]
-        oh_suffix = "\u2248" if source == "estimated" else ""
-        overhead_seg = f"{oh_glyph}{_abbreviate_count(oh_tokens)}{oh_suffix}"
+    # ── Render as separate pills ──
 
-    # 4. Cache hit rate: *65%
-    rate_seg = ""
-    hit_rate = state.get("cache_hit_rate")
-    if hit_rate is not None and source == "measured":
-        rate_pct = int(hit_rate * 100)
-        rate_seg = f"*{rate_pct}%"
+    bg_hex = cfg.get("bg")
+    oh_color = "#81a1c1"   # nord9 blue — system overhead
+    rate_color = "#8fbcbb"  # nord7 teal — cache hit rate
 
-    # 5. Cache writes: **740
-    writes_seg = ""
+    # Cache writes color by threshold
     last_cc = state.get("last_cache_create")
-    if last_cc and last_cc > 0:
-        writes_seg = f"**{_abbreviate_count(last_cc)}"
-
-    # ── Render with or without color ──
+    cw_color = "#8fbcbb"  # default teal
+    spike_t = cfg.get("spike_threshold", 5000)
+    notable_t = cfg.get("notable_threshold", 1000)
+    if last_cc and last_cc > spike_t:
+        cw_color = "#bf616a"  # nord11 red
+    elif last_cc and last_cc > notable_t:
+        cw_color = "#ebcb8b"  # nord13 yellow
 
     if not NO_COLOR:
-        bg_hex = cfg.get("bg")
+        pills = []
         conv_color_hex = color
         sys_color_hex = _darken_hex(color, 0.65)
         free_color_hex = "#4c566a"
 
+        def _mkpill(text, c, bg=bg_hex, b=False):
+            pill_cfg = (theme or {}).get("pill", {})
+            left = pill_cfg.get("left", "")
+            right = pill_cfg.get("right", "")
+            inner = style(f" {text} ", c, b, bg)
+            if left and right and bg:
+                return style(left, bg) + inner + style(right, bg)
+            return inner
+
+        # [↑count]
+        if "input_tokens" in state and state["input_tokens"] > 0:
+            pills.append(_mkpill(f"\u2191{_abbreviate_count(state['input_tokens'])}", color, b=bold))
+        # [↓count]
+        if "output_tokens" in state and state["output_tokens"] > 0:
+            pills.append(_mkpill(f"\u2193{_abbreviate_count(state['output_tokens'])}", color, b=bold))
+        # [bar 󰋑]
         bar_styled = ""
         if sys_blocks > 0:
             bar_styled += style("\u2588" * sys_blocks, sys_color_hex, bg_color=bg_hex)
@@ -858,53 +856,48 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             bar_styled += style("\u2593" * conv_blocks, conv_color_hex, bg_color=bg_hex)
         if free_blocks > 0:
             bar_styled += style("\u2591" * free_blocks, free_color_hex, bg_color=bg_hex)
-
-        sep = style("\u2502", "#4c566a", bg_color=bg_hex)  # dim │
-
-        parts = [style(f" {token_seg}", color, bold, bg_hex)] if token_seg else []
-        parts.append(bar_styled)
-        parts.append(style(glyph, color, bold, bg_hex))
-        parts.append(sep)
-        parts.append(style(pct_seg, color, bold, bg_hex))
-        if overhead_seg:
-            parts.append(sep)
-            parts.append(style(overhead_seg, "#81a1c1", bg_color=bg_hex))  # nord9 blue
-        if rate_seg:
-            parts.append(sep)
-            parts.append(style(rate_seg, "#8fbcbb", bg_color=bg_hex))  # nord7 teal
-        if writes_seg:
-            parts.append(sep)
-            cw_color = cfg.get("color", "#8fbcbb")
-            if last_cc and last_cc > cfg.get("spike_threshold", 5000):
-                cw_color = "#bf616a"  # nord11 red
-            elif last_cc and last_cc > cfg.get("notable_threshold", 1000):
-                cw_color = "#ebcb8b"  # nord13 yellow
-            parts.append(style(writes_seg, cw_color, bg_color=bg_hex))
-        parts.append(style(" ", color, bg_color=bg_hex))
-
-        inner = "".join(parts)
+        bar_inner = style(" ", color, bg_color=bg_hex) + bar_styled + style(f" {glyph} ", color, bold, bg_hex)
         pill_cfg = (theme or {}).get("pill", {})
         left = pill_cfg.get("left", "")
         right = pill_cfg.get("right", "")
         if left and right and bg_hex:
-            return style(left, bg_hex) + inner + style(right, bg_hex)
-        return inner
+            pills.append(style(left, bg_hex) + bar_inner + style(right, bg_hex))
+        else:
+            pills.append(bar_inner)
+        # [pct%]
+        pills.append(_mkpill(pct_text, color, b=bold))
+        # [󰳲 overhead]
+        if has_overhead:
+            oh_suffix = "\u2248" if source == "estimated" else ""
+            pills.append(_mkpill(f"\U000f0cf2 {_abbreviate_count(state['sys_overhead_tokens'])}{oh_suffix}", oh_color))
+        # [󰁍 writes]
+        if last_cc and last_cc > 0:
+            pills.append(_mkpill(f"\U000f004d {_abbreviate_count(last_cc)}", cw_color))
+        # [󰓅 rate%]
+        hit_rate = state.get("cache_hit_rate")
+        if hit_rate is not None and source == "measured":
+            pills.append(_mkpill(f"\U000f04c5 {int(hit_rate * 100)}%", rate_color))
 
-    # NO_COLOR fallback — preserve dual-bar chars (█=sys, ▓=conv, ░=free)
+        return "".join(pills)
+
+    # NO_COLOR fallback — bracket-delimited segments
     bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
     parts = []
-    if token_seg:
-        parts.append(token_seg)
-    parts.append(f"{bar}{glyph}")
-    parts.append(pct_seg)
-    if overhead_seg:
-        parts.append(overhead_seg)
-    if rate_seg:
-        parts.append(rate_seg)
-    if writes_seg:
-        parts.append(writes_seg)
-    text = "|".join(parts)
-    return _pill(text, cfg, color, bold, theme)
+    if "input_tokens" in state and state.get("input_tokens", 0) > 0:
+        parts.append(f"[\u2191{_abbreviate_count(state['input_tokens'])}]")
+    if "output_tokens" in state and state.get("output_tokens", 0) > 0:
+        parts.append(f"[\u2193{_abbreviate_count(state['output_tokens'])}]")
+    parts.append(f"[{bar} {glyph}]")
+    parts.append(f"[{pct_text}]")
+    if has_overhead:
+        oh_suffix = "\u2248" if source == "estimated" else ""
+        parts.append(f"[\U000f0cf2 {_abbreviate_count(state['sys_overhead_tokens'])}{oh_suffix}]")
+    if last_cc and last_cc > 0:
+        parts.append(f"[\U000f004d {_abbreviate_count(last_cc)}]")
+    hit_rate = state.get("cache_hit_rate")
+    if hit_rate is not None and source == "measured":
+        parts.append(f"[\U000f04c5 {int(hit_rate * 100)}%]")
+    return "".join(parts)
 
 
 def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
