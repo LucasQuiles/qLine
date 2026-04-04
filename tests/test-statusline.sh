@@ -2161,6 +2161,42 @@ os.unlink(tmpf.name)
 ")
 assert_equals "config thresholds" "$OUT" "OK"
 
+echo "  cache TTL expiry: full rebuild after healthy turns suppresses busting"
+OUT=$(run_py "
+from context_overhead import _try_phase2_transcript
+import json, tempfile, os
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Turn 0: anchor
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+# Turns 1-3: healthy (high read, low create)
+for _ in range(3):
+    json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+        'input_tokens': 50, 'cache_creation_input_tokens': 200,
+        'cache_read_input_tokens': 42000, 'output_tokens': 200
+    }}}, tmpf); tmpf.write('\n')
+# Turn 4: TTL expiry — full rebuild (cache_create ≈ anchor, read ≈ 0)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 43000,
+    'cache_read_input_tokens': 500, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+state = {'transcript_path': tmpf.name}
+sc = {}
+_try_phase2_transcript(state, {}, sc, cache_warn_rate=0.8, cache_critical_rate=0.3)
+
+# Should detect TTL expiry, NOT busting
+assert sc.get('cache_expired') is True, f'should detect TTL expiry, got sc={sc}'
+assert sc.get('cache_busting') is not True, f'should NOT flag as busting, got sc={sc}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "cache TTL expiry" "$OUT" "OK"
+
 echo "  anchor: warm cache (cc=0 on turn 1) falls back to estimate"
 OUT=$(run_py "
 import json, tempfile, os

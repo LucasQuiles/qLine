@@ -761,7 +761,10 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     source = state.get("sys_overhead_source", "")
     cache_suffix = ""
     if source == "measured":
-        if state.get("cache_busting") is True:
+        if state.get("cache_expired") is True:
+            cache_suffix = "\U000f0150"  # nf-md-clock_alert — TTL expiry
+            # No severity escalation: cache will self-heal on next turn
+        elif state.get("cache_busting") is True:
             cache_suffix = "\U000f04bf"  # nf-md-lightning_bolt
             sev = 2  # Force entire bar to critical
         elif state.get("microcompact_suspected") is True:

@@ -358,8 +358,33 @@ def _try_phase2_transcript(
     session_turn = session_cache.get("session_turn_count", 0) + 1
     session_cache["session_turn_count"] = session_turn
 
+    # Cache TTL expiry detection: if the most recent turn shows a full rebuild
+    # (cache_create close to anchor, cache_read near zero) but previous turns
+    # were healthy, this is likely a TTL expiry (5-min Pro/API, 1-hour Max),
+    # not genuine cache busting. Flag it separately and don't escalate severity.
+    cache_expired = False
+    trailing = result["trailing_turns"]
+    if anchor > 0 and len(trailing) >= 2:
+        latest = trailing[-1]
+        prev_healthy = any(
+            t["cache_read"] > t["cache_create"] for t in trailing[:-1]
+        )
+        # "Full rebuild" heuristic: cache_create >= 80% of anchor AND
+        # cache_read < 20% of cache_create (mostly misses this turn)
+        full_rebuild = (
+            latest["cache_create"] >= anchor * 0.8
+            and (latest["cache_read"] < latest["cache_create"] * 0.2)
+        )
+        if full_rebuild and prev_healthy:
+            cache_expired = True
+    session_cache["cache_expired"] = cache_expired
+
     n_turns = len(result["trailing_turns"])
-    if n_turns >= 3 and result["cache_hit_rate"] < cache_critical_rate:
+    if cache_expired:
+        # TTL expiry: don't flag as busting — it will self-heal next turn
+        session_cache["cache_busting"] = False
+        session_cache["cache_degraded"] = False
+    elif n_turns >= 3 and result["cache_hit_rate"] < cache_critical_rate:
         prev_compactions = session_cache.get("prev_compactions", 0)
         current_compactions = state.get("obs_compactions", 0)
         suppress_until = session_cache.get("compaction_suppress_until_turn", 0)
@@ -399,8 +424,8 @@ def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> No
     """Copy overhead fields from session cache into renderer state."""
     _FIELDS = (
         "sys_overhead_tokens", "sys_overhead_source", "cache_hit_rate",
-        "cache_busting", "cache_degraded", "last_cache_create",
-        "prev_cache_create", "microcompact_suspected",
+        "cache_busting", "cache_degraded", "cache_expired",
+        "last_cache_create", "prev_cache_create", "microcompact_suspected",
     )
     for key in _FIELDS:
         if key in session_cache:
