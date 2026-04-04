@@ -790,7 +790,8 @@ def _read_transcript_tail(path: str) -> dict | None:
 
 
 def _try_phase2_transcript(
-    state: dict[str, Any], payload: dict, session_cache: dict
+    state: dict[str, Any], payload: dict, session_cache: dict,
+    package_root: str | None = None,
 ) -> bool:
     """Attempt Phase 2 measured overhead from transcript. Returns True if successful."""
     path = state.get("transcript_path") or payload.get("transcript_path")
@@ -800,6 +801,12 @@ def _try_phase2_transcript(
     result = _read_transcript_tail(path)
     if result is None:
         return False
+
+    # Anchor priority: manifest (durable) > transcript (volatile)
+    if "turn_1_anchor" not in session_cache:
+        manifest_anchor = _read_manifest_anchor(package_root)
+        if manifest_anchor is not None:
+            session_cache["turn_1_anchor"] = manifest_anchor
 
     if "turn_1_anchor" not in session_cache:
         session_cache["turn_1_anchor"] = result["turn_1_anchor"]
@@ -863,9 +870,15 @@ def _inject_context_overhead(state: dict[str, Any], payload: dict, theme: dict) 
             _apply_overhead_from_cache(state, session_cache)
             return
 
+        package_root: str | None = None
+        if _OBS_AVAILABLE:
+            obs_root = os.environ.get("OBS_ROOT")
+            kwargs = {"obs_root": obs_root} if obs_root else {}
+            package_root = resolve_package_root(session_id, **kwargs)
+
         measured = False
         if cfg_source in ("auto", "measured"):
-            measured = _try_phase2_transcript(state, payload, session_cache)
+            measured = _try_phase2_transcript(state, payload, session_cache, package_root)
 
         if not measured and cfg_source in ("auto", "estimated"):
             estimate = session_cache.get("overhead_estimate")
@@ -1666,6 +1679,22 @@ def _read_obs_health(package_root: str) -> str:
         return m.get("health", {}).get("overall", "unknown")
     except Exception:
         return "unknown"
+
+
+def _read_manifest_anchor(package_root: str | None) -> int | None:
+    """Read cache_anchor from manifest if available."""
+    if not package_root:
+        return None
+    manifest = os.path.join(package_root, "manifest.json")
+    try:
+        with open(manifest) as f:
+            m = json.load(f)
+        anchor = m.get("cache_anchor")
+        if isinstance(anchor, (int, float)) and anchor > 0:
+            return int(anchor)
+    except Exception:
+        pass
+    return None
 
 
 def _inject_obs_counters(state: dict, payload: dict) -> None:
