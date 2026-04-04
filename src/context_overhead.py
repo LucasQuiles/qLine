@@ -341,11 +341,23 @@ def _try_phase2_transcript(
         suppress_until = session_cache.get("compaction_suppress_until_turn", 0)
 
         if current_compactions > prev_compactions:
-            session_cache["compaction_suppress_until_turn"] = session_turn + 3
+            # Adaptive suppression: base 2 turns, scale with compaction count.
+            # First compaction: 2 turns grace. Second: 3. Third+: 4.
+            # Caps at 5 to avoid masking genuine busting.
+            consecutive = current_compactions - session_cache.get("compaction_baseline", 0)
+            grace = min(2 + consecutive, 5)
+            session_cache["compaction_suppress_until_turn"] = session_turn + grace
             session_cache["prev_compactions"] = current_compactions
 
         if session_turn <= suppress_until:
-            session_cache["cache_busting"] = False
+            # Still in grace period — check if cache is already recovering.
+            # If hit rate climbed above warn threshold, end suppression early.
+            if result["cache_hit_rate"] >= cache_warn_rate:
+                session_cache["compaction_suppress_until_turn"] = 0
+                session_cache["cache_busting"] = False
+                session_cache["cache_degraded"] = False
+            else:
+                session_cache["cache_busting"] = False
         else:
             session_cache["cache_busting"] = True
         session_cache["cache_degraded"] = False
