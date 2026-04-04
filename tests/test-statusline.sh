@@ -2019,6 +2019,64 @@ import shutil; shutil.rmtree(pkg)
 ")
 assert_equals "manifest_if_absent" "$LAST_STDOUT" "OK"
 
+echo "  obs-stop-cache: extracts cache metrics from transcript"
+run_py "
+import json, os, sys, tempfile
+sys.path.insert(0, os.path.expanduser('~/.claude/hooks'))
+sys.path.insert(0, os.path.expanduser('~/.claude/scripts'))
+
+from importlib.util import spec_from_file_location, module_from_spec
+hook_path = os.path.expanduser('~/.claude/hooks/obs-stop-cache.py')
+spec = spec_from_file_location('obs_stop_cache', hook_path)
+mod = module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+# Create mock transcript
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Streaming stub (should be skipped)
+json.dump({'type': 'assistant', 'message': {'stop_reason': None, 'id': 'msg_stub', 'usage': {
+    'input_tokens': 3, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 10
+}}}, tmpf); tmpf.write('\n')
+# Completed turn
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'id': 'msg_01ABC', 'model': 'claude-opus-4-6', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200,
+    'cache_creation': {'ephemeral_1h_input_tokens': 42000, 'ephemeral_5m_input_tokens': 0}
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = mod._extract_latest_cache_metrics(tmpf.name, None)
+assert result is not None, 'should find metrics'
+assert result['cache_create'] == 42000, f'cache_create: {result[\"cache_create\"]}'
+assert result['cache_read'] == 0
+assert result['input_tokens'] == 50
+assert result['entry_id'] == 'msg_01ABC'
+assert result['model'] == 'claude-opus-4-6'
+assert result['cache_create_1h'] == 42000
+assert result['cache_create_5m'] == 0
+
+# Test dedup: same entry_id returns None
+result2 = mod._extract_latest_cache_metrics(tmpf.name, 'msg_01ABC')
+assert result2 is None, 'should return None for duplicate entry'
+
+# Test truncated line handling
+tmpf2 = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'id': 'msg_02', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 25000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf2); tmpf2.write('\n')
+tmpf2.write('{\"type\": \"assistant\", \"message\": {\"stop_re')  # truncated
+tmpf2.close()
+result3 = mod._extract_latest_cache_metrics(tmpf2.name, None)
+assert result3 is not None, 'should handle truncated line'
+assert result3['cache_create'] == 25000
+
+print('OK')
+os.unlink(tmpf.name); os.unlink(tmpf2.name)
+"
+assert_equals "hook extraction" "$LAST_STDOUT" "OK"
+
 fi
 
 # ======================================================================
