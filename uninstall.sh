@@ -34,6 +34,22 @@ for f in "$DEST_DIR/statusline.py" "$DEST_DIR/obs_utils.py"; do
     fi
 done
 
+# Remove overhead monitor module
+rm -f "$DEST_DIR/context_overhead.py" && echo "Removed: $DEST_DIR/context_overhead.py"
+
+# Remove observability hooks
+HOOKS_REMOVED=0
+for hook in "$DEST_DIR/hooks/obs-"*.py; do
+    [ -f "$hook" ] || continue
+    rm -f "$hook"
+    HOOKS_REMOVED=$((HOOKS_REMOVED + 1))
+done
+[ "$HOOKS_REMOVED" -gt 0 ] && echo "Removed: $HOOKS_REMOVED observability hooks"
+
+# Remove shared scripts (only qLine-owned files, not the entire directory)
+rm -f "$DEST_DIR/scripts/obs_utils.py" "$DEST_DIR/scripts/hook_utils.py"
+echo "Removed: shared scripts (obs_utils.py, hook_utils.py)"
+
 echo ""
 echo "Done. Restart Claude Code to deactivate."
 echo "NOTE: ~/.config/qline.toml was not removed (delete manually if desired)"

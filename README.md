@@ -587,7 +587,7 @@ If there are no session directories, the hooks aren't installed or haven't fired
 
 ## Architecture
 
-Single Python file (`src/statusline.py`, ~1400 lines) plus `obs_utils.py` (~420 lines). No runtime dependencies beyond Python stdlib.
+Three Python modules: `src/statusline.py` (~1740 lines), `src/context_overhead.py` (~387 lines), and `src/obs_utils.py` (~543 lines), plus 12 observability hooks in `hooks/` and shared libraries in `scripts/`. No runtime dependencies beyond Python stdlib.
 
 ```
 stdin (JSON from Claude Code)
@@ -618,7 +618,7 @@ bash tests/test-statusline.sh --section renderer # one section
 bash tests/test-statusline.sh --section obs      # obs modules only
 ```
 
-195 tests across 9 sections:
+235 tests across 10 sections:
 
 | Section | Tests | What it covers |
 |---|---|---|
@@ -709,10 +709,13 @@ These modules read `/proc/stat` and `/proc/meminfo`. They only work on Linux. On
 Or manually:
 ```bash
 rm ~/.claude/statusline.py ~/.claude/obs_utils.py
+rm -f ~/.claude/context_overhead.py
+rm -f ~/.claude/hooks/obs-*.py
+rm -f ~/.claude/scripts/obs_utils.py ~/.claude/scripts/hook_utils.py
 # Edit ~/.claude/settings.json and remove the "statusLine" key
 ```
 
-The uninstall script removes the `statusLine` binding from `settings.json`. The Python files at `~/.claude/statusline.py` and `~/.claude/obs_utils.py` can be deleted manually.
+The uninstall script removes the `statusLine` binding from `settings.json` and all installed Python files: `statusline.py`, `obs_utils.py`, `context_overhead.py`, the 12 observability hooks in `hooks/`, and shared scripts in `scripts/`.
 
 Your `~/.config/qline.toml` is not touched — delete it if you want a full cleanup.
 
