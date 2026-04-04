@@ -18,21 +18,33 @@ from typing import Any
 # ── Overhead Monitor: Static Estimation (Phase 1) ───────────────────
 
 _TOKENS_PER_BYTE = 0.325
-_SYSTEM_PROMPT_TOKENS = 4000
+_SYSTEM_PROMPT_TOKENS = 6200        # Measured via /context: ~6.2k (was 4k)
+_SYSTEM_TOOLS_TOKENS = 11600        # Measured: ~11.6k undeferred, ~968 deferred
+_SYSTEM_TOOLS_DEFERRED_TOKENS = 968 # Post-deferral (name-only stubs)
 _TOKENS_PER_DEFERRED_TOOL = 12
 _TOKENS_PER_SKILL_STUB = 30
+# MCP tool overhead: measured averages per server
+# Deferred: ~240 tokens/server (name stubs only)
+# Undeferred: ~1500 tokens/server (full schemas)
+_MCP_TOKENS_PER_SERVER_DEFERRED = 240
+_MCP_TOKENS_PER_SERVER_FULL = 1500
 
 
 def _estimate_static_overhead(
     claude_md_paths: list[str] | None = None,
+    context_window: int = 200_000,
 ) -> int:
     """Estimate system token overhead from measurable local sources.
 
     Includes: system prompt, CLAUDE.md files, built-in tool definitions,
-    and a baseline for deferred tool names and skill stubs.
+    MCP server tool schemas, and skill stubs from plugins.
+
+    Detects whether tool deferral is likely active (threshold: MCP tools
+    exceed 10% of context window) and uses appropriate per-server cost.
+
     Returns a lower-bound token count.
     """
-    total = _SYSTEM_PROMPT_TOKENS
+    total = _SYSTEM_PROMPT_TOKENS  # ~6.2k measured
 
     if claude_md_paths is None:
         candidates = [os.path.expanduser("~/.claude/CLAUDE.md")]
@@ -44,6 +56,12 @@ def _estimate_static_overhead(
             candidates.append(cwd_root)
         claude_md_paths = candidates
 
+    # Auto-memory index (first 200 lines of MEMORY.md): ~1.6k tokens
+    memory_md = os.path.expanduser("~/.claude/projects")
+    # Simple heuristic: if memory dir exists, add baseline
+    if os.path.isdir(memory_md):
+        total += 1600
+
     for path in claude_md_paths:
         try:
             size = os.path.getsize(path)
@@ -51,28 +69,35 @@ def _estimate_static_overhead(
         except OSError:
             pass
 
-    # Built-in tool definitions (Read, Write, Edit, Bash, Grep, Glob, etc.)
-    # ~968 tokens after deferral (v2.1.69+), ~11k before
-    total += 968
-
-    # Deferred tool names — count from settings.json MCP servers if available
+    # Count MCP servers and estimate total undeferred tool cost
     settings_path = os.path.expanduser("~/.claude/settings.json")
+    n_mcp_servers = 0
     try:
-        import json as _json
         with open(settings_path) as f:
-            settings = _json.load(f)
+            settings = json.load(f)
         mcp_servers = settings.get("mcpServers", {})
-        # Each MCP server contributes ~15-30 deferred tool names
-        total += len(mcp_servers) * 20 * _TOKENS_PER_DEFERRED_TOOL
+        n_mcp_servers = len(mcp_servers)
     except Exception:
-        # Fallback: assume ~5 MCP servers
-        total += 5 * 20 * _TOKENS_PER_DEFERRED_TOOL
+        n_mcp_servers = 5  # Conservative fallback
 
-    # Skill stubs from plugins
+    # Deferral detection: CC defers tools when MCP schema total exceeds
+    # 10% of context window. Estimate undeferred cost to check.
+    undeferred_mcp = n_mcp_servers * _MCP_TOKENS_PER_SERVER_FULL
+    deferral_threshold = context_window * 0.10
+    tools_deferred = (undeferred_mcp + _SYSTEM_TOOLS_TOKENS) > deferral_threshold
+
+    if tools_deferred:
+        total += _SYSTEM_TOOLS_DEFERRED_TOKENS
+        total += n_mcp_servers * _MCP_TOKENS_PER_SERVER_DEFERRED
+    else:
+        total += _SYSTEM_TOOLS_TOKENS
+        total += undeferred_mcp
+
+    # Skill stubs from plugins (~250 chars = ~30 tokens each, ~3 skills/plugin)
     plugins_dir = os.path.expanduser("~/.claude/plugins/cache")
     try:
         plugin_count = sum(1 for d in os.listdir(plugins_dir) if os.path.isdir(os.path.join(plugins_dir, d)))
-        total += plugin_count * 3 * _TOKENS_PER_SKILL_STUB  # ~3 skills per plugin avg
+        total += plugin_count * 3 * _TOKENS_PER_SKILL_STUB
     except OSError:
         total += 10 * _TOKENS_PER_SKILL_STUB  # Fallback
 
@@ -84,11 +109,12 @@ def _estimate_static_overhead(
 _TRANSCRIPT_TAIL_BYTES = 50 * 1024
 
 
-def _extract_usage(entry: dict) -> dict | None:
-    """Extract usage dict from a transcript entry.
+def _extract_usage(entry: dict) -> tuple[dict | None, str | None]:
+    """Extract usage dict and requestId from a transcript entry.
 
     Handles two paths: message.usage (direct turn) and toolUseResult.usage (subagent).
     Skips streaming stubs (stop_reason=null) for the message path.
+    Returns (usage_dict, request_id) or (None, None).
     """
     msg = entry.get("message")
     if isinstance(msg, dict):
@@ -96,15 +122,24 @@ def _extract_usage(entry: dict) -> dict | None:
         if stop is not None:
             usage = msg.get("usage")
             if isinstance(usage, dict):
-                return usage
+                req_id = msg.get("requestId") or entry.get("requestId")
+                return usage, req_id
 
     tur = entry.get("toolUseResult")
     if isinstance(tur, dict):
         usage = tur.get("usage")
         if isinstance(usage, dict):
-            return usage
+            req_id = tur.get("requestId") or entry.get("requestId")
+            return usage, req_id
 
-    return None
+    return None, None
+
+
+# Exponential decay weight for cache hit rate calculation.
+# Weight = _CACHE_DECAY ** (distance_from_most_recent).
+# 0.7 means each older turn counts ~70% as much as the next newer one,
+# so the most recent turn dominates while still smoothing noise.
+_CACHE_DECAY = 0.7
 
 
 def _read_transcript_tail(path: str) -> dict | None:
@@ -112,6 +147,13 @@ def _read_transcript_tail(path: str) -> dict | None:
 
     Returns dict with turn_1_anchor, trailing_turns, cache_hit_rate.
     Or None if no usable data found.
+
+    Deduplicates PRELIM entries from extended thinking by requestId —
+    multiple entries from the same API call (identical requestId) are
+    collapsed to the last one seen, preventing 2-5x inflation.
+
+    Cache hit rate uses exponential decay weighting over trailing turns
+    for faster response to sudden cache breaks or recoveries.
     """
     try:
         size = os.path.getsize(path)
@@ -123,7 +165,12 @@ def _read_transcript_tail(path: str) -> dict | None:
     except OSError:
         return None
 
-    turns: list[dict] = []
+    # Phase 1: collect raw entries, deduplicating by requestId.
+    # For entries sharing a requestId (PRELIM + FINAL from same API call),
+    # keep only the last one (FINAL has definitive usage).
+    seen_req_ids: dict[str, int] = {}  # requestId -> index in raw_turns
+    raw_turns: list[dict] = []
+
     for line in lines:
         line = line.strip()
         if not line:
@@ -133,7 +180,7 @@ def _read_transcript_tail(path: str) -> dict | None:
         except (json.JSONDecodeError, ValueError):
             continue
 
-        usage = _extract_usage(entry)
+        usage, req_id = _extract_usage(entry)
         if usage is None:
             continue
 
@@ -142,11 +189,22 @@ def _read_transcript_tail(path: str) -> dict | None:
         if cache_create is None and cache_read is None:
             continue
 
-        turns.append({
+        turn_data = {
             "cache_read": int(cache_read or 0),
             "cache_create": int(cache_create or 0),
             "input": int(usage.get("input_tokens") or 0),
-        })
+        }
+
+        if req_id and req_id in seen_req_ids:
+            # Replace the earlier PRELIM entry with this later one
+            raw_turns[seen_req_ids[req_id]] = turn_data
+        else:
+            if req_id:
+                seen_req_ids[req_id] = len(raw_turns)
+            raw_turns.append(turn_data)
+
+    # Filter out None placeholders (shouldn't happen, but defensive)
+    turns = [t for t in raw_turns if t is not None]
 
     if not turns:
         return None
@@ -154,10 +212,16 @@ def _read_transcript_tail(path: str) -> dict | None:
     turn_1_anchor = turns[0]["cache_create"] if turns[0]["cache_create"] > 0 else None
     trailing = turns[-5:]
 
-    total_read = sum(t["cache_read"] for t in trailing)
-    total_create = sum(t["cache_create"] for t in trailing)
-    denom = total_read + total_create
-    cache_hit_rate = total_read / denom if denom > 0 else 0.0
+    # Exponential-decay weighted cache hit rate:
+    # Most recent turn gets weight 1.0, previous gets _CACHE_DECAY, etc.
+    weighted_read = 0.0
+    weighted_total = 0.0
+    n = len(trailing)
+    for i, t in enumerate(trailing):
+        w = _CACHE_DECAY ** (n - 1 - i)  # newest=1.0, oldest=decay^(n-1)
+        weighted_read += t["cache_read"] * w
+        weighted_total += (t["cache_read"] + t["cache_create"]) * w
+    cache_hit_rate = weighted_read / weighted_total if weighted_total > 0 else 0.0
 
     return {
         "turn_1_anchor": turn_1_anchor,
@@ -186,7 +250,7 @@ def _read_transcript_anchor(path: str) -> int | None:
             entry = json.loads(line)
         except (json.JSONDecodeError, ValueError):
             continue
-        usage = _extract_usage(entry)
+        usage, _rid = _extract_usage(entry)
         if usage is None:
             continue
         cc = usage.get("cache_creation_input_tokens")

@@ -1395,7 +1395,7 @@ import json
 d = {
     'session_id': '$OBS_SESSION_ID',
     'model': {'id': 'claude-opus-4-6[1m]', 'display_name': 'Opus 4.6 (1M context)'},
-    'workspace': {'current_dir': '/home/q/LAB/qLine'},
+    'workspace': {'current_dir': '/workspace/qline'},
     'cost': {'total_cost_usd': 5.50, 'total_duration_ms': 120000},
     'context_window': {
         'total_input_tokens': 100000,
@@ -1451,7 +1451,7 @@ import json
 d = {
     'session_id': '$OBS_SESSION_ID',
     'model': {'id': 'claude-opus-4-6[1m]', 'display_name': 'Opus 4.6 (1M context)'},
-    'workspace': {'current_dir': '/home/q/LAB/qLine'},
+    'workspace': {'current_dir': '/workspace/qline'},
     'cost': {'total_cost_usd': 10.00, 'total_duration_ms': 240000},
     'context_window': {
         'total_input_tokens': 200000,
@@ -1838,7 +1838,7 @@ result = _read_transcript_tail(tmpf.name)
 assert result is not None
 assert result['turn_1_anchor'] == 42000, f'got {result[\"turn_1_anchor\"]}'
 assert len(result['trailing_turns']) == 3, f'got {len(result[\"trailing_turns\"])}'
-assert 0.6 < result['cache_hit_rate'] < 0.7, f'got {result[\"cache_hit_rate\"]}'
+assert 0.6 < result['cache_hit_rate'] < 0.85, f'got {result[\"cache_hit_rate\"]}'
 print('OK')
 os.unlink(tmpf.name)
 ")
@@ -2052,27 +2052,39 @@ OUT=$(run_py "
 from context_overhead import _try_phase2_transcript
 import json, tempfile, os
 
+# Construct a transcript where RECENT turns are degraded (low hit rate).
+# With decay weighting, recent turns dominate — so put the bad turns last.
 tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
-for i in range(5):
-    cc = 42000 if i == 0 else 200
-    cr = 0 if i == 0 else int(42000 * 0.6)
+# Turn 0: anchor (healthy)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+# Turn 1: healthy
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 200,
+    'cache_read_input_tokens': 42000, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+# Turns 2-4: degraded (high create, low read — cache misses)
+for _ in range(3):
     json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
-        'input_tokens': 50, 'cache_creation_input_tokens': cc,
-        'cache_read_input_tokens': cr, 'output_tokens': 200
+        'input_tokens': 50, 'cache_creation_input_tokens': 30000,
+        'cache_read_input_tokens': 12000, 'output_tokens': 200
     }}}, tmpf); tmpf.write('\n')
 tmpf.close()
 
 state = {'transcript_path': tmpf.name}
 sc = {}
 
-# With default thresholds (warn=0.8): 60% hit rate should be degraded
+# With default thresholds (warn=0.8): recent degradation should be detected
 _try_phase2_transcript(state, {}, sc, cache_warn_rate=0.8, cache_critical_rate=0.3)
-assert sc.get('cache_degraded') is True, f'should be degraded at 60% with warn=0.8, got sc={sc}'
+rate = sc.get('cache_hit_rate', 1.0)
+assert sc.get('cache_degraded') is True, f'should be degraded: rate={rate:.3f}, sc={sc}'
 
-# With custom threshold (warn=0.5): 60% hit rate should be healthy
+# With custom threshold (warn=0.2): same data should be healthy
 sc2 = {}
-_try_phase2_transcript(state, {}, sc2, cache_warn_rate=0.5, cache_critical_rate=0.3)
-assert sc2.get('cache_degraded') is not True, f'should NOT be degraded at 60% with warn=0.5, got sc2={sc2}'
+_try_phase2_transcript(state, {}, sc2, cache_warn_rate=0.2, cache_critical_rate=0.1)
+assert sc2.get('cache_degraded') is not True, f'should NOT be degraded with warn=0.2, sc2={sc2}'
 
 print('OK')
 os.unlink(tmpf.name)
