@@ -1,10 +1,20 @@
 # qLine
 
-A styled status-line renderer for [Claude Code](https://docs.anthropic.com/en/docs/build-with-claude/computer-use). Reads Claude's status JSON on stdin and emits a single styled line with ANSI truecolor, Nerd Font glyphs, and TOML-configurable theming.
+A styled status-line renderer for [Claude Code](https://docs.anthropic.com/en/docs/build-with-claude/computer-use). Reads Claude's status JSON on stdin and emits styled output with ANSI truecolor, Nerd Font glyphs, and TOML-configurable theming.
 
 ```
- 󰚩 Op4.6 │ 󰝰 myproject main@a3f │ ↑281k↓141k 󰋑 █░░░░░░░░░ 15% │ $0.42 │ 󰥔 1m30s │ 󰓌 ██░░░ 22% │ 󰍛 ██░░░ 35%
+↑150k↓50.0k 󰋑 ██▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 20% │ 󰳲 27.4k │ 3.0k
+ 󰚩 Op4.6[1M] │ 󰝰 myproject main@a3f │ $1.50 │ 󰥔 2m30s
 ```
+
+**Line 1** — Full-width context health bar with system overhead and cache write tracking:
+- `██` System overhead (darker shade of health color)
+- `▓▓▓` Conversation content (health color)
+- `░░░` Free context (muted gray)
+- `󰳲 27.4k` System overhead anchor (brain glyph)
+- `3.0k` / `8.0k󰒿` Cache writes per turn (with spike detection)
+
+**Line 2** — Model, project, cost, duration
 
 ---
 
@@ -292,7 +302,9 @@ If you see nothing, check `python3 --version` and that `~/.claude/statusline.py`
 |---|---|---|---|
 | `model` | 󰚩 | Model name | `󰚩 Op4.6` |
 | `dir` | 󰝰 | Directory + git branch/SHA | `󰝰 myproject main@a3f*` |
-| `context_bar` | 󰋑 | Token I/O + context progress bar | `↑50k↓20k 󰋑 ███░░░░░░░ 35%` |
+| `context_bar` | 󰋑 | Dual-color context health bar | `↑50k↓20k 󰋑 ██▓▓▓░░░░░ 35%` |
+| `sys_overhead` | 󰳲 | System token overhead (anchor) | `󰳲 27.4k` |
+| `cache_writes` | — | Per-turn cache write + spike detection | `3.0k` / `8.0k󰒿` |
 | `cost` | `$` | Session cost (USD) | `$1.50` |
 | `duration` | 󰥔 | Session duration | `󰥔 2m30s` |
 
@@ -328,6 +340,35 @@ Session telemetry modules. Each is `enabled = false` by default. They are listed
 | `obs_failures` | 󰀩 | Tool failure count | warn 1, critical 5 |
 | `obs_compactions` | 󱃧 | Context compaction count | — |
 | `obs_health` | 󰕥 | Session health badge | green/yellow/red by state |
+
+### Context Overhead Monitor
+
+The `context_bar`, `sys_overhead`, and `cache_writes` modules work together to show what is consuming your context window in real time.
+
+**How it works:**
+1. On the first API response, the system captures `cache_creation_input_tokens` as the baseline system overhead (the "anchor"). This includes tool definitions, CLAUDE.md, skill stubs, MCP schemas, and the system prompt.
+2. On each subsequent turn, `cache_creation_input_tokens` shows how much new content was written to cache. Spikes indicate skill loads, tool schema expansions, or compaction rebuilds.
+3. The dual-color bar shows the proportion of system overhead vs conversation within the used context. Colors follow the health severity state (teal → yellow → red).
+
+**Cache health states:**
+| State | Hit Rate | Indicator | Meaning |
+|-------|----------|-----------|---------|
+| Healthy | ≥ 80% | — | Cache is working normally |
+| Degraded | 30–80% | `~` suffix | Intermittent cache invalidation |
+| Busting | < 30% | `󰒿` suffix | Active cache busting (10-20x token burn) |
+
+**Spike detection** in `cache_writes`:
+| Level | Threshold | Display | Meaning |
+|-------|-----------|---------|---------|
+| Normal | < 1k | `200` | Normal conversation churn |
+| Notable | 1k–5k | `3.0k` | Skill or tool load |
+| Spike | > 5k | `8.0k󰒿` | Large injection or compaction rebuild |
+
+**Data sources** (in priority order):
+1. Manifest anchor (`cache_anchor`) — written by `obs-stop-cache.py` hook on first turn
+2. Transcript file start — reads first 4KB for the first completed turn's `cache_creation`
+3. Transcript tail window — last 5 turns for cache hit rate
+4. Static estimate — file sizes + MCP server count (fallback only)
 
 ---
 
