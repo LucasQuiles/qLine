@@ -494,6 +494,15 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
                 state["input_tokens"] = input_tok
                 state["output_tokens"] = output_tok
 
+        # Corrected context usage: CC's used_percentage excludes output tokens
+        # (bug #28167) but the actual context limit DOES include them.
+        # Only apply when used_percentage was the source (not used/total which
+        # may already include output tokens in some payload versions).
+        if used_pct is not None and "context_used" in state and "context_total" in state:
+            out = state.get("output_tokens", 0)
+            if out > 0:
+                state["context_used_corrected"] = state["context_used"] + out
+
     # Optional: added_dirs
     added_dirs = payload.get("added_dirs")
     if isinstance(added_dirs, list):
@@ -720,7 +729,9 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     if "context_used" not in state or "context_total" not in state:
         return None
     cfg = theme.get("context_bar", {})
-    ctx_used = state["context_used"]
+    # Use corrected usage (includes output tokens) if available,
+    # since CC's used_percentage excludes them but the limit includes them.
+    ctx_used = state.get("context_used_corrected", state["context_used"])
     ctx_total = state["context_total"]
     total_pct = (ctx_used * 100) // ctx_total if ctx_total > 0 else 0
     width = cfg.get("width", 20)
