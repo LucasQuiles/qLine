@@ -74,6 +74,14 @@ else
     echo "NOTE: obs_utils.py not found in repo — obs modules will be disabled"
 fi
 
+# Install context_overhead.py (overhead monitor module)
+OVERHEAD_SRC="$SCRIPT_DIR/src/context_overhead.py"
+OVERHEAD_DEST="$DEST_DIR/context_overhead.py"
+if [ -f "$OVERHEAD_SRC" ]; then
+    cp "$OVERHEAD_SRC" "$OVERHEAD_DEST"
+    echo "Installed: $OVERHEAD_DEST"
+fi
+
 # Fix shebang only if `python3` doesn't exist or is too old
 if ! command -v python3 > /dev/null 2>&1; then
     # python3 missing — use whatever we found
