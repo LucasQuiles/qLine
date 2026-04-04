@@ -2716,6 +2716,37 @@ print('OK')
 ")
 assert_equals "CC-verified: output correction" "$OUT" "OK"
 
+echo "  alerts: critical/warn messages appear for each condition"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+
+# CACHE BUSTED → critical alert
+state = {
+    'context_used': 100000, 'context_total': 1000000,
+    'sys_overhead_tokens': 50000, 'sys_overhead_source': 'measured',
+    'cache_busting': True,
+}
+bar = render_context_bar(state, DEFAULT_THEME)
+assert 'CACHE BUSTED' in bar, f'missing CACHE BUSTED: {bar[:80]}'
+
+# SYS BLOAT → system overhead critical
+state2 = {
+    'context_used': 100000, 'context_total': 1000000,
+    'sys_overhead_tokens': 600000, 'sys_overhead_source': 'measured',
+}
+bar2 = render_context_bar(state2, DEFAULT_THEME)
+assert 'SYS BLOAT' in bar2, f'missing SYS BLOAT: {bar2[:80]}'
+
+# Healthy → no alert
+state3 = {
+    'context_used': 100000, 'context_total': 1000000,
+}
+bar3 = render_context_bar(state3, DEFAULT_THEME)
+assert 'BUSTED' not in bar3 and 'BLOAT' not in bar3 and 'HEAVY' not in bar3, f'false alert: {bar3[:80]}'
+print('OK')
+")
+assert_equals "alerts" "$OUT" "OK"
+
 echo "  stability: zero context_total does not crash threshold computation"
 OUT=$(run_py "
 from context_overhead import compute_context_thresholds
