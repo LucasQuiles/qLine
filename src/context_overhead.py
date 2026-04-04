@@ -344,13 +344,21 @@ def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
 
     # Exponential-decay weighted cache hit rate:
     # Most recent turn gets weight 1.0, previous gets _CACHE_DECAY, etc.
+    #
+    # Server-side tool inflation guard: web_search and web_fetch accumulate
+    # internal API cache_reads that aren't real conversation cache hits.
+    # These show as outlier spikes where cache_read >> anchor value.
+    # Cap per-turn cache_read at 3x anchor to prevent distortion.
+    anchor_val = turn_1_anchor or 0
+    read_cap = anchor_val * 3 if anchor_val > 0 else float("inf")
     weighted_read = 0.0
     weighted_total = 0.0
     n = len(trailing)
     for i, t in enumerate(trailing):
         w = _CACHE_DECAY ** (n - 1 - i)  # newest=1.0, oldest=decay^(n-1)
-        weighted_read += t["cache_read"] * w
-        weighted_total += (t["cache_read"] + t["cache_create"]) * w
+        capped_read = min(t["cache_read"], read_cap)
+        weighted_read += capped_read * w
+        weighted_total += (capped_read + t["cache_create"]) * w
     cache_hit_rate = weighted_read / weighted_total if weighted_total > 0 else 0.0
 
     return {
