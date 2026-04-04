@@ -142,11 +142,16 @@ def _extract_usage(entry: dict) -> tuple[dict | None, str | None]:
 _CACHE_DECAY = 0.7
 
 
-def _read_transcript_tail(path: str) -> dict | None:
+def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
     """Read trailing turns from a session transcript JSONL.
 
     Returns dict with turn_1_anchor, trailing_turns, cache_hit_rate.
     Or None if no usable data found.
+
+    Args:
+        path: Path to transcript JSONL file.
+        window_size: Number of trailing turns for cache hit rate (default 5).
+            Adaptive callers scale this with session length.
 
     Deduplicates PRELIM entries from extended thinking by requestId —
     multiple entries from the same API call (identical requestId) are
@@ -210,7 +215,7 @@ def _read_transcript_tail(path: str) -> dict | None:
         return None
 
     turn_1_anchor = turns[0]["cache_create"] if turns[0]["cache_create"] > 0 else None
-    trailing = turns[-5:]
+    trailing = turns[-window_size:]
 
     # Exponential-decay weighted cache hit rate:
     # Most recent turn gets weight 1.0, previous gets _CACHE_DECAY, etc.
@@ -286,7 +291,13 @@ def _try_phase2_transcript(
     if not path:
         return False
 
-    result = _read_transcript_tail(path)
+    # Adaptive trailing window: scale with session length for better signal.
+    # Short sessions (<9 turns): minimum window of 3 (avoid noise from 1-2 turns).
+    # Long sessions (24+ turns): up to 8 turns for smoother rolling average.
+    # Middle ground: grow linearly (session_turns // 3).
+    prev_turns = session_cache.get("session_turn_count", 0)
+    window = min(max(3, prev_turns // 3), 8)
+    result = _read_transcript_tail(path, window_size=window)
     if result is None:
         return False
 

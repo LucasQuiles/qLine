@@ -2134,11 +2134,12 @@ json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': 
     'input_tokens': 50, 'cache_creation_input_tokens': 200,
     'cache_read_input_tokens': 42000, 'output_tokens': 200
 }}}, tmpf); tmpf.write('\n')
-# Turns 2-4: degraded (high create, low read — cache misses)
+# Turns 2-4: degraded (moderate create, partial read — cache misses)
+# Rate per turn: 18000/(18000+24000) = 0.429, well between 0.3 and 0.8
 for _ in range(3):
     json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
-        'input_tokens': 50, 'cache_creation_input_tokens': 30000,
-        'cache_read_input_tokens': 12000, 'output_tokens': 200
+        'input_tokens': 50, 'cache_creation_input_tokens': 24000,
+        'cache_read_input_tokens': 18000, 'output_tokens': 200
     }}}, tmpf); tmpf.write('\n')
 tmpf.close()
 
