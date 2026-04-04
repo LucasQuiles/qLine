@@ -756,10 +756,22 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         elif state.get("cache_degraded") is True:
             sev = max(sev, 1)  # Force at least warn (produces ~ suffix)
 
-    # Numeric overhead indicator with brain glyph (e.g., "🧠27k")
+    # Overhead indicator: brain glyph + anchor + per-turn injection delta
     overhead_label = ""
     if has_overhead:
-        overhead_label = f" \U000f0cf2 {_abbreviate_count(state['sys_overhead_tokens'])}"  # nf-md-brain
+        anchor_str = _abbreviate_count(state['sys_overhead_tokens'])
+        overhead_label = f" \U000f0cf2 {anchor_str}"  # nf-md-brain + anchor
+        # Per-turn injection delta: shows what was written to cache THIS turn
+        last_cc = state.get("last_cache_create", 0)
+        if last_cc > 0:
+            delta_str = _abbreviate_count(last_cc)
+            # Spike detection: >5k new cache tokens = something big was injected
+            if last_cc > 5000:
+                overhead_label += f" +{delta_str}\u26a1"  # ⚡ spike
+            elif last_cc > 1000:
+                overhead_label += f" +{delta_str}\u2191"  # ↑ notable
+            else:
+                overhead_label += f" +{delta_str}"  # normal churn
 
     if sev == 2:
         suffix = f" {total_pct}%!{cache_suffix}{overhead_label}"

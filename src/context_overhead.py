@@ -254,6 +254,18 @@ def _try_phase2_transcript(
     session_cache["cache_hit_rate"] = result["cache_hit_rate"]
     session_cache["trailing_turns"] = result["trailing_turns"][-5:]
 
+    # Per-turn injection delta: what was written to cache THIS turn
+    trailing = result["trailing_turns"]
+    if trailing:
+        latest = trailing[-1]
+        session_cache["last_cache_create"] = latest["cache_create"]
+        # Compute delta vs previous turn's cache_create
+        if len(trailing) >= 2:
+            prev = trailing[-2]["cache_create"]
+            session_cache["prev_cache_create"] = prev
+        else:
+            session_cache["prev_cache_create"] = 0
+
     n_turns = len(result["trailing_turns"])
     if n_turns >= 3 and result["cache_hit_rate"] < cache_critical_rate:
         prev_compactions = session_cache.get("prev_compactions", 0)
@@ -291,6 +303,10 @@ def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> No
         state["cache_busting"] = session_cache["cache_busting"]
     if "cache_degraded" in session_cache:
         state["cache_degraded"] = session_cache["cache_degraded"]
+    if "last_cache_create" in session_cache:
+        state["last_cache_create"] = session_cache["last_cache_create"]
+    if "prev_cache_create" in session_cache:
+        state["prev_cache_create"] = session_cache["prev_cache_create"]
 
 
 def inject_context_overhead(
