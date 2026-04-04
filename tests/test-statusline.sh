@@ -1903,6 +1903,32 @@ os.unlink(tmpf.name)
 ")
 assert_equals "cache <2 turns" "$OUT" "OK"
 
+echo "  anchor: reads from file start, not tail"
+OUT=$(run_py "
+import json, tempfile, os
+from statusline import _read_transcript_anchor
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Turn 1 (the anchor) at the START
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+# Many subsequent turns with small cache_create
+for i in range(100):
+    json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+        'input_tokens': 50, 'cache_creation_input_tokens': 300,
+        'cache_read_input_tokens': 42000 + i * 500, 'output_tokens': 200
+    }}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+anchor = _read_transcript_anchor(tmpf.name)
+assert anchor == 42000, f'anchor should be 42000 from file start, got {anchor}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "anchor from start" "$OUT" "OK"
+
 echo "  forensics: generate_overhead_report from transcript"
 LAST_STDOUT=$(run_py "
 import json, tempfile, os

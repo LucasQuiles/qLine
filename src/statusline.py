@@ -789,6 +789,35 @@ def _read_transcript_tail(path: str) -> dict | None:
     }
 
 
+def _read_transcript_anchor(path: str) -> int | None:
+    """Read the first-turn cache_creation from the start of a transcript.
+
+    Reads first 4KB — the first completed entry is always near the start.
+    Returns cache_creation_input_tokens or None.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            chunk = f.read(4096)
+    except OSError:
+        return None
+
+    for line in chunk.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        usage = _extract_usage(entry)
+        if usage is None:
+            continue
+        cc = usage.get("cache_creation_input_tokens")
+        if cc is not None and int(cc) > 0:
+            return int(cc)
+    return None
+
+
 def _try_phase2_transcript(
     state: dict[str, Any], payload: dict, session_cache: dict,
     package_root: str | None = None,
@@ -802,11 +831,16 @@ def _try_phase2_transcript(
     if result is None:
         return False
 
-    # Anchor priority: manifest (durable) > transcript (volatile)
+    # Anchor priority: manifest (durable) > file start > tail window
     if "turn_1_anchor" not in session_cache:
         manifest_anchor = _read_manifest_anchor(package_root)
         if manifest_anchor is not None:
             session_cache["turn_1_anchor"] = manifest_anchor
+
+    if "turn_1_anchor" not in session_cache:
+        file_anchor = _read_transcript_anchor(path)
+        if file_anchor is not None:
+            session_cache["turn_1_anchor"] = file_anchor
 
     if "turn_1_anchor" not in session_cache:
         session_cache["turn_1_anchor"] = result["turn_1_anchor"]
