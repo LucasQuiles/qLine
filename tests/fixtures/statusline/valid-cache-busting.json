@@ -1,0 +1,15 @@
+{
+  "hook_event_name": "Status",
+  "session_id": "cache-bust-test",
+  "transcript_path": "/tmp/qline-test-cache-bust.jsonl",
+  "model": {"id": "claude-opus-4-6", "display_name": "Opus 4.6 (1M context)"},
+  "workspace": {"current_dir": "/home/q/LAB/qLine"},
+  "cost": {"total_cost_usd": 8.50, "total_duration_ms": 120000},
+  "context_window": {
+    "total_input_tokens": 500000,
+    "total_output_tokens": 100000,
+    "context_window_size": 1000000,
+    "used_percentage": 72,
+    "remaining_percentage": 28
+  }
+}
