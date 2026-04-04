@@ -98,9 +98,8 @@ DEFAULT_THEME: dict[str, Any] = {
         "warn_color": "#ebcb8b",   # nord13 — yellow (warn: aurora accent)
         "critical_threshold": 70.0,
         "critical_color": "#bf616a", # nord11 — red (critical: aurora danger)
-        # Overhead monitor: dual-bar colors (Nord frost family, dark→light)
-        "sys_color": "#5e81ac",   # nord10 — dark blue (system: heavy/dim)
-        "conv_color": "#88c0d0",  # nord8 — light blue (conversation: active/bright)
+        # Bar segment colors derive from computed severity (see _darken_hex).
+        # No sys_color/conv_color config — segments track health state.
         # Overhead monitor: system overhead thresholds (% of total context window)
         "sys_warn_threshold": 30.0,
         "sys_critical_threshold": 50.0,
@@ -114,6 +113,22 @@ DEFAULT_THEME: dict[str, Any] = {
         "enabled": True,
         "color": "#a8d4d0",
         "bg": "#2e3440",
+    },
+    "sys_overhead": {
+        "enabled": True,
+        "glyph": "\U000f0cf2 ",  # nf-md-brain
+        "color": "#81a1c1",      # nord9 blue
+        "bg": "#2e3440",
+    },
+    "cache_delta": {
+        "enabled": True,
+        "glyph": "",             # no glyph for normal, spike glyph inline
+        "color": "#8fbcbb",      # nord7 teal (normal)
+        "bg": "#2e3440",
+        "spike_color": "#bf616a",     # nord11 red (spike)
+        "notable_color": "#ebcb8b",   # nord13 yellow (notable)
+        "spike_threshold": 5000,
+        "notable_threshold": 1000,
     },
     "cost": {
         "enabled": True,
@@ -142,7 +157,7 @@ DEFAULT_THEME: dict[str, Any] = {
     "layout": {
         "force_single_line": False,
         "max_width": 200,
-        "line1": ["context_bar"],
+        "line1": ["context_bar", "sys_overhead", "cache_delta"],
         "line2": ["model", "dir", "cost", "duration"],
         "line3": ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
                   "obs_prompts", "obs_tasks", "obs_subagents",
@@ -724,7 +739,10 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         if filled > 0 and ctx_used > 0:
             # Scale system blocks proportionally within the filled portion
             sys_ratio = min(sys_overhead / ctx_used, 1.0)
-            sys_blocks = max(1, round(sys_ratio * filled)) if sys_overhead > 0 else 0
+            sys_blocks = round(sys_ratio * filled) if sys_overhead > 0 else 0
+            # Min-1-block only when system is genuinely dominant (>50% of used)
+            if sys_blocks == 0 and sys_overhead > 0 and filled > 0 and sys_ratio >= 0.5:
+                sys_blocks = 1
             sys_blocks = min(sys_blocks, filled)
             conv_blocks = filled - sys_blocks
         free_blocks = width - filled
@@ -751,38 +769,21 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     cache_suffix = ""
     if source == "measured":
         if state.get("cache_busting") is True:
-            cache_suffix = "\u26a1"  # ⚡
+            cache_suffix = "\U000f04bf"  # nf-md-lightning_bolt
             sev = 2  # Force entire bar to critical
         elif state.get("cache_degraded") is True:
             sev = max(sev, 1)  # Force at least warn (produces ~ suffix)
 
-    # Overhead indicator: brain glyph + anchor + per-turn injection delta
-    overhead_label = ""
-    if has_overhead:
-        anchor_str = _abbreviate_count(state['sys_overhead_tokens'])
-        overhead_label = f" \U000f0cf2 {anchor_str}"  # nf-md-brain + anchor
-        # Per-turn injection delta: shows what was written to cache THIS turn
-        last_cc = state.get("last_cache_create", 0)
-        if last_cc > 0:
-            delta_str = _abbreviate_count(last_cc)
-            # Spike detection: >5k new cache tokens = something big was injected
-            if last_cc > 5000:
-                overhead_label += f" +{delta_str}\u26a1"  # ⚡ spike
-            elif last_cc > 1000:
-                overhead_label += f" +{delta_str}\u2191"  # ↑ notable
-            else:
-                overhead_label += f" +{delta_str}"  # normal churn
-
     if sev == 2:
-        suffix = f" {total_pct}%!{cache_suffix}{overhead_label}"
+        suffix = f" {total_pct}%!{cache_suffix}"
         color = cfg.get("critical_color", "#d06070")
         bold = True
     elif sev == 1:
-        suffix = f" {total_pct}%~{cache_suffix}{overhead_label}"
+        suffix = f" {total_pct}%~{cache_suffix}"
         color = cfg.get("warn_color", "#f0d399")
         bold = False
     else:
-        suffix = f" {total_pct}%{cache_suffix}{overhead_label}"
+        suffix = f" {total_pct}%{cache_suffix}"
         color = cfg.get("color", "#b5d4a0")
         bold = False
 
@@ -804,7 +805,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         # The entire bar shifts with health state: teal → yellow → red.
         bg_hex = cfg.get("bg")
         conv_color_hex = color  # severity color (teal/yellow/red)
-        sys_color_hex = _darken_hex(color, 0.55)  # same hue, darker
+        sys_color_hex = _darken_hex(color, 0.65)  # same hue, darker
         free_color_hex = "#4c566a"  # nord3 muted gray
         pre = style(f" {token_prefix}{glyph}", color, bold, bg_hex)
         bar_styled = ""
@@ -830,6 +831,41 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Tokens are now merged into context_bar pill. This is a no-op."""
     return None
+
+
+def render_sys_overhead(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render system overhead pill: 󰳲 27.4k"""
+    if "sys_overhead_tokens" not in state:
+        return None
+    cfg = theme.get("sys_overhead", {})
+    tokens = state["sys_overhead_tokens"]
+    glyph = cfg.get("glyph", "\U000f0cf2 ")
+    text = f"{glyph}{_abbreviate_count(tokens)}"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_cache_delta(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render per-turn cache injection delta: +3.0k or +8.0k⚡"""
+    last_cc = state.get("last_cache_create")
+    if not last_cc or last_cc <= 0:
+        return None
+    cfg = theme.get("cache_delta", {})
+    spike_t = cfg.get("spike_threshold", 5000)
+    notable_t = cfg.get("notable_threshold", 1000)
+
+    delta_str = f"+{_abbreviate_count(last_cc)}"
+    if last_cc > spike_t:
+        glyph = "\U000f04bf"  # nf-md-lightning_bolt
+        color = cfg.get("spike_color", "#bf616a")
+        text = f"{delta_str}{glyph}"
+    elif last_cc > notable_t:
+        glyph = "\U000f005d"  # nf-md-arrow_up
+        color = cfg.get("notable_color", "#ebcb8b")
+        text = f"{delta_str}{glyph}"
+    else:
+        color = cfg.get("color", "#8fbcbb")
+        text = delta_str
+    return _pill(text, cfg, color, theme=theme)
 
 
 def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1322,6 +1358,8 @@ MODULE_RENDERERS: dict[str, Any] = {
     "dir": render_dir,
     "context_bar": render_context_bar,
     "tokens": render_tokens,
+    "sys_overhead": render_sys_overhead,
+    "cache_delta": render_cache_delta,
     "cost": render_cost,
     "duration": render_duration,
     "git": render_git,

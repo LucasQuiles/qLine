@@ -1673,7 +1673,7 @@ state = {
     'cache_busting': True,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-assert '%!\u26a1' in result, f'expected %!⚡, got: {result}'
+assert '%!\U000f04bf' in result, f'expected %! + nf-md-lightning_bolt, got: {result}'
 print('OK')
 ")
 assert_equals "compound critical+bust" "$OUT" "OK"
@@ -1689,7 +1689,7 @@ state = {
     'cache_busting': True,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-assert '%!\u26a1' in result, f'busting forces critical: expected %!⚡, got: {result}'
+assert '%!\U000f04bf' in result, f'busting forces critical: expected %! + nf-md-lightning_bolt, got: {result}'
 print('OK')
 ")
 assert_equals "compound warn+bust" "$OUT" "OK"
@@ -1705,7 +1705,7 @@ state = {
     'cache_busting': True,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-assert '%!\u26a1' in result, f'busting forces critical: expected %!⚡, got: {result}'
+assert '%!\U000f04bf' in result, f'busting forces critical: expected %! + nf-md-lightning_bolt, got: {result}'
 assert '%~' not in result, f'should not have warn suffix'
 print('OK')
 ")
@@ -1742,6 +1742,49 @@ assert '!' in result, f'should be critical (sys >= 50%), got: {result}'
 print('OK')
 ")
 assert_equals "sys critical conv zero" "$OUT" "OK"
+
+echo "  spike: below notable threshold"
+LAST_STDOUT=$(run_py "
+from statusline import render_cache_delta, DEFAULT_THEME
+state = {'last_cache_create': 500}
+result = render_cache_delta(state, DEFAULT_THEME)
+assert result is not None
+assert '\U000f04bf' not in result, 'should not show spike glyph'
+assert '\U000f005d' not in result, 'should not show notable glyph'
+print('OK')
+")
+assert_equals "spike below notable" "$LAST_STDOUT" "OK"
+
+echo "  spike: at notable threshold"
+LAST_STDOUT=$(run_py "
+from statusline import render_cache_delta, DEFAULT_THEME
+state = {'last_cache_create': 1001}
+result = render_cache_delta(state, DEFAULT_THEME)
+assert '\U000f005d' in result, f'should show notable glyph: {repr(result)}'
+print('OK')
+")
+assert_equals "spike at notable" "$LAST_STDOUT" "OK"
+
+echo "  spike: at spike threshold"
+LAST_STDOUT=$(run_py "
+from statusline import render_cache_delta, DEFAULT_THEME
+state = {'last_cache_create': 5001}
+result = render_cache_delta(state, DEFAULT_THEME)
+assert '\U000f04bf' in result, f'should show spike glyph: {repr(result)}'
+print('OK')
+")
+assert_equals "spike at spike" "$LAST_STDOUT" "OK"
+
+echo "  sys_overhead: shows brain glyph and token count"
+LAST_STDOUT=$(run_py "
+from statusline import render_sys_overhead, DEFAULT_THEME
+state = {'sys_overhead_tokens': 27409}
+result = render_sys_overhead(state, DEFAULT_THEME)
+assert '\U000f0cf2' in result, f'should show brain glyph: {repr(result)}'
+assert '27.4k' in result, f'should show token count: {repr(result)}'
+print('OK')
+")
+assert_equals "sys_overhead module" "$LAST_STDOUT" "OK"
 
 echo "  Phase 1: static estimate returns reasonable value"
 OUT=$(run_py "
@@ -1975,7 +2018,7 @@ state = {
     'cache_busting': True,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-assert '\u26a1' in result, f'busting indicator expected: {result}'
+assert '\U000f04bf' in result, f'busting indicator expected: {result}'
 assert '\u2248' not in result, f'should not show degraded indicator when busting'
 print('OK')
 ")
@@ -1995,10 +2038,10 @@ state = {
 result = render_context_bar(state, DEFAULT_THEME)
 # Severity-derived: sys = darkened critical, conv = critical
 crit_conv = '38;2;191;97;106'   # #bf616a critical
-crit_sys = '38;2;105;53;58'     # darkened critical
+crit_sys = '38;2;124;63;68'     # darkened critical (factor=0.65)
 assert crit_conv in result, f'conv should use critical color, got: {repr(result[:300])}'
 assert crit_sys in result, f'sys should use darkened critical, got: {repr(result[:300])}'
-assert '\u26a1' in result, f'should show ⚡'
+assert '\U000f04bf' in result, f'should show nf-md-lightning_bolt'
 print('OK')
 ")
 assert_equals "busting critical color" "$OUT" "OK"
@@ -2066,8 +2109,8 @@ state = {
     'sys_overhead_source': 'measured',
 }
 result = render_context_bar(state, DEFAULT_THEME)
-# Healthy color #8fbcbb → darkened sys = RGB(78,103,102), conv = RGB(143,188,187)
-assert '38;2;78;103;102' in result, f'sys (darkened healthy) not found in: {repr(result)}'
+# Healthy color #8fbcbb → darkened sys = RGB(92,122,121), conv = RGB(143,188,187) (factor=0.65)
+assert '38;2;92;122;121' in result, f'sys (darkened healthy) not found in: {repr(result)}'
 assert '38;2;143;188;187' in result, f'conv (healthy teal) not found in: {repr(result)}'
 print('OK')
 ")
