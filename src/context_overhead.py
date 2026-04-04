@@ -28,6 +28,14 @@ _TOKENS_PER_SKILL_STUB = 30
 # Undeferred: ~1500 tokens/server (full schemas)
 _MCP_TOKENS_PER_SERVER_DEFERRED = 240
 _MCP_TOKENS_PER_SERVER_FULL = 1500
+# System-reminder injection: deferred tool listing + MCP instructions
+# These are injected into every API call as <system-reminder> blocks.
+# Deferred tool list: ~50 chars per tool name * 0.325 = ~16 tokens/tool
+# MCP instructions: ~300 tokens per server (auth info, usage guidance)
+# Framing/tags: ~650 tokens (XML tags, formatting)
+_DEFERRED_TOOL_LISTING_TOKENS = 16  # per tool, in system-reminder block
+_MCP_INSTRUCTION_TOKENS = 300       # per server, usage guidance injected
+_SYSTEM_REMINDER_FRAMING = 650      # XML tags, formatting overhead
 
 
 def _estimate_static_overhead(
@@ -56,11 +64,31 @@ def _estimate_static_overhead(
             candidates.append(cwd_root)
         claude_md_paths = candidates
 
-    # Auto-memory index (first 200 lines of MEMORY.md): ~1.6k tokens
-    memory_md = os.path.expanduser("~/.claude/projects")
-    # Simple heuristic: if memory dir exists, add baseline
-    if os.path.isdir(memory_md):
-        total += 1600
+    # Auto-memory index: measure actual MEMORY.md if found, else 1.6k baseline.
+    # Claude injects first 200 lines of MEMORY.md into every system-reminder.
+    memory_found = False
+    memory_dir = os.path.expanduser("~/.claude/projects")
+    if os.path.isdir(memory_dir):
+        # Find the project-specific memory dir for cwd
+        import hashlib as _hashlib
+        cwd_hash = os.getcwd().replace("/", "-")
+        mem_path = os.path.join(memory_dir, cwd_hash, "memory", "MEMORY.md")
+        if not os.path.isfile(mem_path):
+            # Fallback: check all project memory dirs
+            for d in os.listdir(memory_dir):
+                candidate = os.path.join(memory_dir, d, "memory", "MEMORY.md")
+                if os.path.isfile(candidate):
+                    mem_path = candidate
+                    break
+        if os.path.isfile(mem_path):
+            try:
+                size = os.path.getsize(mem_path)
+                total += int(size * _TOKENS_PER_BYTE)
+                memory_found = True
+            except OSError:
+                pass
+    if not memory_found:
+        total += 1600  # Conservative fallback
 
     for path in claude_md_paths:
         try:
@@ -69,16 +97,33 @@ def _estimate_static_overhead(
         except OSError:
             pass
 
-    # Count MCP servers and estimate total undeferred tool cost
+    # Count MCP servers from all configuration sources.
+    # CC reads servers from: ~/.mcp.json, ~/.claude/.mcp.json,
+    # project-level .mcp.json, and settings.json mcpServers (rare).
+    mcp_server_names: set[str] = set()
+    mcp_sources = [
+        os.path.expanduser("~/.mcp.json"),
+        os.path.expanduser("~/.claude/.mcp.json"),
+        os.path.join(os.getcwd(), ".mcp.json"),
+    ]
+    for mcp_path in mcp_sources:
+        try:
+            with open(mcp_path) as f:
+                mcp_data = json.load(f)
+            for name in mcp_data.get("mcpServers", {}):
+                mcp_server_names.add(name)
+        except Exception:
+            pass
+    # Also check settings.json (legacy location)
     settings_path = os.path.expanduser("~/.claude/settings.json")
-    n_mcp_servers = 0
     try:
         with open(settings_path) as f:
             settings = json.load(f)
-        mcp_servers = settings.get("mcpServers", {})
-        n_mcp_servers = len(mcp_servers)
+        for name in settings.get("mcpServers", {}) or {}:
+            mcp_server_names.add(name)
     except Exception:
-        n_mcp_servers = 5  # Conservative fallback
+        pass
+    n_mcp_servers = len(mcp_server_names) if mcp_server_names else 5  # Fallback
 
     # Deferral detection: CC defers tools when MCP schema total exceeds
     # 10% of context window. Estimate undeferred cost to check.
@@ -89,17 +134,89 @@ def _estimate_static_overhead(
     if tools_deferred:
         total += _SYSTEM_TOOLS_DEFERRED_TOKENS
         total += n_mcp_servers * _MCP_TOKENS_PER_SERVER_DEFERRED
+        # Deferred tool listing: all tool names are injected as a
+        # system-reminder block. Estimate ~20 tools per MCP server +
+        # ~25 built-in deferred tools.
+        n_deferred_tools = n_mcp_servers * 20 + 25
+        total += n_deferred_tools * _DEFERRED_TOOL_LISTING_TOKENS
     else:
         total += _SYSTEM_TOOLS_TOKENS
         total += undeferred_mcp
 
-    # Skill stubs from plugins (~250 chars = ~30 tokens each, ~3 skills/plugin)
-    plugins_dir = os.path.expanduser("~/.claude/plugins/cache")
+    # MCP server instructions: injected regardless of deferral mode.
+    # Each server contributes auth info + usage guidance as system-reminder.
+    total += n_mcp_servers * _MCP_INSTRUCTION_TOKENS
+    total += _SYSTEM_REMINDER_FRAMING
+
+    # Count actual skill/agent/command stubs from enabled plugins.
+    # Each item is injected into system-reminders with name + description
+    # + formatting. Measured from actual frontmatter + rendered output:
+    # Skills: ~183 chars FM + ~60 chars formatting = ~243 chars avg
+    # Agents: ~286 chars FM + ~80 chars formatting (tool list) = ~366 chars avg
+    # Commands: ~60 chars name + formatting = ~60 chars avg
+    _TOKENS_PER_SKILL_ITEM = 79     # ~243 chars * 0.325
+    _TOKENS_PER_AGENT_ITEM = 119    # ~366 chars * 0.325
+    _TOKENS_PER_COMMAND_ITEM = 20   # ~60 chars * 0.325
+    n_skills = n_agents = n_commands = 0
     try:
-        plugin_count = sum(1 for d in os.listdir(plugins_dir) if os.path.isdir(os.path.join(plugins_dir, d)))
-        total += plugin_count * 3 * _TOKENS_PER_SKILL_STUB
-    except OSError:
-        total += 10 * _TOKENS_PER_SKILL_STUB  # Fallback
+        with open(settings_path) as f:
+            settings = json.load(f)
+        enabled_plugins = settings.get("enabledPlugins", {})
+        plugins_dir = os.path.expanduser("~/.claude/plugins/cache")
+        import glob as _glob
+        for key, val in enabled_plugins.items():
+            if not val:
+                continue
+            parts = key.split("@")
+            if len(parts) != 2:
+                continue
+            pname, mkt = parts
+            search_base = os.path.join(plugins_dir, mkt, pname)
+            if not os.path.isdir(search_base):
+                search_base = os.path.join(plugins_dir, mkt)
+            if not os.path.isdir(search_base):
+                continue
+            # Count skill/agent/command definitions from latest version.
+            # Layout: plugins/cache/<marketplace>/<plugin>/<version>/
+            # Skills: skills/<name>/SKILL.md (subdirectory style)
+            # Agents: agents/<name>.md (flat style)
+            # Commands: commands/<name>.md or commands/<name>/COMMAND.md
+            version_dirs = [
+                d for d in _glob.glob(os.path.join(search_base, "*"))
+                if os.path.isdir(d)
+            ]
+            if version_dirs:
+                # Sort by semver: split on '.', compare numerically
+                def _ver_key(p):
+                    v = os.path.basename(p)
+                    try:
+                        return tuple(int(x) for x in v.split("."))
+                    except (ValueError, AttributeError):
+                        return (0,)
+                latest = max(version_dirs, key=_ver_key)
+            else:
+                latest = search_base
+            for md in _glob.glob(os.path.join(latest, "skills", "*", "SKILL.md")):
+                n_skills += 1
+            for md in _glob.glob(os.path.join(latest, "agents", "*.md")):
+                n_agents += 1
+            for md in _glob.glob(os.path.join(latest, "commands", "*.md")):
+                n_commands += 1
+    except Exception:
+        pass
+
+    if n_skills + n_agents + n_commands > 0:
+        total += n_skills * _TOKENS_PER_SKILL_ITEM
+        total += n_agents * _TOKENS_PER_AGENT_ITEM
+        total += n_commands * _TOKENS_PER_COMMAND_ITEM
+    else:
+        # Fallback: rough estimate from plugin directory count
+        plugins_dir = os.path.expanduser("~/.claude/plugins/cache")
+        try:
+            plugin_count = sum(1 for d in os.listdir(plugins_dir) if os.path.isdir(os.path.join(plugins_dir, d)))
+            total += plugin_count * 3 * _TOKENS_PER_SKILL_STUB
+        except OSError:
+            total += 10 * _TOKENS_PER_SKILL_STUB
 
     return total
 
