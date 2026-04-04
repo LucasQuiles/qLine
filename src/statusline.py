@@ -865,6 +865,11 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         hit_rate = state.get("cache_hit_rate")
         if hit_rate is not None and source == "measured":
             pills.append(_mkpill(f"\U000f04c5 {int(hit_rate * 100)}%", rate_color))
+        # [󰔟 ~N turns] — turns until autocompact
+        tuc = state.get("turns_until_compact")
+        if tuc is not None and tuc > 0:
+            tuc_color = "#a3be8c" if tuc > 50 else ("#ebcb8b" if tuc > 10 else "#bf616a")
+            pills.append(_mkpill(f"\U000f0520 ~{tuc}", tuc_color))
 
         sep = style(" ", "#4c566a", bg_color=bg_hex)
         return sep.join(pills)
@@ -886,6 +891,9 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     hit_rate = state.get("cache_hit_rate")
     if hit_rate is not None and source == "measured":
         parts.append(f"[\U000f04c5 {int(hit_rate * 100)}%]")
+    tuc = state.get("turns_until_compact")
+    if tuc is not None and tuc > 0:
+        parts.append(f"[\U000f0520 ~{tuc}]")
     return "".join(parts)
 
 

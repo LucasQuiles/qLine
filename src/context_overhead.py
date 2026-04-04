@@ -573,6 +573,26 @@ def _try_phase2_transcript(
             session_cache["prev_cache_create"] = 0
             session_cache["microcompact_suspected"] = False
 
+    # Context growth rate: average cache_read delta per turn over trailing window.
+    # Combined with autocompact threshold, gives "turns until compaction".
+    if len(trailing) >= 2:
+        deltas = []
+        for j in range(1, len(trailing)):
+            d = trailing[j]["cache_read"] - trailing[j - 1]["cache_read"]
+            if d > 0:
+                deltas.append(d)
+        if deltas:
+            avg_growth = sum(deltas) // len(deltas)
+            session_cache["context_growth_per_turn"] = avg_growth
+            # Estimate turns until autocompact from current usage
+            ctx_total = state.get("context_total", 0)
+            ctx_used = state.get("context_used_corrected", state.get("context_used", 0))
+            if ctx_total > 0 and avg_growth > 0:
+                thresholds = compute_context_thresholds(ctx_total)
+                remaining = thresholds["autocompact_at"] - ctx_used
+                if remaining > 0:
+                    session_cache["turns_until_compact"] = remaining // avg_growth
+
     # Monotonic session turn counter (does not saturate like trailing window)
     session_turn = session_cache.get("session_turn_count", 0) + 1
     session_cache["session_turn_count"] = session_turn
@@ -674,7 +694,7 @@ def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> No
         "sys_overhead_tokens", "sys_overhead_source", "cache_hit_rate",
         "cache_busting", "cache_degraded", "cache_expired",
         "last_cache_create", "prev_cache_create", "microcompact_suspected",
-        "calibration_accuracy",
+        "calibration_accuracy", "context_growth_per_turn", "turns_until_compact",
     )
     for key in _FIELDS:
         if key in session_cache:
