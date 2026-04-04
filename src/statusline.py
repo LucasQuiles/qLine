@@ -89,6 +89,17 @@ DEFAULT_THEME: dict[str, Any] = {
         "warn_color": "#f0d399",
         "critical_threshold": 70.0,
         "critical_color": "#d06070",
+        # Overhead monitor: dual-bar colors
+        "sys_color": "#d08070",
+        "conv_color": "#80b0d0",
+        # Overhead monitor: system overhead thresholds (% of total context window)
+        "sys_warn_threshold": 30.0,
+        "sys_critical_threshold": 50.0,
+        # Overhead monitor: cache health thresholds
+        "cache_warn_rate": 0.8,
+        "cache_critical_rate": 0.3,
+        # Overhead monitor: data source control
+        "overhead_source": "auto",
     },
     "tokens": {
         "enabled": True,
