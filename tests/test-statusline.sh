@@ -548,7 +548,10 @@ assert_not_contains "R-07c: no critical suffix" "$OUT" "!"
 # R-08: Bar characters
 OUT=$(run_py "
 from statusline import render_bar, DEFAULT_THEME
-bar = render_bar(50, DEFAULT_THEME)
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['context_bar']['width'] = 10
+bar = render_bar(50, theme)
 print(bar)
 ")
 assert_contains "R-08a: filled blocks" "$OUT" "█████"
@@ -1557,13 +1560,16 @@ echo "=== Section: overhead ==="
 echo "  dual-bar: 30% system, 10% conversation (40% total)"
 OUT=$(run_py "
 from statusline import render_context_bar, DEFAULT_THEME
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['context_bar']['width'] = 10
 state = {
     'context_used': 400000,
     'context_total': 1000000,
     'sys_overhead_tokens': 300000,
     'sys_overhead_source': 'measured',
 }
-result = render_context_bar(state, DEFAULT_THEME)
+result = render_context_bar(state, theme)
 # total 40%, width=10 -> filled=4
 # sys 30% -> sys_blocks = 3, conv_blocks = 1, free = 6
 n_full = result.count('\u2588')
@@ -1624,7 +1630,10 @@ assert_equals "single-bar fallback" "$OUT" "OK"
 echo "  segment formula: sys + conv + free == width for all inputs"
 OUT=$(run_py "
 from statusline import render_context_bar, DEFAULT_THEME
-width = DEFAULT_THEME['context_bar']['width']
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['context_bar']['width'] = 10
+width = 10
 errors = []
 for sys_pct in range(0, 101, 5):
     for total_pct in range(sys_pct, 101, 5):
@@ -1637,7 +1646,7 @@ for sys_pct in range(0, 101, 5):
             'sys_overhead_tokens': sys_tokens,
             'sys_overhead_source': 'measured',
         }
-        result = render_context_bar(state, DEFAULT_THEME)
+        result = render_context_bar(state, theme)
         if result is None:
             continue
         n_full = result.count('\u2588')
