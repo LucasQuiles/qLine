@@ -372,6 +372,107 @@ def update_manifest_array(package_root: str, key: str, entry: dict) -> None:
         pass
 
 
+def generate_overhead_report(
+    package_root: str,
+    transcript_path: str,
+    context_window_size: int = 1_000_000,
+) -> dict | None:
+    """Generate overhead report from full transcript JSONL.
+
+    Re-reads entire transcript for complete session analysis.
+    Writes to derived/overhead_report.json.
+    """
+    try:
+        with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+
+    turns: list[dict] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        usage = _extract_report_usage(entry)
+        if usage is None:
+            continue
+        turns.append(usage)
+
+    if not turns:
+        return None
+
+    anchor = turns[0].get("cache_creation_input_tokens", 0)
+
+    total_cache_read = sum(t.get("cache_read_input_tokens", 0) for t in turns)
+    total_cache_create = sum(t.get("cache_creation_input_tokens", 0) for t in turns)
+    total_fresh = sum(t.get("input_tokens", 0) for t in turns)
+
+    denom = total_cache_read + total_cache_create
+    hit_rate = total_cache_read / denom if denom > 0 else 0.0
+
+    busting_turns = [
+        i for i, t in enumerate(turns)
+        if t.get("cache_creation_input_tokens", 0) > t.get("cache_read_input_tokens", 0)
+        and i > 0
+    ]
+
+    theoretical_input = anchor + total_fresh
+    actual_input = total_cache_read + total_cache_create + total_fresh
+    cost_mult = actual_input / theoretical_input if theoretical_input > 0 else 1.0
+
+    report = {
+        "total_turns": len(turns),
+        "system_overhead_tokens": anchor,
+        "system_overhead_source": "first_turn_anchor",
+        "system_overhead_pct_of_window": round(anchor * 100 / context_window_size, 1)
+        if context_window_size > 0 else 0,
+        "cache_hit_rate_overall": round(hit_rate, 4),
+        "cache_busting_events": len(busting_turns),
+        "cache_busting_turns": busting_turns,
+        "total_cache_read_tokens": total_cache_read,
+        "total_cache_create_tokens": total_cache_create,
+        "total_fresh_input_tokens": total_fresh,
+        "effective_cost_multiplier": round(cost_mult, 2),
+    }
+
+    derived_dir = os.path.join(package_root, "derived")
+    os.makedirs(derived_dir, exist_ok=True)
+    report_path = os.path.join(derived_dir, "overhead_report.json")
+    try:
+        tmp_path = report_path + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(report, f, indent=2)
+        os.rename(tmp_path, report_path)
+    except OSError:
+        pass
+
+    return report
+
+
+def _extract_report_usage(entry: dict) -> dict | None:
+    """Extract usage from transcript entry for report generation."""
+    msg = entry.get("message")
+    if isinstance(msg, dict):
+        stop = msg.get("stop_reason")
+        if stop is not None:
+            usage = msg.get("usage")
+            if isinstance(usage, dict):
+                return usage
+
+    tur = entry.get("toolUseResult")
+    if isinstance(tur, dict):
+        usage = tur.get("usage")
+        if isinstance(usage, dict):
+            return usage
+
+    return None
+
+
 def update_health(
     package_root: str,
     subsystem: str,

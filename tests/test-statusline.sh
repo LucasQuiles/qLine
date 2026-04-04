@@ -1902,6 +1902,44 @@ print('OK')
 os.unlink(tmpf.name)
 ")
 assert_equals "cache <2 turns" "$OUT" "OK"
+
+echo "  forensics: generate_overhead_report from transcript"
+LAST_STDOUT=$(run_py "
+import json, tempfile, os
+from obs_utils import generate_overhead_report
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+for i in range(5):
+    cache_create = 40000 if i == 0 else 50
+    cache_read = 0 if i == 0 else 40000 + (i * 200)
+    json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+        'input_tokens': 50 + i * 30,
+        'cache_creation_input_tokens': cache_create,
+        'cache_read_input_tokens': cache_read,
+        'output_tokens': 200 + i * 50
+    }}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+pkg = tempfile.mkdtemp()
+derived = os.path.join(pkg, 'derived')
+os.makedirs(derived)
+
+report = generate_overhead_report(pkg, tmpf.name, context_window_size=1000000)
+assert report is not None, 'expected report'
+assert report['system_overhead_tokens'] == 40000, f'anchor wrong: {report[\"system_overhead_tokens\"]}'
+assert report['total_turns'] == 5, f'turns wrong: {report[\"total_turns\"]}'
+assert 0.8 < report['cache_hit_rate_overall'] < 1.0, f'hit rate wrong: {report[\"cache_hit_rate_overall\"]}'
+
+report_path = os.path.join(derived, 'overhead_report.json')
+assert os.path.isfile(report_path), 'report file not written'
+with open(report_path) as rf:
+    written = json.load(rf)
+assert written['system_overhead_tokens'] == 40000
+print('OK')
+os.unlink(tmpf.name)
+import shutil; shutil.rmtree(pkg)
+")
+assert_equals "forensics report" "$LAST_STDOUT" "OK"
 fi
 
 # ======================================================================
