@@ -967,6 +967,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
     # Dual-bar segment allocation
     has_overhead = "sys_overhead_tokens" in state
+    sys_blocks = conv_blocks = 0
     if has_overhead:
         sys_overhead = min(state["sys_overhead_tokens"], ctx_total)
         sys_pct = (sys_overhead * 100) // ctx_total if ctx_total > 0 else 0
@@ -1025,8 +1026,29 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         if inp > 0 or out > 0:
             token_prefix = f"\u2191{_abbreviate_count(inp)}\u2193{_abbreviate_count(out)} "
 
-    text = f"{token_prefix}{glyph}{bar}{suffix}"
+    if has_overhead and not NO_COLOR:
+        # Per-segment coloring: each bar segment gets its own fg + shared bg
+        bg_hex = cfg.get("bg")
+        sys_color_hex = cfg.get("sys_color", "#d08070")
+        conv_color_hex = cfg.get("conv_color", "#80b0d0")
+        pre = style(f" {token_prefix}{glyph}", color, bold, bg_hex)
+        bar_styled = ""
+        if sys_blocks > 0:
+            bar_styled += style("\u2588" * sys_blocks, sys_color_hex, bg_color=bg_hex)
+        if conv_blocks > 0:
+            bar_styled += style("\u2593" * conv_blocks, conv_color_hex, bg_color=bg_hex)
+        if free_blocks > 0:
+            bar_styled += style("\u2591" * free_blocks, None, bg_color=bg_hex)
+        post = style(f"{suffix} ", color, bold, bg_hex)
+        pill_cfg = (theme or {}).get("pill", {})
+        left = pill_cfg.get("left", "")
+        right = pill_cfg.get("right", "")
+        inner = pre + bar_styled + post
+        if left and right and bg_hex:
+            return style(left, bg_hex) + inner + style(right, bg_hex)
+        return inner
 
+    text = f"{token_prefix}{glyph}{bar}{suffix}"
     return _pill(text, cfg, color, bold, theme)
 
 

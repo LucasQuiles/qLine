@@ -159,6 +159,14 @@ $1
 " 2>&1
 }
 
+# Helper: run a Python snippet with ANSI colors enabled (NO_COLOR not set)
+run_py_color() {
+    python3 -c "
+import sys; sys.path.insert(0, '$REPO_DIR/src')
+$1
+" 2>&1
+}
+
 # Determine which sections to run
 RUN_SECTION="${2:-all}"
 if [ "${1:-}" = "--section" ] && [ -n "${2:-}" ]; then
@@ -1996,6 +2004,43 @@ print('OK')
 os.unlink(tmpf.name)
 ")
 assert_equals "config thresholds" "$OUT" "OK"
+
+echo "  dual-bar: sys_color and conv_color are applied"
+OUT=$(run_py_color "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 400000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 300000,
+    'sys_overhead_source': 'measured',
+}
+result = render_context_bar(state, DEFAULT_THEME)
+# sys_color default #d08070 = RGB(208,128,112)
+assert '38;2;208;128;112' in result, f'sys_color ANSI not found in: {repr(result)}'
+# conv_color default #80b0d0 = RGB(128,176,208)
+assert '38;2;128;176;208' in result, f'conv_color ANSI not found in: {repr(result)}'
+print('OK')
+")
+assert_equals "per-segment coloring" "$OUT" "OK"
+
+echo "  dual-bar: NO_COLOR falls back to plain bar"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 400000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 300000,
+    'sys_overhead_source': 'measured',
+}
+result = render_context_bar(state, DEFAULT_THEME)
+# With NO_COLOR, no ANSI escapes
+assert '\033[' not in result, f'unexpected ANSI in NO_COLOR mode: {repr(result)}'
+# But bar blocks should still be present
+assert '\u2588' in result, f'sys blocks missing: {repr(result)}'
+assert '\u2593' in result, f'conv blocks missing: {repr(result)}'
+print('OK')
+")
+assert_equals "per-segment NO_COLOR fallback" "$OUT" "OK"
 
 echo "  forensics: generate_overhead_report from transcript"
 LAST_STDOUT=$(run_py "
