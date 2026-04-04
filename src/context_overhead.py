@@ -386,20 +386,14 @@ def _try_phase2_transcript(
 
 def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> None:
     """Copy overhead fields from session cache into renderer state."""
-    if "sys_overhead_tokens" in session_cache:
-        state["sys_overhead_tokens"] = session_cache["sys_overhead_tokens"]
-    if "sys_overhead_source" in session_cache:
-        state["sys_overhead_source"] = session_cache["sys_overhead_source"]
-    if "cache_hit_rate" in session_cache:
-        state["cache_hit_rate"] = session_cache["cache_hit_rate"]
-    if "cache_busting" in session_cache:
-        state["cache_busting"] = session_cache["cache_busting"]
-    if "cache_degraded" in session_cache:
-        state["cache_degraded"] = session_cache["cache_degraded"]
-    if "last_cache_create" in session_cache:
-        state["last_cache_create"] = session_cache["last_cache_create"]
-    if "prev_cache_create" in session_cache:
-        state["prev_cache_create"] = session_cache["prev_cache_create"]
+    _FIELDS = (
+        "sys_overhead_tokens", "sys_overhead_source", "cache_hit_rate",
+        "cache_busting", "cache_degraded", "last_cache_create",
+        "prev_cache_create", "microcompact_suspected",
+    )
+    for key in _FIELDS:
+        if key in session_cache:
+            state[key] = session_cache[key]
 
 
 def inject_context_overhead(

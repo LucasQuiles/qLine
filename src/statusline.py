@@ -764,8 +764,13 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         if state.get("cache_busting") is True:
             cache_suffix = "\U000f04bf"  # nf-md-lightning_bolt
             sev = 2  # Force entire bar to critical
+        elif state.get("microcompact_suspected") is True:
+            cache_suffix = "\U000f0456"  # nf-md-broom — silent clearing
+            sev = max(sev, 1)  # At least warn (MicroCompact is disruptive)
         elif state.get("cache_degraded") is True:
             sev = max(sev, 1)  # Force at least warn (produces ~ suffix)
+    elif source == "estimated":
+        cache_suffix = "\u2248"  # ≈ indicates estimate, not measurement
 
     if sev == 2:
         suffix = f" {total_pct}%!{cache_suffix}"
