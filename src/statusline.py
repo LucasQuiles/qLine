@@ -120,7 +120,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "color": "#81a1c1",      # nord9 blue
         "bg": "#2e3440",
     },
-    "cache_delta": {
+    "cache_writes": {
         "enabled": True,
         "glyph": "",             # no glyph for normal, spike glyph inline
         "color": "#8fbcbb",      # nord7 teal (normal)
@@ -157,7 +157,7 @@ DEFAULT_THEME: dict[str, Any] = {
     "layout": {
         "force_single_line": False,
         "max_width": 200,
-        "line1": ["context_bar", "sys_overhead", "cache_delta"],
+        "line1": ["context_bar", "sys_overhead", "cache_writes"],
         "line2": ["model", "dir", "cost", "duration"],
         "line3": ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
                   "obs_prompts", "obs_tasks", "obs_subagents",
@@ -845,26 +845,30 @@ def render_sys_overhead(state: dict[str, Any], theme: dict[str, Any]) -> str | N
 
 
 def render_cache_delta(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render per-turn cache injection delta: +3.0k or +8.0k⚡"""
+    """Render per-turn cache write indicator.
+
+    Shows cache_creation_input_tokens from the most recent turn.
+    Spikes indicate large cache writes: skill loads, tool expansions,
+    compaction rebuilds, or large tool results being cached.
+    NOT limited to system overhead — includes conversation content.
+    """
     last_cc = state.get("last_cache_create")
     if not last_cc or last_cc <= 0:
         return None
-    cfg = theme.get("cache_delta", {})
+    cfg = theme.get("cache_writes", {})
     spike_t = cfg.get("spike_threshold", 5000)
     notable_t = cfg.get("notable_threshold", 1000)
 
-    delta_str = f"+{_abbreviate_count(last_cc)}"
     if last_cc > spike_t:
         glyph = "\U000f04bf"  # nf-md-lightning_bolt
         color = cfg.get("spike_color", "#bf616a")
-        text = f"{delta_str}{glyph}"
+        text = f"{_abbreviate_count(last_cc)}{glyph}"
     elif last_cc > notable_t:
-        glyph = "\U000f005d"  # nf-md-arrow_up
         color = cfg.get("notable_color", "#ebcb8b")
-        text = f"{delta_str}{glyph}"
+        text = _abbreviate_count(last_cc)
     else:
         color = cfg.get("color", "#8fbcbb")
-        text = delta_str
+        text = _abbreviate_count(last_cc)
     return _pill(text, cfg, color, theme=theme)
 
 
@@ -1359,7 +1363,7 @@ MODULE_RENDERERS: dict[str, Any] = {
     "context_bar": render_context_bar,
     "tokens": render_tokens,
     "sys_overhead": render_sys_overhead,
-    "cache_delta": render_cache_delta,
+    "cache_writes": render_cache_delta,
     "cost": render_cost,
     "duration": render_duration,
     "git": render_git,

@@ -266,6 +266,10 @@ def _try_phase2_transcript(
         else:
             session_cache["prev_cache_create"] = 0
 
+    # Monotonic session turn counter (does not saturate like trailing window)
+    session_turn = session_cache.get("session_turn_count", 0) + 1
+    session_cache["session_turn_count"] = session_turn
+
     n_turns = len(result["trailing_turns"])
     if n_turns >= 3 and result["cache_hit_rate"] < cache_critical_rate:
         prev_compactions = session_cache.get("prev_compactions", 0)
@@ -273,10 +277,10 @@ def _try_phase2_transcript(
         suppress_until = session_cache.get("compaction_suppress_until_turn", 0)
 
         if current_compactions > prev_compactions:
-            session_cache["compaction_suppress_until_turn"] = n_turns + 3
+            session_cache["compaction_suppress_until_turn"] = session_turn + 3
             session_cache["prev_compactions"] = current_compactions
 
-        if n_turns <= suppress_until:
+        if session_turn <= suppress_until:
             session_cache["cache_busting"] = False
         else:
             session_cache["cache_busting"] = True

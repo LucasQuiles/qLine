@@ -1760,7 +1760,8 @@ LAST_STDOUT=$(run_py "
 from statusline import render_cache_delta, DEFAULT_THEME
 state = {'last_cache_create': 1001}
 result = render_cache_delta(state, DEFAULT_THEME)
-assert '\U000f005d' in result, f'should show notable glyph: {repr(result)}'
+assert '\U000f005d' not in result, f'should not show arrow glyph (dropped in cache_writes rename): {repr(result)}'
+assert '1.0k' in result, f'should show abbreviated count: {repr(result)}'
 print('OK')
 ")
 assert_equals "spike at notable" "$LAST_STDOUT" "OK"
