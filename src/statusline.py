@@ -749,7 +749,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     # Numeric overhead indicator with brain glyph (e.g., "🧠27k")
     overhead_label = ""
     if has_overhead:
-        overhead_label = f" \U000f09d8{_abbreviate_count(state['sys_overhead_tokens'])}"  # nf-md-head_cog
+        overhead_label = f" \U000f0cf2 {_abbreviate_count(state['sys_overhead_tokens'])}"  # nf-md-brain
 
     if sev == 2:
         suffix = f" {total_pct}%!{cache_suffix}{overhead_label}"
