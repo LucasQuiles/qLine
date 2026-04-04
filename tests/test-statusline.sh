@@ -1849,6 +1849,59 @@ os.unlink(tmpf.name)
 ")
 assert_equals "phase2 truncated" "$OUT" "OK"
 
+
+echo "  cache health: healthy rate >= 0.8"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_hit_rate': 0.85,
+    'cache_busting': False,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u26a1' not in result, f'should not show lightning when healthy'
+print('OK')
+")
+assert_equals "cache healthy" "$OUT" "OK"
+
+echo "  cache health: boundary 0.8 is healthy (>=)"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_hit_rate': 0.8,
+    'cache_busting': False,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u26a1' not in result, f'0.8 should be healthy'
+print('OK')
+")
+assert_equals "cache boundary 0.8" "$OUT" "OK"
+
+echo "  cache health: fewer than 2 turns has no turns data"
+OUT=$(run_py "
+import json, tempfile, os
+from statusline import _read_transcript_tail
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+assert result['cache_hit_rate'] == 0.0
+assert len(result['trailing_turns']) == 1
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "cache <2 turns" "$OUT" "OK"
 fi
 
 # ======================================================================
