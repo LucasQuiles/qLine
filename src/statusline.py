@@ -93,7 +93,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "glyph": "\U000f02d1 ",  # nf-md-heart (Supplementary PUA)
         "color": "#b5d4a0",
         "bg": "#2e3440",
-        "width": 10,
+        "width": 0,  # 0 = auto (fill available width on its own line)
         "warn_threshold": 40.0,
         "warn_color": "#f0d399",
         "critical_threshold": 70.0,
@@ -140,10 +140,10 @@ DEFAULT_THEME: dict[str, Any] = {
         "right": "",
     },
     "layout": {
-        "force_single_line": True,
+        "force_single_line": False,
         "max_width": 200,
-        "line1": ["model", "dir", "context_bar", "cost", "duration"],
-        "line2": ["cpu", "memory", "disk"],
+        "line1": ["context_bar"],
+        "line2": ["model", "dir", "cost", "duration"],
         "line3": ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
                   "obs_prompts", "obs_tasks", "obs_subagents",
                   "obs_failures", "obs_compactions", "obs_health"],
@@ -693,23 +693,29 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     ctx_used = state["context_used"]
     ctx_total = state["context_total"]
     total_pct = (ctx_used * 100) // ctx_total if ctx_total > 0 else 0
-    width = cfg.get("width", 10)
+    width = cfg.get("width", 20)
+    if width <= 0:
+        # Auto-fill: compute from terminal width minus fixed content
+        # Glyph(~2) + token prefix(~14) + suffix(~16) + padding(~6) = ~38 chars
+        import shutil as _shutil
+        term_w = _shutil.get_terminal_size((120, 24)).columns
+        width = max(10, term_w - 45)
     filled = (total_pct * width) // 100
 
-    # Dual-bar segment allocation
+    # Dual-bar: composition of USED context (sys vs conv), scaled to filled width
     has_overhead = "sys_overhead_tokens" in state
     sys_blocks = conv_blocks = 0
+    raw_sys_pct = 0
     if has_overhead:
         sys_overhead = min(state["sys_overhead_tokens"], ctx_total)
         raw_sys_pct = (sys_overhead * 100) // ctx_total if ctx_total > 0 else 0
-        sys_pct = min(raw_sys_pct, total_pct)
-        sys_blocks = min((sys_pct * width) // 100, filled)
-        # Minimum 1-block guarantee: if overhead exists and there are filled blocks,
-        # always show at least 1 system block so the dual-color is visible.
-        # On 1M context models, 27k overhead = 2.7% which rounds to 0 blocks.
-        if sys_blocks == 0 and sys_overhead > 0 and filled > 0:
-            sys_blocks = 1
-        conv_blocks = filled - sys_blocks
+
+        if filled > 0 and ctx_used > 0:
+            # Scale system blocks proportionally within the filled portion
+            sys_ratio = min(sys_overhead / ctx_used, 1.0)
+            sys_blocks = max(1, round(sys_ratio * filled)) if sys_overhead > 0 else 0
+            sys_blocks = min(sys_blocks, filled)
+            conv_blocks = filled - sys_blocks
         free_blocks = width - filled
         bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
     else:
@@ -739,16 +745,21 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         elif state.get("cache_degraded") is True:
             sev = max(sev, 1)  # Force at least warn (produces ~ suffix)
 
+    # Numeric overhead indicator (e.g., "sys:27k")
+    overhead_label = ""
+    if has_overhead:
+        overhead_label = f" sys:{_abbreviate_count(state['sys_overhead_tokens'])}"
+
     if sev == 2:
-        suffix = f" {total_pct}%!{cache_suffix}"
+        suffix = f" {total_pct}%!{cache_suffix}{overhead_label}"
         color = cfg.get("critical_color", "#d06070")
         bold = True
     elif sev == 1:
-        suffix = f" {total_pct}%~{cache_suffix}"
+        suffix = f" {total_pct}%~{cache_suffix}{overhead_label}"
         color = cfg.get("warn_color", "#f0d399")
         bold = False
     else:
-        suffix = f" {total_pct}%{cache_suffix}"
+        suffix = f" {total_pct}%{cache_suffix}{overhead_label}"
         color = cfg.get("color", "#b5d4a0")
         bold = False
 
