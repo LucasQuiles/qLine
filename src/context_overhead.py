@@ -16,6 +16,14 @@ import time
 from typing import Any
 
 # ── Overhead Monitor: Static Estimation (Phase 1) ───────────────────
+#
+# Constants verified against Claude Code v2.1.92 decompiled source.
+# Key source functions:
+#   dR_(usage, windowSize) → {used, remaining}  (context percentage)
+#   iLH(usage) → total tokens  (input + cache_create + cache_read + output)
+#   EH_(model, customWindow) → autocompact threshold
+#   nU(model, customWindow) → effective window after output reserve
+#   dYH(tokens, model, window) → context health status
 
 _TOKENS_PER_BYTE = 0.325
 _SYSTEM_PROMPT_TOKENS = 6200        # Measured via /context: ~6.2k (was 4k)
@@ -24,22 +32,31 @@ _SYSTEM_TOOLS_DEFERRED_TOKENS = 968 # Post-deferral (name-only stubs)
 _TOKENS_PER_DEFERRED_TOOL = 12
 _TOKENS_PER_SKILL_STUB = 30
 # MCP tool overhead: measured averages per server
-# Deferred: ~240 tokens/server (name stubs only)
-# Undeferred: ~1500 tokens/server (full schemas)
-_MCP_TOKENS_PER_SERVER_DEFERRED = 240
-_MCP_TOKENS_PER_SERVER_FULL = 1500
-# System-reminder injection: deferred tool listing + MCP instructions
-# These are injected into every API call as <system-reminder> blocks.
-# Deferred tool list: ~50 chars per tool name * 0.325 = ~16 tokens/tool
-# MCP instructions: ~300 tokens per server (auth info, usage guidance)
-# Framing/tags: ~650 tokens (XML tags, formatting)
+_MCP_TOKENS_PER_SERVER_DEFERRED = 240   # name stubs only
+_MCP_TOKENS_PER_SERVER_FULL = 1500      # full schemas
+# System-reminder injection overhead
 _DEFERRED_TOOL_LISTING_TOKENS = 16  # per tool, in system-reminder block
 _MCP_INSTRUCTION_TOKENS = 300       # per server, usage guidance injected
 _SYSTEM_REMINDER_FRAMING = 650      # XML tags, formatting overhead
-# Session-start overhead: skills with SessionStart hooks get their full
-# content expanded into system-reminders. Plus plugin hook instructions,
-# MCP connection status messages, and per-block XML tag framing.
-_SESSION_START_OVERHEAD = 3500      # Measured: ~3.5k from hook expansions + framing
+_SESSION_START_OVERHEAD = 3500      # hook skill expansions + framing
+
+# ── Internal CC Constants (from v2.1.92 source) ─────────────────────
+#
+# used_percentage formula (CONFIRMED from dR_ source):
+#   used = round((input_tokens + cache_creation + cache_read) / window * 100)
+#   NOTE: output_tokens are EXCLUDED from used_percentage
+#   But iLH (total tokens) DOES include output_tokens
+#
+# exceeds_200k formula (from FrH source):
+#   iLH(lastAssistantUsage) > 200000
+#   Where iLH = input + cache_creation + cache_read + output
+#
+# Context health thresholds (from dYH, EH_, nU source):
+CC_OUTPUT_RESERVE = 20_000     # Ha1: max output tokens reserved from window
+CC_AUTOCOMPACT_BUFFER = 13_000 # W68: reserved for compaction request
+CC_WARNING_OFFSET = 20_000     # _a1: offset below effective for warning
+CC_ERROR_OFFSET = 20_000       # qa1: offset below effective for error
+CC_BLOCKING_BUFFER = 3_000     # R68: hard blocking limit buffer
 
 
 def _estimate_static_overhead(
@@ -561,6 +578,29 @@ def _try_phase2_transcript(
     return True
 
 
+def compute_context_thresholds(context_window: int) -> dict[str, int]:
+    """Compute exact CC context thresholds from verified source constants.
+
+    Mirrors the logic of EH_(model, window), nU(model, window), and
+    dYH(tokens, model, window) from Claude Code v2.1.92.
+    """
+    effective = context_window - CC_OUTPUT_RESERVE
+    autocompact = effective - CC_AUTOCOMPACT_BUFFER
+    warning = autocompact - CC_WARNING_OFFSET
+    error = autocompact - CC_ERROR_OFFSET
+    blocking = effective - CC_BLOCKING_BUFFER
+    return {
+        "effective_window": effective,
+        "autocompact_at": autocompact,
+        "warning_at": warning,
+        "error_at": error,
+        "blocking_at": blocking,
+        # Percentages of the full context window
+        "autocompact_pct": round(autocompact / context_window * 100, 1),
+        "blocking_pct": round(blocking / context_window * 100, 1),
+    }
+
+
 def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> None:
     """Copy overhead fields from session cache into renderer state."""
     _FIELDS = (
@@ -571,6 +611,13 @@ def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> No
     for key in _FIELDS:
         if key in session_cache:
             state[key] = session_cache[key]
+
+    # Inject context thresholds for the renderer
+    ctx_total = state.get("context_total")
+    if ctx_total and ctx_total > 0:
+        thresholds = compute_context_thresholds(ctx_total)
+        state["cc_autocompact_pct"] = thresholds["autocompact_pct"]
+        state["cc_blocking_pct"] = thresholds["blocking_pct"]
 
 
 def inject_context_overhead(
