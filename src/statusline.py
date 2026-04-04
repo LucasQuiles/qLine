@@ -668,36 +668,71 @@ def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Render context health pill with progress bar and optional token counts.
 
-    Combines context bar + tokens into one pill:
-      󰋑 █████░░░░░ 15% ↑281k ↓141k
+    When overhead data is available, renders a dual-color bar:
+      ↑281k↓141k 󰋑 ███▓▓░░░░░ 15%
+    Where █=system overhead, ▓=conversation, ░=free.
+
+    Falls back to single-color bar when no overhead data exists.
     """
     if "context_used" not in state or "context_total" not in state:
         return None
     cfg = theme.get("context_bar", {})
-    pct = (state["context_used"] * 100) // state["context_total"]
+    ctx_used = state["context_used"]
+    ctx_total = state["context_total"]
+    total_pct = (ctx_used * 100) // ctx_total if ctx_total > 0 else 0
     width = cfg.get("width", 10)
-    filled = (pct * width) // 100
-    bar = "\u2588" * filled + "\u2591" * (width - filled)
+    filled = (total_pct * width) // 100
 
+    # Dual-bar segment allocation
+    has_overhead = "sys_overhead_tokens" in state
+    if has_overhead:
+        sys_overhead = min(state["sys_overhead_tokens"], ctx_total)
+        sys_pct = (sys_overhead * 100) // ctx_total if ctx_total > 0 else 0
+        sys_pct = min(sys_pct, total_pct)
+        sys_blocks = min((sys_pct * width) // 100, filled)
+        conv_blocks = filled - sys_blocks
+        free_blocks = width - filled
+        bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
+    else:
+        free_blocks = width - filled
+        bar = "\u2588" * filled + "\u2591" * free_blocks
+
+    # Threshold: system overhead vs total usage, more severe wins
     warn_t = cfg.get("warn_threshold", 40.0)
     crit_t = cfg.get("critical_threshold", 70.0)
+    sys_warn_t = cfg.get("sys_warn_threshold", 30.0)
+    sys_crit_t = cfg.get("sys_critical_threshold", 50.0)
 
-    if pct >= crit_t:
-        suffix = f" {pct}%!"
+    # Determine severity level: 0=normal, 1=warn, 2=critical
+    total_sev = 2 if total_pct >= crit_t else (1 if total_pct >= warn_t else 0)
+    sys_sev = 0
+    if has_overhead:
+        sys_pct_of_window = (min(state["sys_overhead_tokens"], ctx_total) * 100) // ctx_total if ctx_total > 0 else 0
+        sys_sev = 2 if sys_pct_of_window >= sys_crit_t else (1 if sys_pct_of_window >= sys_warn_t else 0)
+    sev = max(total_sev, sys_sev)
+
+    # Cache health suffix (Phase 2 measured data only)
+    cache_suffix = ""
+    source = state.get("sys_overhead_source", "")
+    if source == "measured" and state.get("cache_busting") is True:
+        cache_suffix = "\u26a1"
+
+    if sev == 2:
+        suffix = f" {total_pct}%!{cache_suffix}"
         color = cfg.get("critical_color", "#d06070")
         bold = True
-    elif pct >= warn_t:
-        suffix = f" {pct}%~"
+    elif sev == 1:
+        suffix = f" {total_pct}%~{cache_suffix}"
         color = cfg.get("warn_color", "#f0d399")
         bold = False
     else:
-        suffix = f" {pct}%"
+        suffix = f" {total_pct}%{cache_suffix}"
         color = cfg.get("color", "#b5d4a0")
         bold = False
 
     glyph = cfg.get("glyph", "")
 
-    # Token counts before the glyph, no space between ↑ and ↓
+    # Token counts before the glyph
     token_prefix = ""
     if "input_tokens" in state and "output_tokens" in state:
         inp = state["input_tokens"]

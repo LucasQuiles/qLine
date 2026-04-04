@@ -1541,6 +1541,194 @@ rm -rf "$OBS_TEST_ROOT" "$OBS_TEST_CACHE"
 echo ""
 fi
 
+# ── Section: overhead ───────────────────────────────────────────────
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "overhead" ]; then
+echo ""
+echo "=== Section: overhead ==="
+
+echo "  dual-bar: 30% system, 10% conversation (40% total)"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 400000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 300000,
+    'sys_overhead_source': 'measured',
+}
+result = render_context_bar(state, DEFAULT_THEME)
+# total 40%, width=10 -> filled=4
+# sys 30% -> sys_blocks = 3, conv_blocks = 1, free = 6
+n_full = result.count('\u2588')
+n_med = result.count('\u2593')
+n_empty = result.count('\u2591')
+assert n_full == 3, f'expected 3 sys blocks, got {n_full}'
+assert n_med == 1, f'expected 1 conv block, got {n_med}'
+assert n_empty == 6, f'expected 6 free blocks, got {n_empty}'
+print('OK')
+")
+assert_equals "dual-bar 30/10" "$OUT" "OK"
+
+echo "  dual-bar: context_used == 0"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 0,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 0,
+    'sys_overhead_source': 'measured',
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u2591' * 10 in result, f'expected 10 empty blocks, got: {result}'
+print('OK')
+")
+assert_equals "dual-bar zero usage" "$OUT" "OK"
+
+echo "  dual-bar: sys_overhead > context_total clamped"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 200000,
+    'sys_overhead_tokens': 999999,
+    'sys_overhead_source': 'estimated',
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert result is not None, 'should not return None'
+print('OK')
+")
+assert_equals "dual-bar clamped" "$OUT" "OK"
+
+echo "  single-bar fallback: no overhead data"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 50000,
+    'context_total': 100000,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u2588' * 5 in result, f'expected 5 filled blocks, got: {result}'
+assert '\u2591' * 5 in result, f'expected 5 empty blocks, got: {result}'
+assert '\u2593' not in result, f'should not have medium blocks without overhead data'
+print('OK')
+")
+assert_equals "single-bar fallback" "$OUT" "OK"
+
+echo "  segment formula: sys + conv + free == width for all inputs"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+width = DEFAULT_THEME['context_bar']['width']
+errors = []
+for sys_pct in range(0, 101, 5):
+    for total_pct in range(sys_pct, 101, 5):
+        ctx_total = 1000000
+        ctx_used = total_pct * ctx_total // 100
+        sys_tokens = sys_pct * ctx_total // 100
+        state = {
+            'context_used': ctx_used,
+            'context_total': ctx_total,
+            'sys_overhead_tokens': sys_tokens,
+            'sys_overhead_source': 'measured',
+        }
+        result = render_context_bar(state, DEFAULT_THEME)
+        if result is None:
+            continue
+        n_full = result.count('\u2588')
+        n_med = result.count('\u2593')
+        n_empty = result.count('\u2591')
+        total_blocks = n_full + n_med + n_empty
+        if total_blocks != width:
+            errors.append(f'sys={sys_pct}% total={total_pct}%: {n_full}+{n_med}+{n_empty}={total_blocks} != {width}')
+if errors:
+    print('FAIL: ' + '; '.join(errors[:5]))
+else:
+    print('OK')
+")
+assert_equals "segment formula invariant" "$OUT" "OK"
+
+echo "  compound suffix: cache busting + critical"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 720000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 500000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '%!\u26a1' in result, f'expected %!⚡, got: {result}'
+print('OK')
+")
+assert_equals "compound critical+bust" "$OUT" "OK"
+
+echo "  compound suffix: cache busting + warn"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 400000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 100000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '%~\u26a1' in result, f'expected %~⚡, got: {result}'
+print('OK')
+")
+assert_equals "compound warn+bust" "$OUT" "OK"
+
+echo "  compound suffix: cache busting + normal"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 100000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '%\u26a1' in result, f'expected %⚡, got: {result}'
+assert '%~' not in result, f'should not have warn suffix'
+assert '%!' not in result, f'should not have critical suffix'
+print('OK')
+")
+assert_equals "compound normal+bust" "$OUT" "OK"
+
+echo "  no cache indicator during Phase 1 (estimated)"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 100000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'estimated',
+    'cache_busting': True,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u26a1' not in result, f'should NOT show ⚡ during Phase 1, got: {result}'
+print('OK')
+")
+assert_equals "no cache indicator phase1" "$OUT" "OK"
+
+echo "  system critical, conversation zero"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 500000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 500000,
+    'sys_overhead_source': 'measured',
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u2593' not in result, f'should have no conv blocks, got: {result}'
+assert '!' in result, f'should be critical (sys >= 50%), got: {result}'
+print('OK')
+")
+assert_equals "sys critical conv zero" "$OUT" "OK"
+
+fi
+
 # ======================================================================
 # Summary
 # ======================================================================
