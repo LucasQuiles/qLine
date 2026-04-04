@@ -2832,6 +2832,45 @@ os.unlink(tmpf.name)
 ")
 assert_contains "stability: inflation cap" "$OUT" "OK"
 
+echo "  CC-verified: dynamic warn/critical derived from real autocompact"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+
+# For a 200k window: autocompact=83.5%, so warn=66.8%, critical=83.5%
+# At 60%: below warn → healthy (teal)
+state_healthy = {
+    'context_used': 120000,  # 60% of 200k
+    'context_total': 200000,
+    'cc_autocompact_pct': 83.5,
+    'cc_blocking_pct': 88.5,
+}
+result_h = render_context_bar(state_healthy, DEFAULT_THEME)
+assert '!' not in result_h, f'60% should be healthy, got critical: {result_h}'
+assert '~' not in result_h, f'60% should be healthy, got warn: {result_h}'
+
+# At 70%: above dynamic warn (66.8%) → warn
+state_warn = {
+    'context_used': 140000,  # 70% of 200k
+    'context_total': 200000,
+    'cc_autocompact_pct': 83.5,
+    'cc_blocking_pct': 88.5,
+}
+result_w = render_context_bar(state_warn, DEFAULT_THEME)
+assert '~' in result_w, f'70% should be warn (threshold 66.8%), got: {result_w}'
+
+# At 85%: above autocompact (83.5%) → critical
+state_crit = {
+    'context_used': 170000,  # 85% of 200k
+    'context_total': 200000,
+    'cc_autocompact_pct': 83.5,
+    'cc_blocking_pct': 88.5,
+}
+result_c = render_context_bar(state_crit, DEFAULT_THEME)
+assert '!' in result_c, f'85% should be critical (threshold 83.5%), got: {result_c}'
+print('OK')
+")
+assert_equals "CC-verified: dynamic thresholds" "$OUT" "OK"
+
 echo "  CC-verified: static estimate within 2x of measured anchor"
 OUT=$(run_py "
 from context_overhead import _estimate_static_overhead
