@@ -718,61 +718,56 @@ def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render context health pill with progress bar and optional token counts.
+    """Render unified context health bar.
 
-    When overhead data is available, renders a dual-color bar:
-      ↑281k↓141k 󰋑 ███▓▓░░░░░ 15%
-    Where █=system overhead, ▓=conversation, ░=free.
+    Format: ↑1.1M↓194k [██████░░░░░░░░░░░░░░]󰋑 49% 󰳲38.2k *65% **740
 
-    Falls back to single-color bar when no overhead data exists.
+    Segments (left to right):
+      ↑in↓out    — cumulative input/output token counts
+      [bar]      — dual-color progress bar (█=sys overhead, ▓=conversation, ░=free)
+      glyph      — 󰋑 heart (context health)
+      pct%       — context usage percentage (corrected for output tokens)
+      󰳲overhead  — system overhead tokens (brain glyph)
+      *rate%     — cache hit rate (* prefix)
+      **writes   — per-turn cache writes (** prefix)
     """
     if "context_used" not in state or "context_total" not in state:
         return None
     cfg = theme.get("context_bar", {})
-    # Use corrected usage (includes output tokens) if available,
-    # since CC's used_percentage excludes them but the limit includes them.
     ctx_used = state.get("context_used_corrected", state["context_used"])
     ctx_total = state["context_total"]
     total_pct = (ctx_used * 100) // ctx_total if ctx_total > 0 else 0
     width = cfg.get("width", 20)
     if width <= 0:
-        # Auto-fill: compute from terminal width minus fixed content
-        # Glyph(~2) + token prefix(~14) + suffix(~16) + padding(~6) = ~38 chars
         import shutil as _shutil
         term_w = _shutil.get_terminal_size((120, 24)).columns
-        width = max(10, term_w - 45)
+        # Tighter: tokens(~14) + bar(w) + glyph(1) + pct(4) + overhead(~8) + rate(5) + writes(5) + separators(~8)
+        width = max(10, term_w - 50)
     filled = (total_pct * width) // 100
 
-    # Dual-bar: composition of USED context (sys vs conv), scaled to filled width
+    # Dual-bar: sys overhead vs conversation within filled portion
     has_overhead = "sys_overhead_tokens" in state
     sys_blocks = conv_blocks = 0
     raw_sys_pct = 0
     if has_overhead:
         sys_overhead = min(state["sys_overhead_tokens"], ctx_total)
         raw_sys_pct = (sys_overhead * 100) // ctx_total if ctx_total > 0 else 0
-
         if filled > 0 and ctx_used > 0:
-            # Scale system blocks proportionally within the filled portion
             sys_ratio = min(sys_overhead / ctx_used, 1.0)
             sys_blocks = round(sys_ratio * filled) if sys_overhead > 0 else 0
-            # Min-1-block only when system is genuinely dominant (>50% of used)
             if sys_blocks == 0 and sys_overhead > 0 and filled > 0 and sys_ratio >= 0.5:
                 sys_blocks = 1
             sys_blocks = min(sys_blocks, filled)
             conv_blocks = filled - sys_blocks
         free_blocks = width - filled
-        bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
     else:
+        sys_blocks = filled
+        conv_blocks = 0
         free_blocks = width - filled
-        bar = "\u2588" * filled + "\u2591" * free_blocks
 
-    # Threshold: system overhead vs total usage.
-    # When CC's autocompact threshold is known (from source-verified constants),
-    # use it for dynamic warn/critical. Otherwise fall back to static config.
+    # Severity from CC-verified autocompact threshold
     cc_compact_pct = state.get("cc_autocompact_pct")
-    cc_block_pct = state.get("cc_blocking_pct")
     if cc_compact_pct:
-        # Warn at 80% of autocompact, critical at autocompact threshold
         warn_t = round(cc_compact_pct * 0.80, 1)
         crit_t = cc_compact_pct
     else:
@@ -781,65 +776,81 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     sys_warn_t = cfg.get("sys_warn_threshold", 30.0)
     sys_crit_t = cfg.get("sys_critical_threshold", 50.0)
 
-    # Determine severity level: 0=normal, 1=warn, 2=critical
     total_sev = 2 if total_pct >= crit_t else (1 if total_pct >= warn_t else 0)
     sys_sev = 0
     if has_overhead:
         sys_sev = 2 if raw_sys_pct >= sys_crit_t else (1 if raw_sys_pct >= sys_warn_t else 0)
     sev = max(total_sev, sys_sev)
 
-    # Cache health: degraded forces warn severity, busting forces critical
+    # Cache health escalation
     source = state.get("sys_overhead_source", "")
-    cache_suffix = ""
     if source == "measured":
-        if state.get("cache_expired") is True:
-            cache_suffix = "\U000f0150"  # nf-md-clock_alert — TTL expiry
-            # No severity escalation: cache will self-heal on next turn
-        elif state.get("cache_busting") is True:
-            cache_suffix = "\U000f04bf"  # nf-md-lightning_bolt
-            sev = 2  # Force entire bar to critical
+        if state.get("cache_busting") is True:
+            sev = 2
         elif state.get("microcompact_suspected") is True:
-            cache_suffix = "\U000f0456"  # nf-md-broom — silent clearing
-            sev = max(sev, 1)  # At least warn (MicroCompact is disruptive)
+            sev = max(sev, 1)
         elif state.get("cache_degraded") is True:
-            sev = max(sev, 1)  # Force at least warn (produces ~ suffix)
-    elif source == "estimated":
-        cache_suffix = "\u2248"  # ≈ indicates estimate, not measurement
+            sev = max(sev, 1)
 
     if sev == 2:
-        suffix = f" {total_pct}%!{cache_suffix}"
         color = cfg.get("critical_color", "#d06070")
         bold = True
     elif sev == 1:
-        suffix = f" {total_pct}%~{cache_suffix}"
         color = cfg.get("warn_color", "#f0d399")
         bold = False
     else:
-        suffix = f" {total_pct}%{cache_suffix}"
         color = cfg.get("color", "#b5d4a0")
         bold = False
 
-    glyph = cfg.get("glyph", "")
+    glyph = cfg.get("glyph", "\U000f02d1")  # 󰋑 heart
 
-    # Token counts before the glyph
-    token_prefix = ""
+    # ── Build segments ──
+
+    # 1. Token counts: ↑1.1M↓194k
+    token_seg = ""
     if "input_tokens" in state and "output_tokens" in state:
         inp = state["input_tokens"]
         out = state["output_tokens"]
         if inp > 0 or out > 0:
-            token_prefix = f"\u2191{_abbreviate_count(inp)}\u2193{_abbreviate_count(out)} "
+            token_seg = f"\u2191{_abbreviate_count(inp)}\u2193{_abbreviate_count(out)}"
 
-    if has_overhead and not NO_COLOR:
-        # Semantic bar coloring: segments derive from the computed severity color.
-        # sys blocks = darkened severity color (heavy/dim)
-        # conv blocks = severity color itself (active/bright)
-        # free blocks = muted gray (available)
-        # The entire bar shifts with health state: teal → yellow → red.
+    # 2. Percentage with severity indicator
+    if sev == 2:
+        pct_seg = f"{total_pct}%!"
+    elif sev == 1:
+        pct_seg = f"{total_pct}%~"
+    else:
+        pct_seg = f"{total_pct}%"
+
+    # 3. System overhead: 󰳲38.2k
+    overhead_seg = ""
+    if has_overhead:
+        oh_glyph = "\U000f0cf2"  # 󰳲 brain
+        oh_tokens = state["sys_overhead_tokens"]
+        oh_suffix = "\u2248" if source == "estimated" else ""
+        overhead_seg = f"{oh_glyph}{_abbreviate_count(oh_tokens)}{oh_suffix}"
+
+    # 4. Cache hit rate: *65%
+    rate_seg = ""
+    hit_rate = state.get("cache_hit_rate")
+    if hit_rate is not None and source == "measured":
+        rate_pct = int(hit_rate * 100)
+        rate_seg = f"*{rate_pct}%"
+
+    # 5. Cache writes: **740
+    writes_seg = ""
+    last_cc = state.get("last_cache_create")
+    if last_cc and last_cc > 0:
+        writes_seg = f"**{_abbreviate_count(last_cc)}"
+
+    # ── Render with or without color ──
+
+    if not NO_COLOR:
         bg_hex = cfg.get("bg")
-        conv_color_hex = color  # severity color (teal/yellow/red)
-        sys_color_hex = _darken_hex(color, 0.65)  # same hue, darker
-        free_color_hex = "#4c566a"  # nord3 muted gray
-        pre = style(f" {token_prefix}{glyph}", color, bold, bg_hex)
+        conv_color_hex = color
+        sys_color_hex = _darken_hex(color, 0.65)
+        free_color_hex = "#4c566a"
+
         bar_styled = ""
         if sys_blocks > 0:
             bar_styled += style("\u2588" * sys_blocks, sys_color_hex, bg_color=bg_hex)
@@ -847,55 +858,74 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             bar_styled += style("\u2593" * conv_blocks, conv_color_hex, bg_color=bg_hex)
         if free_blocks > 0:
             bar_styled += style("\u2591" * free_blocks, free_color_hex, bg_color=bg_hex)
-        post = style(f"{suffix} ", color, bold, bg_hex)
+
+        sep = style("\u2502", "#4c566a", bg_color=bg_hex)  # dim │
+
+        parts = [style(f" {token_seg}", color, bold, bg_hex)] if token_seg else []
+        parts.append(bar_styled)
+        parts.append(style(glyph, color, bold, bg_hex))
+        parts.append(sep)
+        parts.append(style(pct_seg, color, bold, bg_hex))
+        if overhead_seg:
+            parts.append(sep)
+            parts.append(style(overhead_seg, "#81a1c1", bg_color=bg_hex))  # nord9 blue
+        if rate_seg:
+            parts.append(sep)
+            parts.append(style(rate_seg, "#8fbcbb", bg_color=bg_hex))  # nord7 teal
+        if writes_seg:
+            parts.append(sep)
+            cw_color = cfg.get("color", "#8fbcbb")
+            if last_cc and last_cc > cfg.get("spike_threshold", 5000):
+                cw_color = "#bf616a"  # nord11 red
+            elif last_cc and last_cc > cfg.get("notable_threshold", 1000):
+                cw_color = "#ebcb8b"  # nord13 yellow
+            parts.append(style(writes_seg, cw_color, bg_color=bg_hex))
+        parts.append(style(" ", color, bg_color=bg_hex))
+
+        inner = "".join(parts)
         pill_cfg = (theme or {}).get("pill", {})
         left = pill_cfg.get("left", "")
         right = pill_cfg.get("right", "")
-        inner = pre + bar_styled + post
         if left and right and bg_hex:
             return style(left, bg_hex) + inner + style(right, bg_hex)
         return inner
 
-    text = f"{token_prefix}{glyph}{bar}{suffix}"
+    # NO_COLOR fallback — preserve dual-bar chars (█=sys, ▓=conv, ░=free)
+    bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
+    parts = []
+    if token_seg:
+        parts.append(token_seg)
+    parts.append(f"{bar}{glyph}")
+    parts.append(pct_seg)
+    if overhead_seg:
+        parts.append(overhead_seg)
+    if rate_seg:
+        parts.append(rate_seg)
+    if writes_seg:
+        parts.append(writes_seg)
+    text = "|".join(parts)
     return _pill(text, cfg, color, bold, theme)
 
 
 def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Tokens are now merged into context_bar pill. This is a no-op."""
+    """Merged into context_bar. No-op."""
     return None
 
 
 def render_sys_overhead(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render system overhead pill: 󰳲 27.4k 92%
-
-    Shows system overhead tokens and cache hit rate when measured.
-    Source suffix: nothing for measured, ≈ for estimated.
-    """
-    if "sys_overhead_tokens" not in state:
-        return None
-    cfg = theme.get("sys_overhead", {})
-    tokens = state["sys_overhead_tokens"]
-    glyph = cfg.get("glyph", "\U000f0cf2 ")
-    source = state.get("sys_overhead_source", "")
-    source_suffix = "\u2248" if source == "estimated" else ""
-
-    # Cache hit rate as percentage (compact: "92%" not "92.3%")
-    hit_rate = state.get("cache_hit_rate")
-    if hit_rate is not None and source == "measured":
-        rate_pct = int(hit_rate * 100)
-        text = f"{glyph}{_abbreviate_count(tokens)}{source_suffix} {rate_pct}%"
-    else:
-        text = f"{glyph}{_abbreviate_count(tokens)}{source_suffix}"
-    return _pill(text, cfg, theme=theme)
+    """Merged into context_bar. No-op."""
+    return None
 
 
 def render_cache_delta(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render per-turn cache write indicator.
+    """Merged into context_bar. No-op."""
+    return None
 
-    Shows cache_creation_input_tokens from the most recent turn.
-    Spikes indicate large cache writes: skill loads, tool expansions,
-    compaction rebuilds, or large tool results being cached.
-    NOT limited to system overhead — includes conversation content.
+
+def _render_cache_delta_UNUSED(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Former standalone cache writes pill (preserved for reference).
+
+    Now rendered as the **writes segment inside the unified context bar.
     """
     last_cc = state.get("last_cache_create")
     if not last_cc or last_cc <= 0:
