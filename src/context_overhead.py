@@ -479,12 +479,15 @@ def _try_phase2_transcript(
         session_cache["sys_overhead_source"] = "estimated"  # Downgrade source
     else:
         # Calibration: compare measured anchor to static estimate.
-        # Ratio >1 means static underestimates; <1 means overestimates.
-        # This is informational — helps tune _TOKENS_PER_BYTE et al.
+        # Computes once per session when measured anchor is available.
         if "calibration_ratio" not in session_cache:
             estimate = _estimate_static_overhead()
             if estimate > 0:
-                session_cache["calibration_ratio"] = round(anchor / estimate, 3)
+                ratio = round(anchor / estimate, 3)
+                accuracy = round(min(estimate, anchor) / max(estimate, anchor) * 100, 1)
+                session_cache["calibration_ratio"] = ratio
+                session_cache["calibration_accuracy"] = accuracy
+                session_cache["calibration_estimate"] = estimate
 
     session_cache["sys_overhead_tokens"] = anchor
     if session_cache.get("sys_overhead_source") != "estimated":
@@ -612,6 +615,7 @@ def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> No
         "sys_overhead_tokens", "sys_overhead_source", "cache_hit_rate",
         "cache_busting", "cache_degraded", "cache_expired",
         "last_cache_create", "prev_cache_create", "microcompact_suspected",
+        "calibration_accuracy",
     )
     for key in _FIELDS:
         if key in session_cache:
