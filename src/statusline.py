@@ -39,6 +39,8 @@ except ModuleNotFoundError:
 from datetime import datetime, timezone
 from typing import Any
 
+from context_overhead import inject_context_overhead
+
 # --- Observability integration (guarded import) ---
 try:
     # Look for obs_utils next to this script first, then ~/.claude/scripts/
@@ -82,18 +84,44 @@ DEFAULT_THEME: dict[str, Any] = {
     "context_bar": {
         "enabled": True,
         "glyph": "\U000f02d1 ",  # nf-md-heart (Supplementary PUA)
-        "color": "#b5d4a0",
+        "color": "#8fbcbb",     # nord7 — teal (healthy: cohesive with frost bar)
         "bg": "#2e3440",
-        "width": 10,
+        "width": 0,  # 0 = auto (fill available width on its own line)
         "warn_threshold": 40.0,
-        "warn_color": "#f0d399",
+        "warn_color": "#ebcb8b",   # nord13 — yellow (warn: aurora accent)
         "critical_threshold": 70.0,
-        "critical_color": "#d06070",
+        "critical_color": "#bf616a", # nord11 — red (critical: aurora danger)
+        # Bar segment colors derive from computed severity (see _darken_hex).
+        # No sys_color/conv_color config — segments track health state.
+        # Overhead monitor: system overhead thresholds (% of total context window)
+        "sys_warn_threshold": 30.0,
+        "sys_critical_threshold": 50.0,
+        # Overhead monitor: cache health thresholds
+        "cache_warn_rate": 0.8,
+        "cache_critical_rate": 0.3,
+        # Overhead monitor: data source control
+        "overhead_source": "auto",
     },
     "tokens": {
         "enabled": True,
         "color": "#a8d4d0",
         "bg": "#2e3440",
+    },
+    "sys_overhead": {
+        "enabled": True,
+        "glyph": "\U000f0cf2 ",  # nf-md-brain
+        "color": "#81a1c1",      # nord9 blue
+        "bg": "#2e3440",
+    },
+    "cache_writes": {
+        "enabled": True,
+        "glyph": "",             # no glyph for normal, spike glyph inline
+        "color": "#8fbcbb",      # nord7 teal (normal)
+        "bg": "#2e3440",
+        "spike_color": "#bf616a",     # nord11 red (spike)
+        "notable_color": "#ebcb8b",   # nord13 yellow (notable)
+        "spike_threshold": 5000,
+        "notable_threshold": 1000,
     },
     "cost": {
         "enabled": True,
@@ -120,11 +148,10 @@ DEFAULT_THEME: dict[str, Any] = {
         "right": "",
     },
     "layout": {
-        "force_single_line": True,
+        "force_single_line": False,
         "max_width": 200,
-        "display_mode": "both",  # "icon" | "text" | "both"
-        "line1": ["model", "dir", "context_bar", "cost", "duration"],
-        "line2": ["cpu", "memory", "disk", "agents", "tmux"],
+        "line1": ["context_bar", "sys_overhead", "cache_writes"],
+        "line2": ["model", "dir", "cost", "duration"],
         "line3": ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
                   "obs_prompts", "obs_tasks", "obs_subagents",
                   "obs_failures", "obs_compactions", "obs_health"],
@@ -174,13 +201,8 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "agents": {
-        "enabled": True,
-        "glyph": "\U000f06a9 ",           # nf-md-robot (claude main icon)
-        "sub_glyph": "\U000f0717 ",       # nf-md-arrow_decision (sub-agent icon)
-        "codex_glyph": "\U000f0137 ",     # nf-md-clipboard_check (codex icon)
-        "label": "Claude",
-        "sub_label": "Sub",
-        "codex_label": "Codex",
+        "enabled": False,
+        "glyph": "\U000f04cc ",
         "color": "#b48ead",
         "bg": "#2e3440",
         "warn_threshold": 5,
@@ -188,9 +210,6 @@ DEFAULT_THEME: dict[str, Any] = {
         "warn_color": "#f0d399",
         "critical_color": "#d06070",
         "show_threshold": 0,
-        "show_breakdown": True,
-        "inner_separator": " \u2502 ",    # " │ " box-drawing pipe
-        "display_mode": "",               # empty = use global layout.display_mode
     },
     "tmux": {
         "enabled": False,
@@ -335,98 +354,20 @@ def style_dim(text: str) -> str:
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 
+def _darken_hex(hex_color: str, factor: float = 0.55) -> str:
+    """Darken a hex color by a factor (0=black, 1=unchanged)."""
+    rgb = _parse_hex(hex_color)
+    if not rgb:
+        return hex_color
+    r = int(rgb[0] * factor)
+    g = int(rgb[1] * factor)
+    b = int(rgb[2] * factor)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 def _visible_len(text: str) -> int:
-    """Return visible column count, accounting for ANSI escapes and wide glyphs.
-
-    Nerd Font glyphs (PUA: E000-F8FF, Supplementary PUA: F0000-FFFFF) render
-    as 2 columns wide in terminals but Python counts them as 1 character.
-    """
-    stripped = _ANSI_RE.sub("", text)
-    cols = 0
-    for ch in stripped:
-        cp = ord(ch)
-        # Nerd Font PUA ranges render double-width in most terminals
-        if (0xE000 <= cp <= 0xF8FF) or (0xF0000 <= cp <= 0xFFFFF):
-            cols += 2
-        else:
-            cols += 1
-    return cols
-
-
-# --- Terminal Width Detection ---
-
-def _detect_terminal_width() -> int:
-    """Detect real terminal width, even when stdout is piped.
-
-    Claude Code runs statusline in a PTY fixed at 80 cols, hiding the
-    real terminal width. Tries multiple strategies in order:
-      1. QLINE_COLUMNS env var (explicit override)
-      2. shutil.get_terminal_size (works with TTY on stdout)
-      3. macOS: osascript to query Terminal.app / iTerm2 window width
-      4. tput cols (returns PTY width — less reliable under Claude Code)
-      5. Falls back to 200
-    """
-    # 1. Explicit override
-    cols_env = os.environ.get("QLINE_COLUMNS") or os.environ.get("COLUMNS")
-    if cols_env:
-        try:
-            c = int(cols_env)
-            if c > 0:
-                return c
-        except ValueError:
-            pass
-    # 2. shutil (works if stdout is a TTY)
-    try:
-        sz = shutil.get_terminal_size((-1, -1))
-        if sz.columns > 0:
-            return sz.columns
-    except (ValueError, OSError):
-        pass
-    # 3. macOS: query the actual terminal emulator window (cached 5s to avoid 75ms overhead)
-    if sys.platform == "darwin":
-        cache_file = "/tmp/qline-termwidth.cache"
-        try:
-            st = os.stat(cache_file)
-            if time.time() - st.st_mtime < 5.0:
-                with open(cache_file) as f:
-                    c = int(f.read().strip())
-                    if c > 0:
-                        return c
-        except (OSError, ValueError):
-            pass
-        for script in [
-            'tell application "Terminal" to get number of columns of front window',
-            'tell application "iTerm2" to tell current session of current window to get columns',
-        ]:
-            try:
-                result = subprocess.run(
-                    ["osascript", "-e", script],
-                    capture_output=True, text=True, timeout=0.15,
-                )
-                if result.returncode == 0:
-                    c = int(result.stdout.strip())
-                    if c > 0:
-                        try:
-                            with open(cache_file, "w") as f:
-                                f.write(str(c))
-                        except OSError:
-                            pass
-                        return c
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
-                continue
-    # 4. tput cols (may return PTY width, not real terminal)
-    try:
-        result = subprocess.run(
-            ["tput", "cols"], capture_output=True, text=True, timeout=0.05,
-        )
-        if result.returncode == 0:
-            c = int(result.stdout.strip())
-            if c > 0:
-                return c
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
-        pass
-    # 5. Fallback
-    return 200
+    """Return visible character count, stripping ANSI escape sequences."""
+    return len(_ANSI_RE.sub("", text))
 
 
 # --- Subprocess Helper ---
@@ -482,7 +423,7 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     """Create a normalized internal state from the raw payload."""
     state: dict[str, Any] = {}
 
-    # Model name — prefer display_name, fall back to id
+    # Model name
     model = payload.get("model")
     if isinstance(model, dict):
         name = model.get("display_name")
@@ -494,13 +435,6 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
                 name = name.replace(full, short)
             name = name.replace(" (", "[").replace(")", "]").replace(" ", "")
             state["model_name"] = name
-        else:
-            # Fallback: use model id, abbreviated
-            model_id = model.get("id")
-            if isinstance(model_id, str) and model_id:
-                # "claude-opus-4-6[1m]" → "opus-4-6"
-                short_id = model_id.replace("claude-", "").split("[")[0].rstrip("-")
-                state["model_name"] = short_id
 
     # Directory — prefer workspace.current_dir, fall back to cwd
     workspace = payload.get("workspace")
@@ -580,6 +514,11 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(agent_id, str) and agent_id:
         state["agent_id"] = agent_id
 
+    # Transcript path (for overhead monitor Phase 2)
+    transcript_path = payload.get("transcript_path")
+    if isinstance(transcript_path, str) and transcript_path:
+        state["transcript_path"] = transcript_path
+
     return state
 
 
@@ -591,19 +530,9 @@ def _sanitize_fragment(text: str) -> str:
 
 
 def _format_cost(cost_usd: float) -> str:
-    """Format cost with appropriate precision.
-
-    Tiers: <=0 → "0.00", <$0.01 → cents (0.3¢), $0.01-$99 → 2 decimals, >=$100 → integer.
-    """
-    if cost_usd <= 0:
-        return "0.00"
+    """Format cost with appropriate precision."""
     if cost_usd < 0.01:
-        cents = cost_usd * 100
-        if cents < 0.1:
-            return f"{cents:.2f}\u00a2"
-        return f"{cents:.1f}\u00a2"
-    if cost_usd >= 100:
-        return f"{int(cost_usd)}"
+        return f"{cost_usd:.4f}"
     return f"{cost_usd:.2f}"
 
 
@@ -616,7 +545,7 @@ def _format_duration(duration_ms: int, fmt: str = "auto") -> str:
       "m"     — total minutes only: 2m, 75m
       "hms"   — hours, minutes, seconds: 0h 2m 30s, 1h 15m 0s
     """
-    seconds = max(0, duration_ms) // 1000
+    seconds = duration_ms // 1000
     minutes = seconds // 60
     hours = minutes // 60
     remaining_m = minutes % 60
@@ -647,9 +576,9 @@ def _abbreviate_count(n: int) -> str:
         return str(n)
     if n < 1_000_000:
         val = n / 1000
-        return f"{val:.1f}k" if round(val, 1) < 100 else f"{round(val)}k"
+        return f"{val:.1f}k" if val < 100 else f"{int(val)}k"
     val = n / 1_000_000
-    return f"{val:.1f}M" if round(val, 1) < 100 else f"{round(val)}M"
+    return f"{val:.1f}M" if val < 100 else f"{int(val)}M"
 
 
 def _pill(text: str, cfg: dict[str, Any], color: str | None = None,
@@ -674,49 +603,9 @@ def _pill(text: str, cfg: dict[str, Any], color: str | None = None,
     return style(text, c, bold)
 
 
-def _resolve_display_mode(theme: dict[str, Any], module_name: str) -> str:
-    """Resolve effective display mode for a module.
-
-    Priority: module-specific > global layout > default "both".
-    """
-    mod_cfg = theme.get(module_name, {})
-    mod_mode = mod_cfg.get("display_mode", "")
-    if mod_mode in ("icon", "text", "both"):
-        return mod_mode
-    global_mode = theme.get("layout", {}).get("display_mode", "both")
-    return global_mode if global_mode in ("icon", "text", "both") else "both"
-
-
-def _format_agent_label(glyph: str, label: str, count: int, mode: str) -> str:
-    """Format a single agent category label based on display mode."""
-    if mode == "icon":
-        return f"{glyph}{count}"
-    elif mode == "text":
-        return f"{label} {count}"
-    else:  # "both"
-        return f"{glyph}{label} {count}"
-
-
-def _build_agent_segments(state: dict[str, Any], cfg: dict[str, Any],
-                          mode: str) -> list[str]:
-    """Build display segments for each agent category with non-zero count."""
-    segments: list[str] = []
-    categories = [
-        ("claude_main_count", cfg.get("glyph", ""), cfg.get("label", "Claude")),
-        ("claude_sub_count", cfg.get("sub_glyph", ""), cfg.get("sub_label", "Sub")),
-        ("codex_main_count", cfg.get("codex_glyph", ""), cfg.get("codex_label", "Codex")),
-        ("codex_sub_count", cfg.get("codex_glyph", ""), cfg.get("codex_label", "Codex") + " Sub"),
-    ]
-    for state_key, glyph, label in categories:
-        count = state.get(state_key, 0)
-        if count > 0:
-            segments.append(_format_agent_label(glyph, label, count, mode))
-    return segments
-
-
 def format_tokens(input_tokens: int, output_tokens: int, theme: dict[str, Any]) -> str:
-    """Format token counts as ↑12.3k↓4.1k."""
-    text = f"\u2191{_abbreviate_count(input_tokens)}\u2193{_abbreviate_count(output_tokens)}"
+    """Format token counts as ↑12.3k ↓4.1k."""
+    text = f"\u2191{_abbreviate_count(input_tokens)} \u2193{_abbreviate_count(output_tokens)}"
     tok_cfg = theme.get("tokens", {})
     return _pill(text, tok_cfg, theme=theme)
 
@@ -725,7 +614,7 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
     """Render context progress bar with threshold coloring."""
     cfg = theme.get("context_bar", {})
     width = cfg.get("width", 10)
-    filled = min(width, max(0, round(pct * width / 100)))
+    filled = (pct * width) // 100
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
     warn_t = cfg.get("warn_threshold", 40.0)
@@ -753,17 +642,12 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
 
 
 def render_model(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render model name module with optional output style indicator."""
+    """Render model name module."""
     model_name = state.get("model_name")
     if not model_name:
         return None
     m_cfg = theme.get("model", {})
-    # Append output_style if non-default
-    style_name = state.get("output_style", "")
-    style_suffix = ""
-    if style_name and style_name != "default":
-        style_suffix = f":{style_name}"
-    text = f"{m_cfg.get('glyph', '')}{_sanitize_fragment(model_name)}{style_suffix}"
+    text = f"{m_cfg.get('glyph', '')}{_sanitize_fragment(model_name)}"
     return _pill(text, m_cfg, bold=m_cfg.get("bold", False), theme=theme)
 
 
@@ -803,56 +687,102 @@ def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
         else:
             parts.append(f"{branch}{dirty_marker}")
 
-    # Added dirs count (multi-directory scope)
-    added_dirs = state.get("added_dirs")
-    if isinstance(added_dirs, list) and len(added_dirs) > 0:
-        parts.append(f"+{len(added_dirs)}dir")
-
     glyph = d_cfg.get("glyph", "")
     text = f"{glyph}{' '.join(parts)}"
     is_stale = state.get("git_stale", False)
     return _pill(text, d_cfg, theme=theme, dim=is_stale)
 
 
+# ── Overhead Monitor: see src/context_overhead.py ───────────────────
+# Constants and functions imported at module top via context_overhead import.
+
+
 def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Render context health pill with progress bar and optional token counts.
 
-    Combines context bar + tokens into one pill:
-      󰋑 █████░░░░░ 15% ↑281k ↓141k
+    When overhead data is available, renders a dual-color bar:
+      ↑281k↓141k 󰋑 ███▓▓░░░░░ 15%
+    Where █=system overhead, ▓=conversation, ░=free.
+
+    Falls back to single-color bar when no overhead data exists.
     """
     if "context_used" not in state or "context_total" not in state:
         return None
-    if state["context_total"] <= 0:
-        return None
     cfg = theme.get("context_bar", {})
-    pct = max(0, min(100, round(state["context_used"] * 100 / state["context_total"])))
-    width = cfg.get("width", 10)
-    filled = min(width, max(0, round(pct * width / 100)))
-    bar = "\u2588" * filled + "\u2591" * (width - filled)
+    ctx_used = state["context_used"]
+    ctx_total = state["context_total"]
+    total_pct = (ctx_used * 100) // ctx_total if ctx_total > 0 else 0
+    width = cfg.get("width", 20)
+    if width <= 0:
+        # Auto-fill: compute from terminal width minus fixed content
+        # Glyph(~2) + token prefix(~14) + suffix(~16) + padding(~6) = ~38 chars
+        import shutil as _shutil
+        term_w = _shutil.get_terminal_size((120, 24)).columns
+        width = max(10, term_w - 45)
+    filled = (total_pct * width) // 100
 
+    # Dual-bar: composition of USED context (sys vs conv), scaled to filled width
+    has_overhead = "sys_overhead_tokens" in state
+    sys_blocks = conv_blocks = 0
+    raw_sys_pct = 0
+    if has_overhead:
+        sys_overhead = min(state["sys_overhead_tokens"], ctx_total)
+        raw_sys_pct = (sys_overhead * 100) // ctx_total if ctx_total > 0 else 0
+
+        if filled > 0 and ctx_used > 0:
+            # Scale system blocks proportionally within the filled portion
+            sys_ratio = min(sys_overhead / ctx_used, 1.0)
+            sys_blocks = round(sys_ratio * filled) if sys_overhead > 0 else 0
+            # Min-1-block only when system is genuinely dominant (>50% of used)
+            if sys_blocks == 0 and sys_overhead > 0 and filled > 0 and sys_ratio >= 0.5:
+                sys_blocks = 1
+            sys_blocks = min(sys_blocks, filled)
+            conv_blocks = filled - sys_blocks
+        free_blocks = width - filled
+        bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
+    else:
+        free_blocks = width - filled
+        bar = "\u2588" * filled + "\u2591" * free_blocks
+
+    # Threshold: system overhead vs total usage, more severe wins
     warn_t = cfg.get("warn_threshold", 40.0)
     crit_t = cfg.get("critical_threshold", 70.0)
+    sys_warn_t = cfg.get("sys_warn_threshold", 30.0)
+    sys_crit_t = cfg.get("sys_critical_threshold", 50.0)
 
-    # Remaining tokens suffix (e.g., "580k left")
-    remaining = state["context_total"] - state["context_used"]
-    remaining_str = f" {_abbreviate_count(max(0, remaining))}\u2190" if remaining > 0 else ""
+    # Determine severity level: 0=normal, 1=warn, 2=critical
+    total_sev = 2 if total_pct >= crit_t else (1 if total_pct >= warn_t else 0)
+    sys_sev = 0
+    if has_overhead:
+        sys_sev = 2 if raw_sys_pct >= sys_crit_t else (1 if raw_sys_pct >= sys_warn_t else 0)
+    sev = max(total_sev, sys_sev)
 
-    if pct >= crit_t:
-        suffix = f" {pct}%!{remaining_str}"
+    # Cache health: degraded forces warn severity, busting forces critical
+    source = state.get("sys_overhead_source", "")
+    cache_suffix = ""
+    if source == "measured":
+        if state.get("cache_busting") is True:
+            cache_suffix = "\U000f04bf"  # nf-md-lightning_bolt
+            sev = 2  # Force entire bar to critical
+        elif state.get("cache_degraded") is True:
+            sev = max(sev, 1)  # Force at least warn (produces ~ suffix)
+
+    if sev == 2:
+        suffix = f" {total_pct}%!{cache_suffix}"
         color = cfg.get("critical_color", "#d06070")
         bold = True
-    elif pct >= warn_t:
-        suffix = f" {pct}%~{remaining_str}"
+    elif sev == 1:
+        suffix = f" {total_pct}%~{cache_suffix}"
         color = cfg.get("warn_color", "#f0d399")
         bold = False
     else:
-        suffix = f" {pct}%{remaining_str}"
+        suffix = f" {total_pct}%{cache_suffix}"
         color = cfg.get("color", "#b5d4a0")
         bold = False
 
     glyph = cfg.get("glyph", "")
 
-    # Token counts before the glyph, no space between ↑ and ↓
+    # Token counts before the glyph
     token_prefix = ""
     if "input_tokens" in state and "output_tokens" in state:
         inp = state["input_tokens"]
@@ -860,8 +790,34 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         if inp > 0 or out > 0:
             token_prefix = f"\u2191{_abbreviate_count(inp)}\u2193{_abbreviate_count(out)} "
 
-    text = f"{token_prefix}{glyph}{bar}{suffix}"
+    if has_overhead and not NO_COLOR:
+        # Semantic bar coloring: segments derive from the computed severity color.
+        # sys blocks = darkened severity color (heavy/dim)
+        # conv blocks = severity color itself (active/bright)
+        # free blocks = muted gray (available)
+        # The entire bar shifts with health state: teal → yellow → red.
+        bg_hex = cfg.get("bg")
+        conv_color_hex = color  # severity color (teal/yellow/red)
+        sys_color_hex = _darken_hex(color, 0.65)  # same hue, darker
+        free_color_hex = "#4c566a"  # nord3 muted gray
+        pre = style(f" {token_prefix}{glyph}", color, bold, bg_hex)
+        bar_styled = ""
+        if sys_blocks > 0:
+            bar_styled += style("\u2588" * sys_blocks, sys_color_hex, bg_color=bg_hex)
+        if conv_blocks > 0:
+            bar_styled += style("\u2593" * conv_blocks, conv_color_hex, bg_color=bg_hex)
+        if free_blocks > 0:
+            bar_styled += style("\u2591" * free_blocks, free_color_hex, bg_color=bg_hex)
+        post = style(f"{suffix} ", color, bold, bg_hex)
+        pill_cfg = (theme or {}).get("pill", {})
+        left = pill_cfg.get("left", "")
+        right = pill_cfg.get("right", "")
+        inner = pre + bar_styled + post
+        if left and right and bg_hex:
+            return style(left, bg_hex) + inner + style(right, bg_hex)
+        return inner
 
+    text = f"{token_prefix}{glyph}{bar}{suffix}"
     return _pill(text, cfg, color, bold, theme)
 
 
@@ -870,25 +826,52 @@ def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     return None
 
 
+def render_sys_overhead(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render system overhead pill: 󰳲 27.4k"""
+    if "sys_overhead_tokens" not in state:
+        return None
+    cfg = theme.get("sys_overhead", {})
+    tokens = state["sys_overhead_tokens"]
+    glyph = cfg.get("glyph", "\U000f0cf2 ")
+    text = f"{glyph}{_abbreviate_count(tokens)}"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_cache_delta(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render per-turn cache write indicator.
+
+    Shows cache_creation_input_tokens from the most recent turn.
+    Spikes indicate large cache writes: skill loads, tool expansions,
+    compaction rebuilds, or large tool results being cached.
+    NOT limited to system overhead — includes conversation content.
+    """
+    last_cc = state.get("last_cache_create")
+    if not last_cc or last_cc <= 0:
+        return None
+    cfg = theme.get("cache_writes", {})
+    spike_t = cfg.get("spike_threshold", 5000)
+    notable_t = cfg.get("notable_threshold", 1000)
+
+    if last_cc > spike_t:
+        glyph = "\U000f04bf"  # nf-md-lightning_bolt
+        color = cfg.get("spike_color", "#bf616a")
+        text = f"{_abbreviate_count(last_cc)}{glyph}"
+    elif last_cc > notable_t:
+        color = cfg.get("notable_color", "#ebcb8b")
+        text = _abbreviate_count(last_cc)
+    else:
+        color = cfg.get("color", "#8fbcbb")
+        text = _abbreviate_count(last_cc)
+    return _pill(text, cfg, color, theme=theme)
+
+
 def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render cost module with threshold coloring and $/hr rate."""
+    """Render cost module with threshold coloring."""
     if "cost_usd" not in state:
         return None
     c_cfg = theme.get("cost", {})
     cost_val = state["cost_usd"]
-    # Compute $/hr rate when duration is available and >60s
-    rate_suffix = ""
-    duration_ms = state.get("duration_ms")
-    if isinstance(duration_ms, (int, float)) and duration_ms > 60_000 and cost_val > 0:
-        hours = duration_ms / 3_600_000
-        rate = cost_val / hours
-        rate_fmt = _format_cost(rate)
-        rate_prefix = "" if "\u00a2" in rate_fmt else "$"
-        rate_suffix = f" @{rate_prefix}{rate_fmt}/h"
-    formatted = _format_cost(cost_val)
-    # Skip $ glyph when cost uses ¢ notation to avoid "$0.1¢"
-    glyph = "" if "\u00a2" in formatted else c_cfg.get("glyph", "")
-    cost_text = f"{glyph}{formatted}{rate_suffix}"
+    cost_text = f"{c_cfg.get('glyph', '')}{_format_cost(cost_val)}"
     warn_t = c_cfg.get("warn_threshold", 2.0)
     crit_t = c_cfg.get("critical_threshold", 5.0)
     if cost_val >= crit_t:
@@ -911,61 +894,30 @@ def render_duration(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 # --- System Collectors ---
 
 
-def _collect_cpu_linux(state: dict[str, Any]) -> bool:
-    """Collect CPU from /proc/loadavg (Linux). Returns True on success."""
+def collect_cpu(state: dict[str, Any]) -> None:
+    """Collect CPU load as percentage from /proc/loadavg."""
     try:
         with open(os.path.join(PROC_DIR, "loadavg")) as f:
             content = f.read()
         if not content.strip():
-            return False
+            return
         load1 = float(content.split()[0])
         cpus = os.cpu_count()
         if cpus is None or cpus <= 0:
-            return False
-        pct = round(load1 / cpus * 100)
-        state["cpu_percent"] = max(0, min(100, pct))
-        return True
-    except Exception:
-        return False
-
-
-def _collect_cpu_macos(state: dict[str, Any]) -> bool:
-    """Collect CPU from sysctl vm.loadavg (macOS). Returns True on success."""
-    out = _run_cmd(["sysctl", "-n", "vm.loadavg"], timeout=0.05)
-    if out is None:
-        return False
-    # Output format: "{ 1.23 4.56 7.89 }" — extract 1-minute load
-    parts = out.strip().strip("{}").split()
-    if not parts:
-        return False
-    try:
-        load1 = float(parts[0])
-    except (ValueError, IndexError):
-        return False
-    cpus = os.cpu_count()
-    if cpus is None or cpus <= 0:
-        return False
-    pct = round(load1 / cpus * 100)
-    state["cpu_percent"] = max(0, min(100, pct))
-    return True
-
-
-def collect_cpu(state: dict[str, Any]) -> None:
-    """Collect CPU load as percentage. Tries /proc (Linux), falls back to sysctl (macOS)."""
-    try:
-        if not _collect_cpu_linux(state):
-            _collect_cpu_macos(state)
+            return
+        pct = int((load1 / cpus) * 100)
+        state["cpu_percent"] = max(0, min(999, pct))
     except Exception:
         return
 
 
-def _collect_memory_linux(state: dict[str, Any]) -> bool:
-    """Collect memory from /proc/meminfo (Linux). Returns True on success."""
+def collect_memory(state: dict[str, Any]) -> None:
+    """Collect memory usage percentage from /proc/meminfo."""
     try:
         with open(os.path.join(PROC_DIR, "meminfo")) as f:
             content = f.read()
         if not content.strip():
-            return False
+            return
         fields: dict[str, int] = {}
         for line in content.splitlines():
             parts = line.split(":")
@@ -980,91 +932,32 @@ def _collect_memory_linux(state: dict[str, Any]) -> bool:
             except ValueError:
                 continue
         if "MemTotal" not in fields or fields["MemTotal"] <= 0:
-            return False
+            return
         total = fields["MemTotal"]
         if "MemAvailable" in fields:
             available = fields["MemAvailable"]
         elif "MemFree" in fields:
             available = fields["MemFree"] + fields.get("Buffers", 0) + fields.get("Cached", 0)
         else:
-            return False
-        used = max(0, total - available)
-        pct = round(used * 100 / total)
+            return
+        used = total - available
+        pct = (used * 100) // total
         state["memory_percent"] = max(0, min(100, pct))
-        return True
-    except Exception:
-        return False
-
-
-def _collect_memory_macos(state: dict[str, Any]) -> bool:
-    """Collect memory from vm_stat + sysctl (macOS). Returns True on success."""
-    # Get total physical memory
-    hw_out = _run_cmd(["sysctl", "-n", "hw.memsize"], timeout=0.05)
-    if hw_out is None:
-        return False
-    try:
-        total_bytes = int(hw_out.strip())
-    except (ValueError, TypeError):
-        return False
-    if total_bytes <= 0:
-        return False
-    # Get page-level breakdown from vm_stat
-    vm_out = _run_cmd(["vm_stat"], timeout=0.05)
-    if vm_out is None:
-        return False
-    # Parse vm_stat output — each line: "Pages <type>:  <count>."
-    # Page size: parse from vm_stat header, fall back to OS (works on both Intel 4096 and ARM 16384)
-    import resource
-    page_size = resource.getpagesize()  # correct for running architecture
-    ps_line = vm_out.splitlines()[0] if vm_out.splitlines() else ""
-    if "page size of" in ps_line:
-        try:
-            page_size = int(ps_line.split("page size of")[1].strip().split()[0])
-        except (ValueError, IndexError):
-            pass
-    fields: dict[str, int] = {}
-    for line in vm_out.splitlines()[1:]:
-        if ":" not in line:
-            continue
-        key, _, val = line.partition(":")
-        key = key.strip()
-        val = val.strip().rstrip(".")
-        try:
-            fields[key] = int(val)
-        except ValueError:
-            continue
-    # Match Activity Monitor: Used = App Memory (anonymous) + Wired + Compressed.
-    # File-backed (cached) pages are instantly reclaimable and not "used" from
-    # a user perspective. top counts them as used, but AM doesn't — AM is what
-    # users expect when they see a memory percentage.
-    anonymous = fields.get("Anonymous pages", 0)
-    wired = fields.get("Pages wired down", 0)
-    compressor = fields.get("Pages occupied by compressor", 0)
-    used_bytes = (anonymous + wired + compressor) * page_size
-    pct = round(used_bytes * 100 / total_bytes)
-    state["memory_percent"] = max(0, min(100, pct))
-    return True
-
-
-def collect_memory(state: dict[str, Any]) -> None:
-    """Collect memory usage percentage. Tries /proc (Linux), falls back to vm_stat (macOS)."""
-    try:
-        if not _collect_memory_linux(state):
-            _collect_memory_macos(state)
     except Exception:
         return
 
 
-def collect_disk(state: dict[str, Any], path: str = "/") -> None:
+def collect_disk(state: dict[str, Any]) -> None:
     """Collect disk usage percentage via os.statvfs."""
     try:
+        path = getattr(collect_disk, "_path", "/")
         st = os.statvfs(path)
         total = st.f_blocks * st.f_frsize
         available = st.f_bavail * st.f_frsize
         if total <= 0:
             return
         used = total - available
-        pct = round(used * 100 / total)
+        pct = (used * 100) // total
         state["disk_percent"] = max(0, min(100, pct))
     except Exception:
         return
@@ -1103,72 +996,15 @@ def collect_git(state: dict[str, Any]) -> None:
     state["git_dirty"] = len(lines) > 1
 
 
-_SHELL_NAMES = frozenset({
-    "zsh", "-zsh", "bash", "-bash", "fish", "-fish", "sh", "-sh",
-    "login", "launchd", "init", "systemd", "sshd",
-})
-
-
 def collect_agents(state: dict[str, Any]) -> None:
-    """Detect running Claude/Codex instances with parent/child classification.
-
-    Uses a single ``ps`` call to get the full process table, then classifies:
-    - main: parent is a shell, login, init, or launchd
-    - sub-agent: parent is ``node`` whose parent is ``claude`` (spawn chain)
-    """
-    out = _run_cmd(["ps", "-eo", "pid=,ppid=,comm="], timeout=0.05)
-    if out is None:
-        return
-
-    # Build PID -> (PPID, comm_basename) map
-    pid_info: dict[int, tuple[int, str]] = {}
-    for line in out.splitlines():
-        parts = line.split(None, 2)
-        if len(parts) < 3:
-            continue
-        try:
-            pid = int(parts[0])
-            ppid = int(parts[1])
-        except ValueError:
-            continue
-        comm = parts[2].strip().rsplit("/", 1)[-1]  # basename
-        pid_info[pid] = (ppid, comm)
-
-    claude_main = 0
-    claude_sub = 0
-    codex_main = 0
-    codex_sub = 0
-
-    for pid, (ppid, comm) in pid_info.items():
-        if comm == "claude":
-            parent_comm = pid_info.get(ppid, (0, ""))[1]
-            if parent_comm in _SHELL_NAMES:
-                claude_main += 1
-            elif parent_comm == "node":
-                # Check grandparent for sub-agent pattern: claude -> node -> claude
-                gp_ppid = pid_info.get(ppid, (0, ""))[0]
-                gp_comm = pid_info.get(gp_ppid, (0, ""))[1]
-                if gp_comm == "claude":
-                    claude_sub += 1
-                else:
-                    claude_main += 1
-            else:
-                claude_main += 1
-        elif comm == "codex":
-            parent_comm = pid_info.get(ppid, (0, ""))[1]
-            if parent_comm in _SHELL_NAMES or parent_comm == "node":
-                codex_main += 1
-            else:
-                codex_sub += 1
-
-    total = claude_main + claude_sub + codex_main + codex_sub
-    if total > 0:
-        state["claude_main_count"] = claude_main
-        state["claude_sub_count"] = claude_sub
-        state["codex_main_count"] = codex_main
-        state["codex_sub_count"] = codex_sub
-        state["agent_total"] = total
-        state["agent_count"] = total  # backward compat
+    """Count running Codex instances via pgrep."""
+    count = 0
+    codex_out = _run_cmd(["pgrep", "-x", "codex"], timeout=0.05)
+    if codex_out:
+        codex_lines = [l for l in codex_out.splitlines() if l.strip()]
+        count += len(codex_lines)
+    if count > 0:
+        state["agent_count"] = count
 
 
 def collect_tmux(state: dict[str, Any]) -> None:
@@ -1233,9 +1069,7 @@ _CACHE_KEYS: dict[str, list[str]] = {
     "cpu": ["cpu_percent"],
     "memory": ["memory_percent"],
     "disk": ["disk_percent"],
-    "agents": ["claude_main_count", "claude_sub_count",
-               "codex_main_count", "codex_sub_count",
-               "agent_total", "agent_count"],
+    "agents": ["agent_count"],
     "tmux": ["tmux_sessions", "tmux_panes"],
 }
 
@@ -1293,11 +1127,10 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
         cfg = theme.get(name, {})
         if not cfg.get("enabled", True):
             continue
+        if name == "disk":
+            collect_disk._path = cfg.get("path", "/")
         try:
-            if name == "disk":
-                fn(state, path=cfg.get("path", "/"))
-            else:
-                fn(state)
+            fn(state)
             _cache_module(new_cache, state, name, now)
         except Exception:
             _apply_cached(state, cache, name, now)
@@ -1325,9 +1158,9 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
     warn_t = cfg.get("warn_threshold", 60.0)
     crit_t = cfg.get("critical_threshold", 85.0)
 
-    # Mini progress bar (clamp filled to width to prevent overflow)
+    # Mini progress bar
     width = cfg.get("width", 5)
-    filled = min(width, max(0, round(pct * width / 100)))
+    filled = (pct * width) // 100
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
     if state.get("_compact") and compact_label:
@@ -1368,48 +1201,21 @@ def render_disk(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_agents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render active agents module with optional process type breakdown.
-
-    Display modes (from display_mode config):
-      "both":  󰚩 Claude 3 │ 󰓁 Sub 2
-      "icon":  󰚩 3 │ 󰓁 2
-      "text":  Claude 3 │ Sub 2
-
-    When show_breakdown=False, falls back to single total.
-    """
-    total = state.get("agent_total", state.get("agent_count", 0))
-    if total <= 0:
+    """Render active agents count module."""
+    if "agent_count" not in state or state["agent_count"] <= 0:
         return None
-
     cfg = theme.get("agents", {})
+    count = state["agent_count"]
     show_t = cfg.get("show_threshold", 0)
-    if total <= show_t:
+    if count <= show_t:
         return None
-
-    is_stale = state.get("agents_stale", False)
-    show_breakdown = cfg.get("show_breakdown", True)
-    mode = _resolve_display_mode(theme, "agents")
-
-    if show_breakdown and "claude_main_count" in state:
-        segments = _build_agent_segments(state, cfg, mode)
-    else:
-        # Legacy single-count mode
-        segments = [_format_agent_label(cfg.get("glyph", ""),
-                                        cfg.get("label", "Claude"),
-                                        total, mode)]
-
-    inner_sep = cfg.get("inner_separator", " \u2502 ")
-    text = inner_sep.join(s for s in segments if s)
-
-    if not text:
-        return None
-
-    # Threshold coloring on total count
+    text = f"{cfg.get('glyph', '')}{count}"
     warn_t = cfg.get("warn_threshold", 5)
     crit_t = cfg.get("critical_threshold", 8)
-    if total >= crit_t:
+    is_stale = state.get("agents_stale", False)
+    if count >= crit_t:
         return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme, dim=is_stale)
-    elif total >= warn_t:
+    elif count >= warn_t:
         return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme, dim=is_stale)
     return _pill(text, cfg, theme=theme, dim=is_stale)
 
@@ -1549,6 +1355,8 @@ MODULE_RENDERERS: dict[str, Any] = {
     "dir": render_dir,
     "context_bar": render_context_bar,
     "tokens": render_tokens,
+    "sys_overhead": render_sys_overhead,
+    "cache_writes": render_cache_delta,
     "cost": render_cost,
     "duration": render_duration,
     "git": render_git,
@@ -1570,7 +1378,7 @@ MODULE_RENDERERS: dict[str, Any] = {
 }
 
 DEFAULT_LINE1 = ["model", "dir", "context_bar", "cost", "duration"]
-DEFAULT_LINE2 = ["cpu", "memory", "disk", "agents", "tmux"]
+DEFAULT_LINE2 = ["cpu", "memory", "disk"]
 DEFAULT_LINE3 = ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
                  "obs_prompts", "obs_tasks", "obs_subagents",
                  "obs_failures", "obs_compactions", "obs_health"]
@@ -1631,13 +1439,10 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
     if not parts:
         return ""
 
-    # Get terminal width — dynamic detection, with config as cap/override.
-    # Claude Code pipes statusline so stdout has no TTY; use tput for real width.
+    # Get terminal width — layout.max_width overrides auto-detection
+    # (Claude Code runs without a TTY, so auto-detect falls back to 80)
     layout_cfg = theme.get("layout", {})
-    term_width = _detect_terminal_width()
-    max_w = layout_cfg.get("max_width")
-    if max_w and max_w > 0:
-        term_width = min(term_width, max_w)
+    term_width = layout_cfg.get("max_width") or shutil.get_terminal_size((200, 24)).columns
 
     # Pack modules into rows
     rows: list[list[str]] = []
@@ -1676,7 +1481,7 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         theme = DEFAULT_THEME
 
     layout = theme.get("layout", {})
-    force_single = layout.get("force_single_line", True)
+    force_single = layout.get("force_single_line", False)
 
     # Collect all configured lines (line1, line2, line3, ...)
     has_any_line_key = any(layout.get(f"line{i}") is not None for i in range(1, 6))
@@ -1696,16 +1501,20 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
 
     state["_compact"] = force_single
 
-    # Merge all layout lines into one flat module list
-    merged: list[str] = []
-    for modules in layout_lines:
-        merged.extend(modules)
-
     if force_single:
-        # Single line — no wrapping, join everything with separator
-        return render_line(state, theme, merged)
-    # Multi-line — auto-wrap at detected terminal width
-    return _render_wrapped(state, theme, merged)
+        # Compact: merge all into one auto-wrapped line
+        merged: list[str] = []
+        for modules in layout_lines:
+            merged.extend(modules)
+        return _render_wrapped(state, theme, merged)
+
+    # Multi-line: render each layout line separately, enforce line breaks
+    rendered_lines: list[str] = []
+    for modules in layout_lines:
+        line = _render_wrapped(state, theme, modules)
+        if line:
+            rendered_lines.append(line)
+    return "\n".join(rendered_lines)
 
 
 # --- Observability snapshot ---
@@ -1902,6 +1711,14 @@ def main() -> None:
     state = normalize(payload)
     collect_system_data(state, theme)
     _inject_obs_counters(state, payload)
+    _cache_ctx = {
+        "load_cache": load_cache,
+        "save_cache": save_cache,
+        "cache_max_age": CACHE_MAX_AGE_S,
+        "obs_available": _OBS_AVAILABLE,
+        "resolve_package_root": resolve_package_root if _OBS_AVAILABLE else None,
+    }
+    inject_context_overhead(state, payload, theme, _cache_ctx)
     line = render(state, theme)
     _try_obs_snapshot(payload, state)
     if line:

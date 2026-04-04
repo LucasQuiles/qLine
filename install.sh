@@ -74,6 +74,39 @@ else
     echo "NOTE: obs_utils.py not found in repo — obs modules will be disabled"
 fi
 
+# Install context_overhead.py (overhead monitor module)
+OVERHEAD_SRC="$SCRIPT_DIR/src/context_overhead.py"
+OVERHEAD_DEST="$DEST_DIR/context_overhead.py"
+if [ -f "$OVERHEAD_SRC" ]; then
+    cp "$OVERHEAD_SRC" "$OVERHEAD_DEST"
+    echo "Installed: $OVERHEAD_DEST"
+fi
+
+# Install shared scripts (obs_utils.py, hook_utils.py)
+SCRIPTS_DIR="$DEST_DIR/scripts"
+mkdir -p "$SCRIPTS_DIR"
+for script in "$SCRIPT_DIR/scripts/"*.py; do
+    [ -f "$script" ] || continue
+    cp "$script" "$SCRIPTS_DIR/"
+    echo "Installed: $SCRIPTS_DIR/$(basename "$script")"
+done
+
+# Install observability hooks
+HOOKS_DIR="$DEST_DIR/hooks"
+mkdir -p "$HOOKS_DIR"
+HOOKS_INSTALLED=0
+for hook in "$SCRIPT_DIR/hooks/obs-"*.py; do
+    [ -f "$hook" ] || continue
+    cp "$hook" "$HOOKS_DIR/"
+    chmod +x "$HOOKS_DIR/$(basename "$hook")"
+    HOOKS_INSTALLED=$((HOOKS_INSTALLED + 1))
+done
+if [ "$HOOKS_INSTALLED" -gt 0 ]; then
+    echo "Installed: $HOOKS_INSTALLED observability hooks to $HOOKS_DIR/"
+else
+    echo "NOTE: No obs hooks found in repo — observability will be limited"
+fi
+
 # Fix shebang only if `python3` doesn't exist or is too old
 if ! command -v python3 > /dev/null 2>&1; then
     # python3 missing — use whatever we found
@@ -89,33 +122,6 @@ elif [ "$PYTHON" != "python3" ]; then
         sed -i "1s|.*|#!$REAL_PYTHON|" "$DEST"
         echo "Shebang updated to: #!$REAL_PYTHON"
     fi
-fi
-
-# --- Install hooks (observability) ---
-
-HOOKS_SRC="$SCRIPT_DIR/src/hooks"
-HOOKS_DEST="$DEST_DIR/hooks"
-
-if [ -d "$HOOKS_SRC" ]; then
-    mkdir -p "$HOOKS_DEST"
-    HOOK_COUNT=0
-    for hook in "$HOOKS_SRC"/obs-*.py; do
-        [ -f "$hook" ] || continue
-        # Skip temporary/probe scripts
-        case "$(basename "$hook")" in obs-contract-probe*) continue ;; esac
-        cp "$hook" "$HOOKS_DEST/"
-        chmod +x "$HOOKS_DEST/$(basename "$hook")"
-        HOOK_COUNT=$((HOOK_COUNT + 1))
-    done
-    # Install shared libraries where hooks import from (~/.claude/scripts/)
-    SCRIPTS_DIR="$DEST_DIR/scripts"
-    mkdir -p "$SCRIPTS_DIR"
-    cp "$HOOKS_SRC/hook_utils.py" "$SCRIPTS_DIR/"
-    if [ -f "$OBS_SRC" ]; then
-        cp "$OBS_SRC" "$SCRIPTS_DIR/"
-    fi
-    echo "Installed: $HOOK_COUNT hook scripts to $HOOKS_DEST/"
-    echo "Installed: hook_utils.py, obs_utils.py to $SCRIPTS_DIR/"
 fi
 
 # --- Patch settings.json ---
@@ -143,36 +149,6 @@ elif [ ! -f "$SETTINGS" ]; then
     echo "NOTE: $SETTINGS not found — creating minimal config"
     echo '{"statusLine":{"type":"command","command":"'"$DEST"'"}}' | jq . > "$SETTINGS" 2>/dev/null || \
     echo '{"statusLine":{"type":"command","command":"'"$DEST"'"}}' > "$SETTINGS"
-fi
-
-# --- Patch hooks into settings.json ---
-
-HOOKS_JSON="$HOOKS_SRC/hooks.json"
-if [ "$JQ_AVAILABLE" = true ] && [ -f "$SETTINGS" ] && [ -f "$HOOKS_JSON" ]; then
-    # Replace HOOKS_DIR placeholder with actual path
-    HOOKS_RESOLVED=$(sed "s|HOOKS_DIR|$HOOKS_DEST|g" "$HOOKS_JSON")
-
-    # Check if hooks key exists
-    if jq -e 'has("hooks")' "$SETTINGS" > /dev/null 2>&1; then
-        echo "hooks key already present in $SETTINGS — skipping hook registration"
-        echo "  To install obs hooks manually, merge src/hooks/hooks.json into your settings."
-    else
-        # Backup before modifying
-        HOOKS_BACKUP="$DEST_DIR/backups/hooks-install-$(date +%Y%m%d-%H%M%S)"
-        mkdir -p "$HOOKS_BACKUP"
-        cp "$SETTINGS" "$HOOKS_BACKUP/settings.json.bak"
-        echo "Backup: $HOOKS_BACKUP/settings.json.bak"
-
-        TMP=$(mktemp)
-        echo "$HOOKS_RESOLVED" | jq --slurpfile settings "$SETTINGS" '$settings[0] + {"hooks": .}' > "$TMP"
-        if jq -e '.' "$TMP" > /dev/null 2>&1; then
-            mv "$TMP" "$SETTINGS"
-            echo "Observability hooks registered in $SETTINGS"
-        else
-            rm -f "$TMP"
-            echo "WARNING: failed to register hooks — add them manually (see README)"
-        fi
-    fi
 fi
 
 # --- Post-install summary ---

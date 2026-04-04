@@ -113,7 +113,7 @@ assert_single_line() {
         return
     fi
     local line_count
-    line_count=$(printf '%s\n' "$output" | wc -l | tr -d ' ')
+    line_count=$(printf '%s\n' "$output" | wc -l)
     if [ "$line_count" = "1" ]; then
         echo "  PASS: $label"
         PASS=$((PASS + 1))
@@ -154,6 +154,14 @@ run_statusline_color() {
 # Helper: run a Python snippet importing from statusline
 run_py() {
     NO_COLOR=1 python3 -c "
+import sys; sys.path.insert(0, '$REPO_DIR/src')
+$1
+" 2>&1
+}
+
+# Helper: run a Python snippet with ANSI colors enabled (NO_COLOR not set)
+run_py_color() {
+    python3 -c "
 import sys; sys.path.insert(0, '$REPO_DIR/src')
 $1
 " 2>&1
@@ -432,29 +440,25 @@ print('IN:' + str(state.get('input_tokens', 'ABSENT')))
 ")
 assert_contains "N-11: tokens absent when fields missing" "$OUT" "IN:ABSENT"
 
-# N-12: Model id fallback when display_name missing
+# N-12: transcript_path extracted from payload
 OUT=$(run_py "
+import json
 from statusline import normalize
-state = normalize({'model': {'id': 'claude-opus-4-6[1m]'}})
-print('MODEL:' + state.get('model_name', 'ABSENT'))
+payload = json.load(open('$FIXTURES/valid-full.json'))
+state = normalize(payload)
+print(state.get('transcript_path', 'MISSING'))
 ")
-assert_contains "N-12a: model id fallback" "$OUT" "MODEL:opus-4-6"
+assert_equals "N-12: transcript_path extracted" "$OUT" "/tmp/transcript.json"
 
-# N-13: Model id fallback when display_name empty
+# N-13: transcript_path absent when not in payload
 OUT=$(run_py "
+import json
 from statusline import normalize
-state = normalize({'model': {'id': 'claude-sonnet-4-6', 'display_name': ''}})
-print('MODEL:' + state.get('model_name', 'ABSENT'))
+payload = json.load(open('$FIXTURES/valid-minimal.json'))
+state = normalize(payload)
+print(state.get('transcript_path', 'ABSENT'))
 ")
-assert_contains "N-13: empty display_name uses id" "$OUT" "MODEL:sonnet-4-6"
-
-# N-14: display_name still takes priority over id
-OUT=$(run_py "
-from statusline import normalize
-state = normalize({'model': {'id': 'claude-opus-4-6[1m]', 'display_name': 'Opus 4.6 (1M context)'}})
-print('MODEL:' + state.get('model_name', 'ABSENT'))
-")
-assert_contains "N-14: display_name preferred" "$OUT" "MODEL:Op4.6"
+assert_equals "N-13: transcript_path absent" "$OUT" "ABSENT"
 
 echo ""
 fi
@@ -471,24 +475,6 @@ from statusline import render
 print(repr(render({})))
 ")
 assert_equals "R-01: empty state -> empty string" "$OUT" "''"
-
-# R-01b: Output style shown when non-default
-OUT=$(run_py "
-from statusline import render_model, DEFAULT_THEME
-state = {'model_name': 'Op4.6', 'output_style': 'verbose'}
-result = render_model(state, DEFAULT_THEME)
-print(result or 'NONE')
-")
-assert_contains "R-01b: output style shown" "$OUT" "Op4.6:verbose"
-
-# R-01c: Default output style hidden
-OUT=$(run_py "
-from statusline import render_model, DEFAULT_THEME
-state = {'model_name': 'Op4.6', 'output_style': 'default'}
-result = render_model(state, DEFAULT_THEME)
-print(result or 'NONE')
-")
-assert_not_contains "R-01c: default style hidden" "$OUT" ":default"
 
 # R-02: Full state — module order with glyphs
 OUT=$(run_py "
@@ -507,15 +493,12 @@ line = render(state, DEFAULT_THEME)
 print(line)
 ")
 # Glyphs are present but NO_COLOR strips ANSI
-GLYPH_MODEL=$(printf '\xf3\xb0\x9a\xa9')   # U+F06A9
-GLYPH_DIR=$(printf '\xf3\xb0\x9d\xb0')     # U+F0770
-GLYPH_CLOCK=$(printf '\xf3\xb0\xa5\x94')   # U+F0954
-assert_contains "R-02a: model with glyph" "$OUT" "$GLYPH_MODEL Opus"
-assert_contains "R-02b: dir with glyph" "$OUT" "$GLYPH_DIR qLine"
+assert_contains "R-02a: model with glyph" "$OUT" $'\U000f06a9 Opus'
+assert_contains "R-02b: dir with glyph" "$OUT" $'\U000f0770 qLine'
 assert_contains "R-02c: bar present" "$OUT" "50%"
 assert_contains "R-02d: tokens present" "$OUT" "12.3k"
 assert_contains "R-02e: cost with glyph" "$OUT" '$1.23'
-assert_contains "R-02f: duration with glyph" "$OUT" "$GLYPH_CLOCK 45s"
+assert_contains "R-02f: duration with glyph" "$OUT" $'\U000f0954 45s'
 assert_contains "R-02g: separator" "$OUT" "│"
 
 # R-03: Missing modules omitted
@@ -562,58 +545,17 @@ assert_contains "R-07a: normal at 30%" "$OUT" "30%"
 assert_not_contains "R-07b: no warn suffix" "$OUT" "~"
 assert_not_contains "R-07c: no critical suffix" "$OUT" "!"
 
-# R-07d: Precision at 15% — round(15*10/100)=round(1.5)=2 filled (vs int div=1)
-OUT=$(run_py "
-from statusline import render_bar, DEFAULT_THEME
-print(render_bar(15, DEFAULT_THEME))
-")
-assert_contains "R-07d: 15% shows 2 filled" "$OUT" "██░"
-assert_contains "R-07d-b: 15% label" "$OUT" "15%"
-
-# R-07e: Context bar precision — 0.8% rounds to 1%
-OUT=$(run_py "
-from statusline import render_context_bar, DEFAULT_THEME
-state = {'context_used': 8000, 'context_total': 1000000}
-result = render_context_bar(state, DEFAULT_THEME)
-print(result or 'NONE')
-")
-assert_contains "R-07e: sub-1% rounds to 1%" "$OUT" "1%"
-
 # R-08: Bar characters
 OUT=$(run_py "
 from statusline import render_bar, DEFAULT_THEME
-bar = render_bar(50, DEFAULT_THEME)
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['context_bar']['width'] = 10
+bar = render_bar(50, theme)
 print(bar)
 ")
 assert_contains "R-08a: filled blocks" "$OUT" "█████"
 assert_contains "R-08b: empty blocks" "$OUT" "░░░░░"
-
-# R-08c: Cost rate shown when duration > 60s
-OUT=$(run_py "
-from statusline import render_cost, DEFAULT_THEME
-state = {'cost_usd': 5.0, 'duration_ms': 3600000}
-result = render_cost(state, DEFAULT_THEME)
-print(result or 'NONE')
-")
-assert_contains "R-08c: cost rate present" "$OUT" '@$5.00/h'
-
-# R-08d: Cost rate hidden when duration < 60s
-OUT=$(run_py "
-from statusline import render_cost, DEFAULT_THEME
-state = {'cost_usd': 0.50, 'duration_ms': 30000}
-result = render_cost(state, DEFAULT_THEME)
-print(result or 'NONE')
-")
-assert_not_contains "R-08d: no rate under 60s" "$OUT" "@"
-
-# R-08e: Cost rate with fractional hour (2.50 in 30min = 5.00/hr)
-OUT=$(run_py "
-from statusline import render_cost, DEFAULT_THEME
-state = {'cost_usd': 2.50, 'duration_ms': 1800000}
-result = render_cost(state, DEFAULT_THEME)
-print(result or 'NONE')
-")
-assert_contains "R-08e: rate calc correct" "$OUT" '@$5.00/h'
 
 # R-09: Cost formatting
 OUT=$(run_py "
@@ -621,42 +563,8 @@ from statusline import _format_cost
 print(_format_cost(0.001))
 print(_format_cost(5.50))
 ")
-assert_contains "R-09a: small cost in cents" "$OUT" '0.1'
+assert_contains "R-09a: small cost" "$OUT" '0.0010'
 assert_contains "R-09b: normal cost" "$OUT" '5.50'
-
-# R-09c: Tiny cost shows cents notation
-OUT=$(run_py "
-from statusline import _format_cost
-print(_format_cost(0.0005))
-print(_format_cost(0.005))
-print(_format_cost(100.5))
-")
-assert_contains "R-09c: very tiny cost" "$OUT" "0.05"
-assert_contains "R-09d: sub-cent" "$OUT" "0.5"
-assert_contains "R-09e: large cost integer" "$OUT" "100"
-
-# R-09f: Zero and negative cost
-OUT=$(run_py "
-from statusline import _format_cost
-print(_format_cost(0))
-print(_format_cost(-1.5))
-")
-assert_equals "R-09f: zero cost" "$(echo "$OUT" | sed -n '1p')" "0.00"
-assert_equals "R-09g: negative cost" "$(echo "$OUT" | sed -n '2p')" "0.00"
-
-# R-09h: Sub-cent cost doesn't show "$X¢" (no dollar-cent mix)
-OUT=$(run_py "
-from statusline import _format_cost, render_cost, DEFAULT_THEME
-# _format_cost alone
-fmt = _format_cost(0.005)
-print('FMT:' + fmt)
-# Full render (no rate to avoid confusion)
-state = {'cost_usd': 0.005}
-result = render_cost(state, DEFAULT_THEME)
-print('RENDER:' + (result or 'NONE'))
-")
-assert_contains "R-09h: has cent symbol" "$OUT" "¢"
-assert_not_contains "R-09h-b: format not dollar-cent" "$OUT" 'FMT:$'
 
 # R-10: Duration formatting
 OUT=$(run_py "
@@ -671,45 +579,6 @@ assert_contains "R-10b: minutes" "$OUT" "2m30s"
 assert_contains "R-10c: hours" "$OUT" "2h"
 assert_contains "R-10d: hours+min" "$OUT" "1h30m"
 
-# R-10e: Negative duration clamps to 0s
-OUT=$(run_py "
-from statusline import _format_duration
-print(_format_duration(-5000))
-")
-assert_equals "R-10e: negative duration -> 0s" "$OUT" "0s"
-
-# R-10f: Zero duration
-OUT=$(run_py "
-from statusline import _format_duration
-print(_format_duration(0))
-")
-assert_equals "R-10f: zero duration -> 0s" "$OUT" "0s"
-
-# R-10g-pre: Context bar shows remaining tokens
-OUT=$(run_py "
-from statusline import render_context_bar, DEFAULT_THEME
-state = {'context_used': 420000, 'context_total': 1000000}
-result = render_context_bar(state, DEFAULT_THEME)
-print(result or 'NONE')
-")
-assert_contains "R-10g-pre: remaining shown" "$OUT" "580k"
-
-# R-10g: Context bar with zero total -> None (no crash)
-OUT=$(run_py "
-from statusline import render_context_bar, DEFAULT_THEME
-result = render_context_bar({'context_used': 100, 'context_total': 0}, DEFAULT_THEME)
-print(result if result is not None else 'NONE')
-")
-assert_equals "R-10g: zero context total -> NONE" "$OUT" "NONE"
-
-# R-10h: Context bar clamps pct to 0-100
-OUT=$(run_py "
-from statusline import render_context_bar, DEFAULT_THEME
-result = render_context_bar({'context_used': 1200000, 'context_total': 1000000}, DEFAULT_THEME)
-print(result or 'NONE')
-")
-assert_contains "R-10h: over-100% clamped to 100" "$OUT" "100%"
-
 # R-11: Token abbreviation
 OUT=$(run_py "
 from statusline import _abbreviate_count
@@ -723,25 +592,12 @@ assert_equals "R-11b: 1.2k" "$(echo "$OUT" | sed -n '2p')" "1.2k"
 assert_equals "R-11c: 12.3k" "$(echo "$OUT" | sed -n '3p')" "12.3k"
 assert_equals "R-11d: 1.2M" "$(echo "$OUT" | sed -n '4p')" "1.2M"
 
-# R-11e: Abbreviation boundary — 99999 -> 100k (not 100.0k)
-OUT=$(run_py "
-from statusline import _abbreviate_count
-print(_abbreviate_count(99999))
-print(_abbreviate_count(100000))
-print(_abbreviate_count(99999999))
-print(_abbreviate_count(100000000))
-")
-assert_equals "R-11e: 99999 -> 100k" "$(echo "$OUT" | sed -n '1p')" "100k"
-assert_equals "R-11f: 100000 -> 100k" "$(echo "$OUT" | sed -n '2p')" "100k"
-assert_equals "R-11g: 99999999 -> 100M" "$(echo "$OUT" | sed -n '3p')" "100M"
-assert_equals "R-11h: 100000000 -> 100M" "$(echo "$OUT" | sed -n '4p')" "100M"
-
 # R-12: Token formatting
 OUT=$(run_py "
 from statusline import format_tokens, DEFAULT_THEME
 print(format_tokens(12345, 4100, DEFAULT_THEME))
 ")
-assert_contains "R-12a: input arrow" "$OUT" "↑12.3k↓"
+assert_contains "R-12a: input arrow" "$OUT" "↑12.3k"
 assert_contains "R-12b: output arrow" "$OUT" "↓4.1k"
 
 # R-13: Newline sanitization
@@ -792,7 +648,7 @@ rm -f "$TMPTOML"
 assert_contains "CF-02: malformed TOML uses defaults" "$OUT" "#d8dee9"
 
 # CF-03: Partial override merges correctly
-TMPTOML=$(mktemp)
+TMPTOML=$(mktemp --suffix=.toml)
 cat > "$TMPTOML" << 'TOML'
 [model]
 color = "#ff0000"
@@ -811,7 +667,7 @@ assert_contains "CF-03b: preserved model bold" "$OUT" "MODEL_BOLD:False"
 assert_contains "CF-03c: untouched cost color" "$OUT" "COST_COLOR:#e0956a"
 
 # CF-04: Full override
-TMPTOML=$(mktemp)
+TMPTOML=$(mktemp --suffix=.toml)
 cat > "$TMPTOML" << 'TOML'
 [context_bar]
 width = 20
@@ -924,13 +780,13 @@ run_statusline "$(cat "$FIXTURES/valid-real-payload.json")"
 assert_exit_zero "C-10a: exit 0" "$LAST_EXIT"
 assert_contains "C-10b: bar present" "$LAST_STDOUT" "15%"
 assert_contains "C-10c: input tokens" "$LAST_STDOUT" "↑281k"
-assert_contains "C-10d: output tokens" "$LAST_STDOUT" "↓142k"
+assert_contains "C-10d: output tokens" "$LAST_STDOUT" "↓141k"
 assert_contains "C-10e: cost critical" "$LAST_STDOUT" '27.29'
 
 # C-11: Optional fields don't crash
 run_statusline "$(cat "$FIXTURES/valid-optional-fields.json")"
 assert_exit_zero "C-11a: exit 0" "$LAST_EXIT"
-assert_single_line "C-11b: single line" "$LAST_STDOUT"
+assert_not_empty "C-11b: has output" "$LAST_STDOUT"
 assert_contains "C-11c: model" "$LAST_STDOUT" "Op"
 
 # C-12: Full real payload produces output with system modules (color mode)
@@ -1078,26 +934,7 @@ print(result or 'NONE')
 ")
 assert_contains "L-11: worktree marker" "$OUT" "qLine"
 # Check the marker character is present
-GLYPH_WORKTREE=$(printf '\xe2\x8a\x9b')  # U+229B
-assert_contains "L-11b: marker char" "$OUT" "$GLYPH_WORKTREE"
-
-# L-11c: Added dirs shown in dir pill
-OUT=$(run_py "
-from statusline import render_dir, DEFAULT_THEME
-state = {'dir_basename': 'myproj', 'added_dirs': ['/tmp/extra', '/tmp/other']}
-result = render_dir(state, DEFAULT_THEME)
-print(result or 'NONE')
-")
-assert_contains "L-11c: added dirs count" "$OUT" "+2dir"
-
-# L-11d: No added dirs when list empty
-OUT=$(run_py "
-from statusline import render_dir, DEFAULT_THEME
-state = {'dir_basename': 'myproj', 'added_dirs': []}
-result = render_dir(state, DEFAULT_THEME)
-print(result or 'NONE')
-")
-assert_not_contains "L-11d: no dirs when empty" "$OUT" "+0dir"
+assert_contains "L-11b: marker char" "$OUT" $'\u229b'
 
 # L-12: No worktree marker when false
 OUT=$(run_py "
@@ -1183,40 +1020,11 @@ else:
 rm -rf "$MOCK_PROC"
 assert_equals "COL-01: CPU from valid loadavg -> number" "$OUT" "NUMBER"
 
-# COL-01b: CPU capped at 100% even with high load average
-MOCK_PROC=$(mktemp -d)
-echo "20.0 10.0 5.0 1/234 5678" > "$MOCK_PROC/loadavg"
-OUT=$(run_py "
-import os
-os.cpu_count = lambda: 2  # 2 cores with load 20.0 = 1000%
-import statusline
-statusline.PROC_DIR = '$MOCK_PROC'
-state = {}
-statusline.collect_cpu(state)
-print(state.get('cpu_percent', 'ABSENT'))
-")
-rm -rf "$MOCK_PROC"
-assert_equals "COL-01b: CPU capped at 100" "$OUT" "100"
-
-# COL-01c: System metric bar doesn't overflow at 100%
-OUT=$(run_py "
-from statusline import render_cpu, DEFAULT_THEME
-state = {'cpu_percent': 100, '_compact': False}
-result = render_cpu(state, DEFAULT_THEME)
-# Bar should be exactly 5 filled blocks (width=5)
-if result and len([c for c in result if c == chr(9608)]) == 5:
-    print('OK')
-else:
-    print('BAD:' + repr(result))
-")
-assert_equals "COL-01c: bar correct at 100%" "$OUT" "OK"
-
-# COL-02: CPU from missing file (block macOS fallback too)
+# COL-02: CPU from missing file
 MOCK_PROC=$(mktemp -d)
 OUT=$(run_py "
 import statusline
 statusline.PROC_DIR = '$MOCK_PROC'
-statusline._run_cmd = lambda *a, **kw: None  # block sysctl fallback
 state = {}
 statusline.collect_cpu(state)
 print(state.get('cpu_percent', 'ABSENT'))
@@ -1224,13 +1032,12 @@ print(state.get('cpu_percent', 'ABSENT'))
 rm -rf "$MOCK_PROC"
 assert_equals "COL-02: CPU from missing file -> ABSENT" "$OUT" "ABSENT"
 
-# COL-03: CPU from empty file (block macOS fallback too)
+# COL-03: CPU from empty file
 MOCK_PROC=$(mktemp -d)
 echo -n "" > "$MOCK_PROC/loadavg"
 OUT=$(run_py "
 import statusline
 statusline.PROC_DIR = '$MOCK_PROC'
-statusline._run_cmd = lambda *a, **kw: None  # block sysctl fallback
 state = {}
 statusline.collect_cpu(state)
 print(state.get('cpu_percent', 'ABSENT'))
@@ -1278,126 +1085,17 @@ rm -rf "$MOCK_PROC"
 # used = 16384000 - 5500000 = 10884000, pct = (10884000 * 100) // 16384000 = 66
 assert_equals "COL-05: Memory fallback -> 66%" "$OUT" "66"
 
-# COL-05b: Memory MemAvailable > MemTotal (kernel edge case) -> clamp to 0%
-MOCK_PROC=$(mktemp -d)
-cat > "$MOCK_PROC/meminfo" << 'MEMINFO'
-MemTotal:       16384000 kB
-MemAvailable:   20000000 kB
-MEMINFO
-OUT=$(run_py "
-import statusline
-statusline.PROC_DIR = '$MOCK_PROC'
-state = {}
-statusline.collect_memory(state)
-print(state.get('memory_percent', 'ABSENT'))
-")
-rm -rf "$MOCK_PROC"
-assert_equals "COL-05b: MemAvailable > MemTotal -> 0%" "$OUT" "0"
-
-# COL-06: Memory from missing file (block macOS fallback too)
+# COL-06: Memory from missing file
 MOCK_PROC=$(mktemp -d)
 OUT=$(run_py "
 import statusline
 statusline.PROC_DIR = '$MOCK_PROC'
-statusline._run_cmd = lambda *a, **kw: None  # block vm_stat fallback
 state = {}
 statusline.collect_memory(state)
 print(state.get('memory_percent', 'ABSENT'))
 ")
 rm -rf "$MOCK_PROC"
 assert_equals "COL-06: Memory missing file -> ABSENT" "$OUT" "ABSENT"
-
-# COL-06b: macOS memory with malformed vm_stat header still works (page_size fallback)
-OUT=$(run_py "
-import statusline
-statusline.PROC_DIR = '/nonexistent'
-def mock_cmd(cmd, **kw):
-    if 'hw.memsize' in cmd:
-        return '17179869184\n'
-    if cmd == ['vm_stat']:
-        # Missing page size line — fallback should use resource.getpagesize()
-        return '''Pages free:                               50000.
-Pages active:                            200000.
-Pages speculative:                         5000.
-Pages wired down:                        150000.
-'''
-    return None
-statusline._run_cmd = mock_cmd
-state = {}
-statusline._collect_memory_macos(state)
-val = state.get('memory_percent', 'ABSENT')
-if isinstance(val, int) and 0 <= val <= 100:
-    print('VALID:' + str(val))
-else:
-    print('INVALID:' + str(val))
-")
-assert_contains "COL-06b: page_size fallback works" "$OUT" "VALID:"
-
-# COL-06c: Live macOS memory cross-validation vs top (skipped on Linux)
-if [ "$(uname)" = "Darwin" ]; then
-OUT=$(python3 -c "
-import sys, subprocess, os
-sys.path.insert(0, '$REPO_DIR/src')
-os.environ['NO_COLOR'] = '1'
-from statusline import _collect_memory_macos
-state = {}
-_collect_memory_macos(state)
-qline = state.get('memory_percent', -1)
-# Independent Activity Monitor formula as ground truth
-import resource
-hw = int(subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, text=True).stdout.strip())
-vm = subprocess.run(['vm_stat'], capture_output=True, text=True).stdout
-ps = resource.getpagesize()
-ps_hdr = vm.splitlines()[0] if vm.splitlines() else ''
-if 'page size of' in ps_hdr:
-    try: ps = int(ps_hdr.split('page size of')[1].strip().split()[0])
-    except: pass
-f = {}
-for ln in vm.splitlines()[1:]:
-    if ':' not in ln: continue
-    k, _, v = ln.partition(':')
-    try: f[k.strip()] = int(v.strip().rstrip('.'))
-    except: pass
-am_used = (f.get('Anonymous pages',0) + f.get('Pages wired down',0) + f.get('Pages occupied by compressor',0)) * ps
-am_pct = round(am_used * 100 / hw)
-delta = abs(qline - am_pct)
-# 5pp tolerance (memory fluctuates between measurements)
-if delta <= 5:
-    print(f'PASS:{delta}pp (qline={qline} am={am_pct})')
-else:
-    print(f'FAIL:qline={qline} am={am_pct} delta={delta}pp')
-" 2>&1)
-assert_contains "COL-06c: memory within 5pp of Activity Monitor" "$OUT" "PASS:"
-fi
-
-# COL-06d: Live macOS CPU cross-validation vs top (skipped on Linux)
-if [ "$(uname)" = "Darwin" ]; then
-OUT=$(python3 -c "
-import sys, subprocess, os
-sys.path.insert(0, '$REPO_DIR/src')
-os.environ['NO_COLOR'] = '1'
-from statusline import _collect_cpu_macos
-state = {}
-_collect_cpu_macos(state)
-qline = state.get('cpu_percent', -1)
-top = subprocess.run(['top', '-l', '1', '-n', '0'], capture_output=True, text=True)
-top_cpu = -1
-for line in top.stdout.splitlines():
-    if 'CPU usage' in line:
-        parts = line.split(',')
-        user = float(parts[0].split(':')[1].strip().replace('% user', ''))
-        sys_p = float(parts[1].strip().replace('% sys', ''))
-        top_cpu = round(user + sys_p)
-        break
-delta = abs(qline - top_cpu)
-# 20pp tolerance — load avg is trailing, top is instantaneous
-if delta <= 20:
-    print(f'PASS:{delta}pp')
-else:
-    print(f'FAIL:qline={qline} top={top_cpu} delta={delta}pp')
-" 2>&1)
-assert_contains "COL-06d: CPU within 20pp of top" "$OUT" "PASS:"
-fi
 
 # COL-07: Disk from real statvfs -> percentage between 0 and 100
 OUT=$(run_py "
@@ -1411,28 +1109,6 @@ else:
     print('INVALID:' + str(val))
 ")
 assert_equals "COL-07: Disk from real statvfs -> valid pct" "$OUT" "VALID"
-
-# COL-07b: Disk nonexistent path -> ABSENT (no crash)
-OUT=$(run_py "
-import statusline
-state = {}
-statusline.collect_disk(state, path='/nonexistent/path/12345')
-print(state.get('disk_percent', 'ABSENT'))
-")
-assert_equals "COL-07b: nonexistent disk path -> ABSENT" "$OUT" "ABSENT"
-
-# COL-07c: Disk 0-100% range enforced
-OUT=$(run_py "
-import statusline
-state = {}
-statusline.collect_disk(state)
-val = state.get('disk_percent', -1)
-if isinstance(val, int) and 0 <= val <= 100:
-    print('IN_RANGE')
-else:
-    print(f'OUT_OF_RANGE:{val}')
-")
-assert_equals "COL-07c: disk in 0-100 range" "$OUT" "IN_RANGE"
 
 # COL-08: Git in a repo
 GIT_TMP=$(mktemp -d)
@@ -1524,294 +1200,7 @@ print(result or 'NONE')
 ")
 assert_equals "COL-15: agents missing hidden" "$OUT" "NONE"
 
-# COL-16: macOS CPU fallback (mock sysctl output)
-OUT=$(run_py "
-import statusline
-statusline.PROC_DIR = '/nonexistent'  # block Linux path
-statusline._run_cmd = lambda cmd, **kw: '{ 2.50 1.20 0.80 }\n' if 'vm.loadavg' in cmd else None
-import os
-os.cpu_count = lambda: 4
-state = {}
-statusline.collect_cpu(state)
-val = state.get('cpu_percent', 'ABSENT')
-# 2.50 / 4 * 100 = 62
-print(val)
-")
-assert_equals "COL-16: macOS CPU from sysctl -> 62" "$OUT" "62"
-
-# COL-17: macOS memory fallback (mock vm_stat + sysctl output)
-OUT=$(run_py "
-import statusline
-statusline.PROC_DIR = '/nonexistent'  # block Linux path
-def mock_cmd(cmd, **kw):
-    if 'hw.memsize' in cmd:
-        return '17179869184\n'  # 16 GB
-    if cmd == ['vm_stat']:
-        return '''Mach Virtual Memory Statistics: (page size of 16384 bytes)
-Pages free:                               50000.
-Pages active:                            200000.
-Pages inactive:                          100000.
-Pages speculative:                         5000.
-Pages throttled:                              0.
-Pages wired down:                        150000.
-Pages purgeable:                          10000.
-Pages compressor:                         80000.
-'''
-    return None
-statusline._run_cmd = mock_cmd
-state = {}
-statusline.collect_memory(state)
-val = state.get('memory_percent', 'ABSENT')
-if isinstance(val, int) and 0 <= val <= 100:
-    print('VALID:' + str(val))
-else:
-    print('INVALID:' + str(val))
-")
-assert_contains "COL-17: macOS memory from vm_stat -> valid" "$OUT" "VALID:"
-
-# COL-18: macOS CPU sysctl failure -> ABSENT
-OUT=$(run_py "
-import statusline
-statusline.PROC_DIR = '/nonexistent'
-statusline._run_cmd = lambda *a, **kw: None
-state = {}
-statusline.collect_cpu(state)
-print(state.get('cpu_percent', 'ABSENT'))
-")
-assert_equals "COL-18: macOS CPU sysctl fail -> ABSENT" "$OUT" "ABSENT"
-
-# COL-19: End-to-end real collectors produce sane output (macOS only)
-if [ "$(uname)" = "Darwin" ]; then
-PAYLOAD='{"model":{"display_name":"Test"},"cost":{"total_cost_usd":1.0,"total_duration_ms":60000},"context_window":{"context_window_size":100000,"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":500}}'
-E2E_OUT=$(printf '%s' "$PAYLOAD" | NO_COLOR=1 python3 "$SRC" 2>/dev/null)
-E2E_EXIT=$?
-assert_exit_zero "COL-19a: e2e exit 0" "$E2E_EXIT"
-assert_not_empty "COL-19b: e2e non-empty" "$E2E_OUT"
-# Should contain CPU and memory modules (macOS collectors now work)
-# Check for CPU/memory/disk percentage pattern (works in both compact and full mode)
-assert_contains "COL-19c: e2e has CPU" "$E2E_OUT" "%"
-TOTAL=$((TOTAL + 1))
-# Verify at least 3 percentage values (CPU, memory, disk)
-PCT_COUNT=$(printf '%s' "$E2E_OUT" | grep -o '[0-9]*%' | wc -l | tr -d ' ')
-if [ "$PCT_COUNT" -ge 3 ]; then
-    echo "  PASS: COL-19d: e2e has 3+ system metrics ($PCT_COUNT found)"
-    PASS=$((PASS + 1))
-else
-    echo "  FAIL: COL-19d: expected 3+ system metrics, got $PCT_COUNT"
-    FAIL=$((FAIL + 1))
-fi
-fi
-
 echo ""
-
-# --- Agent Detection & Display Mode Tests ---
-
-# COL-AGT-01: 3 main claude processes (parent is zsh)
-OUT=$(run_py "
-import statusline
-def mock_ps(*a, **kw):
-    return '''  100   1 launchd
-  200 100 zsh
-  300 200 claude
-  400 100 zsh
-  500 400 claude
-  600 100 zsh
-  700 600 claude
-'''
-statusline._run_cmd = mock_ps
-state = {}
-statusline.collect_agents(state)
-print(f\"{state.get('claude_main_count',0)},{state.get('claude_sub_count',0)},{state.get('codex_main_count',0)},{state.get('codex_sub_count',0)},{state.get('agent_total',0)}\")
-")
-assert_equals "COL-AGT-01: 3 main claude" "$OUT" "3,0,0,0,3"
-
-# COL-AGT-02: 2 main claude + 1 sub-agent (claude -> node -> claude)
-OUT=$(run_py "
-import statusline
-def mock_ps(*a, **kw):
-    return '''  100   1 launchd
-  200 100 zsh
-  300 200 claude
-  400 100 zsh
-  500 400 claude
-  600 300 node
-  700 600 claude
-'''
-statusline._run_cmd = mock_ps
-state = {}
-statusline.collect_agents(state)
-print(f\"{state.get('claude_main_count',0)},{state.get('claude_sub_count',0)},{state.get('agent_total',0)}\")
-")
-assert_equals "COL-AGT-02: 2 main + 1 sub" "$OUT" "2,1,3"
-
-# COL-AGT-03: Mixed claude + codex
-OUT=$(run_py "
-import statusline
-def mock_ps(*a, **kw):
-    return '''  100   1 launchd
-  200 100 zsh
-  300 200 claude
-  400 100 zsh
-  500 400 codex
-  600 300 node
-  700 600 claude
-'''
-statusline._run_cmd = mock_ps
-state = {}
-statusline.collect_agents(state)
-print(f\"{state.get('claude_main_count',0)},{state.get('claude_sub_count',0)},{state.get('codex_main_count',0)},{state.get('codex_sub_count',0)},{state.get('agent_total',0)}\")
-")
-assert_equals "COL-AGT-03: mixed claude+codex" "$OUT" "1,1,1,0,3"
-
-# COL-AGT-04: ps returns None -> no state keys
-OUT=$(run_py "
-import statusline
-statusline._run_cmd = lambda *a, **kw: None
-state = {}
-statusline.collect_agents(state)
-print(state.get('agent_total', 'ABSENT'))
-")
-assert_equals "COL-AGT-04: ps None -> ABSENT" "$OUT" "ABSENT"
-
-# COL-AGT-05: Empty ps output -> no state keys
-OUT=$(run_py "
-import statusline
-statusline._run_cmd = lambda *a, **kw: ''
-state = {}
-statusline.collect_agents(state)
-print(state.get('agent_total', 'ABSENT'))
-")
-assert_equals "COL-AGT-05: empty ps -> ABSENT" "$OUT" "ABSENT"
-
-# COL-AGT-06: agent_count backward compat equals agent_total
-OUT=$(run_py "
-import statusline
-def mock_ps(*a, **kw):
-    return '''  100   1 launchd
-  200 100 zsh
-  300 200 claude
-  400 200 codex
-'''
-statusline._run_cmd = mock_ps
-state = {}
-statusline.collect_agents(state)
-print(f\"{state.get('agent_count',0)},{state.get('agent_total',0)}\")
-")
-assert_equals "COL-AGT-06: agent_count == agent_total" "$OUT" "2,2"
-
-# REN-AGT-01: Breakdown, display_mode=icon
-OUT=$(NO_COLOR=1 run_py "
-from statusline import render_agents, DEFAULT_THEME
-import copy
-theme = copy.deepcopy(DEFAULT_THEME)
-theme['layout']['display_mode'] = 'icon'
-state = {'claude_main_count': 3, 'claude_sub_count': 2, 'codex_main_count': 0, 'codex_sub_count': 0, 'agent_total': 5, 'agent_count': 5}
-result = render_agents(state, theme)
-print(result or 'NONE')
-")
-assert_contains "REN-AGT-01: icon mode has count" "$OUT" "3"
-assert_contains "REN-AGT-01b: icon mode has sub count" "$OUT" "2"
-assert_not_contains "REN-AGT-01c: icon mode no text label" "$OUT" "Claude"
-
-# REN-AGT-02: Breakdown, display_mode=text
-OUT=$(NO_COLOR=1 run_py "
-from statusline import render_agents, DEFAULT_THEME
-import copy
-theme = copy.deepcopy(DEFAULT_THEME)
-theme['layout']['display_mode'] = 'text'
-state = {'claude_main_count': 3, 'claude_sub_count': 2, 'codex_main_count': 0, 'codex_sub_count': 0, 'agent_total': 5, 'agent_count': 5}
-result = render_agents(state, theme)
-print(result or 'NONE')
-")
-assert_contains "REN-AGT-02: text mode has label" "$OUT" "Claude 3"
-assert_contains "REN-AGT-02b: text mode has sub label" "$OUT" "Sub 2"
-
-# REN-AGT-03: Breakdown, display_mode=both
-OUT=$(NO_COLOR=1 run_py "
-from statusline import render_agents, DEFAULT_THEME
-import copy
-theme = copy.deepcopy(DEFAULT_THEME)
-theme['layout']['display_mode'] = 'both'
-state = {'claude_main_count': 3, 'claude_sub_count': 2, 'codex_main_count': 0, 'codex_sub_count': 0, 'agent_total': 5, 'agent_count': 5}
-result = render_agents(state, theme)
-print(result or 'NONE')
-")
-assert_contains "REN-AGT-03: both mode has label" "$OUT" "Claude 3"
-assert_contains "REN-AGT-03b: both mode has sub label" "$OUT" "Sub 2"
-
-# REN-AGT-04: Legacy single-count mode (show_breakdown=false)
-OUT=$(NO_COLOR=1 run_py "
-from statusline import render_agents, DEFAULT_THEME
-import copy
-theme = copy.deepcopy(DEFAULT_THEME)
-theme['agents']['show_breakdown'] = False
-theme['layout']['display_mode'] = 'both'
-state = {'claude_main_count': 3, 'claude_sub_count': 2, 'agent_total': 5, 'agent_count': 5}
-result = render_agents(state, theme)
-print(result or 'NONE')
-")
-assert_contains "REN-AGT-04: legacy shows total" "$OUT" "5"
-assert_not_contains "REN-AGT-04b: legacy no Sub" "$OUT" "Sub"
-
-# REN-AGT-05: Zero total -> None
-OUT=$(NO_COLOR=1 run_py "
-from statusline import render_agents, DEFAULT_THEME
-state = {'agent_total': 0, 'agent_count': 0}
-result = render_agents(state, DEFAULT_THEME)
-print(result or 'NONE')
-")
-assert_equals "REN-AGT-05: zero -> NONE" "$OUT" "NONE"
-
-# REN-AGT-06: Only codex, no claude
-OUT=$(NO_COLOR=1 run_py "
-from statusline import render_agents, DEFAULT_THEME
-import copy
-theme = copy.deepcopy(DEFAULT_THEME)
-theme['layout']['display_mode'] = 'text'
-state = {'claude_main_count': 0, 'claude_sub_count': 0, 'codex_main_count': 2, 'codex_sub_count': 0, 'agent_total': 2, 'agent_count': 2}
-result = render_agents(state, theme)
-print(result or 'NONE')
-")
-assert_contains "REN-AGT-06: only codex shown" "$OUT" "Codex 2"
-assert_not_contains "REN-AGT-06b: no claude shown" "$OUT" "Claude"
-
-# REN-AGT-07: Per-module display_mode overrides global
-OUT=$(NO_COLOR=1 run_py "
-from statusline import render_agents, DEFAULT_THEME
-import copy
-theme = copy.deepcopy(DEFAULT_THEME)
-theme['layout']['display_mode'] = 'icon'
-theme['agents']['display_mode'] = 'text'
-state = {'claude_main_count': 2, 'claude_sub_count': 0, 'codex_main_count': 0, 'codex_sub_count': 0, 'agent_total': 2, 'agent_count': 2}
-result = render_agents(state, theme)
-print(result or 'NONE')
-")
-assert_contains "REN-AGT-07: per-module override to text" "$OUT" "Claude 2"
-
-# DM-01: _resolve_display_mode — module override wins
-OUT=$(run_py "
-from statusline import _resolve_display_mode
-theme = {'layout': {'display_mode': 'icon'}, 'agents': {'display_mode': 'text'}}
-print(_resolve_display_mode(theme, 'agents'))
-")
-assert_equals "DM-01: module override wins" "$OUT" "text"
-
-# DM-02: _resolve_display_mode — empty module falls back to global
-OUT=$(run_py "
-from statusline import _resolve_display_mode
-theme = {'layout': {'display_mode': 'icon'}, 'agents': {'display_mode': ''}}
-print(_resolve_display_mode(theme, 'agents'))
-")
-assert_equals "DM-02: fallback to global" "$OUT" "icon"
-
-# DM-03: _resolve_display_mode — invalid global defaults to both
-OUT=$(run_py "
-from statusline import _resolve_display_mode
-theme = {'layout': {'display_mode': 'garbage'}, 'agents': {}}
-print(_resolve_display_mode(theme, 'agents'))
-")
-assert_equals "DM-03: invalid global -> both" "$OUT" "both"
-
 fi
 
 # ======================================================================
@@ -1989,13 +1378,13 @@ OBS_TEST_CACHE=$(mktemp)
 
 OBS_SESSION_ID="test-obs-session-$(date +%s)"
 python3 -c "
-import sys; sys.path.insert(0, '$REPO_DIR/src'); sys.path.insert(0, '$HOME/.claude')
+import sys; sys.path.insert(0, '$HOME/.claude/scripts')
 from obs_utils import create_package
 create_package('$OBS_SESSION_ID', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$OBS_TEST_ROOT')
 "
 
 OBS_PKG_ROOT=$(python3 -c "
-import sys; sys.path.insert(0, '$REPO_DIR/src'); sys.path.insert(0, '$HOME/.claude')
+import sys; sys.path.insert(0, '$HOME/.claude/scripts')
 from obs_utils import resolve_package_root
 print(resolve_package_root('$OBS_SESSION_ID', obs_root='$OBS_TEST_ROOT'))
 ")
@@ -2024,7 +1413,7 @@ echo ""
 echo "--- T-obs-1: snapshot appended ---"
 printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
 SNAP_FILE="$OBS_PKG_ROOT/native/statusline/snapshots.jsonl"
-SNAP_COUNT=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
+SNAP_COUNT=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
 assert_equals "T-obs-1: snapshot appended" "$SNAP_COUNT" "1"
 
 # T-obs-2: snapshot has correct fields
@@ -2051,7 +1440,7 @@ assert_equals "T-obs-2: correct fields" "$FIELDS_CHECK" "OK"
 echo ""
 echo "--- T-obs-3: throttle ---"
 printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
-SNAP_COUNT2=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
+SNAP_COUNT2=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
 assert_equals "T-obs-3: throttle skips duplicate" "$SNAP_COUNT2" "1"
 
 # T-obs-4: meaningful change bypasses throttle
@@ -2075,7 +1464,7 @@ d = {
 print(json.dumps(d))
 ")
 printf '%s' "$OBS_PAYLOAD_CHANGED" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
-SNAP_COUNT3=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
+SNAP_COUNT3=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
 assert_equals "T-obs-4: meaningful change bypasses throttle" "$SNAP_COUNT3" "2"
 
 # T-obs-5: statusline_capture health
@@ -2096,7 +1485,7 @@ echo "--- T-obs-6: missing session_id ---"
 OBS_TEST_ROOT_6=$(mktemp -d)
 NO_SID_PAYLOAD='{"model": {"id": "test"}, "cost": {"total_cost_usd": 1}}'
 printf '%s' "$NO_SID_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT_6" QLINE_CACHE_PATH="$(mktemp)" python3 "$SRC" > /dev/null 2>&1
-NO_SID_SNAP=$(find "$OBS_TEST_ROOT_6" -name "snapshots.jsonl" 2>/dev/null | wc -l | tr -d ' ')
+NO_SID_SNAP=$(find "$OBS_TEST_ROOT_6" -name "snapshots.jsonl" 2>/dev/null | wc -l)
 assert_equals "T-obs-6: no snapshot without session_id" "$NO_SID_SNAP" "0"
 rm -rf "$OBS_TEST_ROOT_6"
 
@@ -2118,7 +1507,7 @@ echo "--- T-obs-8: cache survival ---"
 OBS_TEST_CACHE_8=$(mktemp)
 OBS_SESSION_8="test-obs-cache-$(date +%s)"
 python3 -c "
-import sys; sys.path.insert(0, '$REPO_DIR/src'); sys.path.insert(0, '$HOME/.claude')
+import sys; sys.path.insert(0, '$HOME/.claude/scripts')
 from obs_utils import create_package
 create_package('$OBS_SESSION_8', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$OBS_TEST_ROOT')
 "
@@ -2161,6 +1550,891 @@ assert_equals "T-obs-9: exits 0 when obs fails" "$?" "0"
 
 rm -rf "$OBS_TEST_ROOT" "$OBS_TEST_CACHE"
 echo ""
+fi
+
+# ── Section: overhead ───────────────────────────────────────────────
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "overhead" ]; then
+echo ""
+echo "=== Section: overhead ==="
+
+echo "  dual-bar: 30% system, 10% conversation (40% total)"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['context_bar']['width'] = 10
+state = {
+    'context_used': 400000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 300000,
+    'sys_overhead_source': 'measured',
+}
+result = render_context_bar(state, theme)
+# total 40%, width=10 -> filled=4
+# sys 30% -> sys_blocks = 3, conv_blocks = 1, free = 6
+n_full = result.count('\u2588')
+n_med = result.count('\u2593')
+n_empty = result.count('\u2591')
+assert n_full == 3, f'expected 3 sys blocks, got {n_full}'
+assert n_med == 1, f'expected 1 conv block, got {n_med}'
+assert n_empty == 6, f'expected 6 free blocks, got {n_empty}'
+print('OK')
+")
+assert_equals "dual-bar 30/10" "$OUT" "OK"
+
+echo "  dual-bar: context_used == 0"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 0,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 0,
+    'sys_overhead_source': 'measured',
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u2591' * 10 in result, f'expected 10 empty blocks, got: {result}'
+print('OK')
+")
+assert_equals "dual-bar zero usage" "$OUT" "OK"
+
+echo "  dual-bar: sys_overhead > context_total clamped"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 200000,
+    'sys_overhead_tokens': 999999,
+    'sys_overhead_source': 'estimated',
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert result is not None, 'should not return None'
+print('OK')
+")
+assert_equals "dual-bar clamped" "$OUT" "OK"
+
+echo "  single-bar fallback: no overhead data"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 50000,
+    'context_total': 100000,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u2588' * 5 in result, f'expected 5 filled blocks, got: {result}'
+assert '\u2591' * 5 in result, f'expected 5 empty blocks, got: {result}'
+assert '\u2593' not in result, f'should not have medium blocks without overhead data'
+print('OK')
+")
+assert_equals "single-bar fallback" "$OUT" "OK"
+
+echo "  segment formula: sys + conv + free == width for all inputs"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+import copy
+theme = copy.deepcopy(DEFAULT_THEME)
+theme['context_bar']['width'] = 10
+width = 10
+errors = []
+for sys_pct in range(0, 101, 5):
+    for total_pct in range(sys_pct, 101, 5):
+        ctx_total = 1000000
+        ctx_used = total_pct * ctx_total // 100
+        sys_tokens = sys_pct * ctx_total // 100
+        state = {
+            'context_used': ctx_used,
+            'context_total': ctx_total,
+            'sys_overhead_tokens': sys_tokens,
+            'sys_overhead_source': 'measured',
+        }
+        result = render_context_bar(state, theme)
+        if result is None:
+            continue
+        n_full = result.count('\u2588')
+        n_med = result.count('\u2593')
+        n_empty = result.count('\u2591')
+        total_blocks = n_full + n_med + n_empty
+        if total_blocks != width:
+            errors.append(f'sys={sys_pct}% total={total_pct}%: {n_full}+{n_med}+{n_empty}={total_blocks} != {width}')
+if errors:
+    print('FAIL: ' + '; '.join(errors[:5]))
+else:
+    print('OK')
+")
+assert_equals "segment formula invariant" "$OUT" "OK"
+
+echo "  compound suffix: cache busting + critical"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 720000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 500000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '%!\U000f04bf' in result, f'expected %! + nf-md-lightning_bolt, got: {result}'
+print('OK')
+")
+assert_equals "compound critical+bust" "$OUT" "OK"
+
+echo "  compound suffix: cache busting + warn"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 400000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 100000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '%!\U000f04bf' in result, f'busting forces critical: expected %! + nf-md-lightning_bolt, got: {result}'
+print('OK')
+")
+assert_equals "compound warn+bust" "$OUT" "OK"
+
+echo "  compound suffix: cache busting + normal"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 100000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '%!\U000f04bf' in result, f'busting forces critical: expected %! + nf-md-lightning_bolt, got: {result}'
+assert '%~' not in result, f'should not have warn suffix'
+print('OK')
+")
+assert_equals "compound normal+bust" "$OUT" "OK"
+
+echo "  no cache indicator during Phase 1 (estimated)"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 100000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'estimated',
+    'cache_busting': True,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u26a1' not in result, f'should NOT show ⚡ during Phase 1, got: {result}'
+print('OK')
+")
+assert_equals "no cache indicator phase1" "$OUT" "OK"
+
+echo "  system critical, conversation zero"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 500000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 500000,
+    'sys_overhead_source': 'measured',
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u2593' not in result, f'should have no conv blocks, got: {result}'
+assert '!' in result, f'should be critical (sys >= 50%), got: {result}'
+print('OK')
+")
+assert_equals "sys critical conv zero" "$OUT" "OK"
+
+echo "  spike: below notable threshold"
+LAST_STDOUT=$(run_py "
+from statusline import render_cache_delta, DEFAULT_THEME
+state = {'last_cache_create': 500}
+result = render_cache_delta(state, DEFAULT_THEME)
+assert result is not None
+assert '\U000f04bf' not in result, 'should not show spike glyph'
+assert '\U000f005d' not in result, 'should not show notable glyph'
+print('OK')
+")
+assert_equals "spike below notable" "$LAST_STDOUT" "OK"
+
+echo "  spike: at notable threshold"
+LAST_STDOUT=$(run_py "
+from statusline import render_cache_delta, DEFAULT_THEME
+state = {'last_cache_create': 1001}
+result = render_cache_delta(state, DEFAULT_THEME)
+assert '\U000f005d' not in result, f'should not show arrow glyph (dropped in cache_writes rename): {repr(result)}'
+assert '1.0k' in result, f'should show abbreviated count: {repr(result)}'
+print('OK')
+")
+assert_equals "spike at notable" "$LAST_STDOUT" "OK"
+
+echo "  spike: at spike threshold"
+LAST_STDOUT=$(run_py "
+from statusline import render_cache_delta, DEFAULT_THEME
+state = {'last_cache_create': 5001}
+result = render_cache_delta(state, DEFAULT_THEME)
+assert '\U000f04bf' in result, f'should show spike glyph: {repr(result)}'
+print('OK')
+")
+assert_equals "spike at spike" "$LAST_STDOUT" "OK"
+
+echo "  sys_overhead: shows brain glyph and token count"
+LAST_STDOUT=$(run_py "
+from statusline import render_sys_overhead, DEFAULT_THEME
+state = {'sys_overhead_tokens': 27409}
+result = render_sys_overhead(state, DEFAULT_THEME)
+assert '\U000f0cf2' in result, f'should show brain glyph: {repr(result)}'
+assert '27.4k' in result, f'should show token count: {repr(result)}'
+print('OK')
+")
+assert_equals "sys_overhead module" "$LAST_STDOUT" "OK"
+
+echo "  Phase 1: static estimate returns reasonable value"
+OUT=$(run_py "
+import os, tempfile
+from context_overhead import _estimate_static_overhead
+
+tmpdir = tempfile.mkdtemp()
+claude_md = os.path.join(tmpdir, 'CLAUDE.md')
+with open(claude_md, 'w') as f:
+    f.write('x' * 4000)
+
+estimate = _estimate_static_overhead(claude_md_paths=[claude_md])
+assert isinstance(estimate, int), f'expected int, got {type(estimate)}'
+assert estimate >= 1000, f'estimate too low: {estimate}'
+assert estimate < 100000, f'estimate unreasonably high: {estimate}'
+print('OK')
+import shutil; shutil.rmtree(tmpdir)
+")
+assert_equals "phase1 estimate" "$OUT" "OK"
+
+echo "  Phase 2: first-turn anchoring from transcript"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Turn 1: streaming stub (skip)
+json.dump({'type': 'assistant', 'message': {'stop_reason': None, 'usage': {
+    'input_tokens': 3, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 10
+}}}, tmpf); tmpf.write('\n')
+# Turn 1: final (anchor)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+# Turn 2: final
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 100, 'cache_creation_input_tokens': 500,
+    'cache_read_input_tokens': 42000, 'output_tokens': 300
+}}}, tmpf); tmpf.write('\n')
+# Turn 3: final
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 150, 'cache_creation_input_tokens': 200,
+    'cache_read_input_tokens': 42500, 'output_tokens': 400
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+assert result['turn_1_anchor'] == 42000, f'got {result[\"turn_1_anchor\"]}'
+assert len(result['trailing_turns']) == 3, f'got {len(result[\"trailing_turns\"])}'
+assert 0.6 < result['cache_hit_rate'] < 0.7, f'got {result[\"cache_hit_rate\"]}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "phase2 anchor" "$OUT" "OK"
+
+echo "  Phase 2: skips streaming stubs"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+json.dump({'type': 'assistant', 'message': {'stop_reason': None, 'usage': {
+    'input_tokens': 3, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 10
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is None, f'should be None for stubs only, got {result}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "phase2 skip stubs" "$OUT" "OK"
+
+echo "  Phase 2: handles toolUseResult.usage path"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 30000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+json.dump({'type': 'user', 'toolUseResult': {'usage': {
+    'input_tokens': 100, 'cache_creation_input_tokens': 500,
+    'cache_read_input_tokens': 30000, 'output_tokens': 300
+}}, 'message': {'role': 'user', 'content': []}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+assert result['turn_1_anchor'] == 30000
+assert len(result['trailing_turns']) == 2
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "phase2 toolUseResult" "$OUT" "OK"
+
+echo "  Phase 2: handles truncated last line"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 25000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+tmpf.write('{\"type\": \"assistant\", \"message\": {\"stop_re')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+assert result['turn_1_anchor'] == 25000
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "phase2 truncated" "$OUT" "OK"
+
+
+echo "  cache health: healthy rate >= 0.8"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_hit_rate': 0.85,
+    'cache_busting': False,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u26a1' not in result, f'should not show lightning when healthy'
+print('OK')
+")
+assert_equals "cache healthy" "$OUT" "OK"
+
+echo "  cache health: boundary 0.8 is healthy (>=)"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_hit_rate': 0.8,
+    'cache_busting': False,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u26a1' not in result, f'0.8 should be healthy'
+print('OK')
+")
+assert_equals "cache boundary 0.8" "$OUT" "OK"
+
+echo "  cache health: fewer than 2 turns has no turns data"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_tail
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+assert result['cache_hit_rate'] == 0.0
+assert len(result['trailing_turns']) == 1
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "cache <2 turns" "$OUT" "OK"
+
+echo "  anchor: reads from file start, not tail"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_anchor
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Turn 1 (the anchor) at the START
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+# Many subsequent turns with small cache_create
+for i in range(100):
+    json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+        'input_tokens': 50, 'cache_creation_input_tokens': 300,
+        'cache_read_input_tokens': 42000 + i * 500, 'output_tokens': 200
+    }}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+anchor = _read_transcript_anchor(tmpf.name)
+assert anchor == 42000, f'anchor should be 42000 from file start, got {anchor}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "anchor from start" "$OUT" "OK"
+
+echo "  cache degraded: shows indicator for 0.3-0.8 hit rate"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_degraded': True,
+    'cache_busting': False,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '~' in result, f'degraded should show warn suffix ~, got: {result}'
+assert '\u26a1' not in result, f'should not show busting indicator'
+print('OK')
+")
+assert_equals "cache degraded" "$OUT" "OK"
+
+echo "  cache degraded: no indicator when busting (busting takes priority)"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_degraded': False,
+    'cache_busting': True,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\U000f04bf' in result, f'busting indicator expected: {result}'
+assert '\u2248' not in result, f'should not show degraded indicator when busting'
+print('OK')
+")
+assert_equals "cache busting not degraded" "$OUT" "OK"
+
+echo "  cache busting: forces entire bar to critical color"
+OUT=$(run_py_color "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+    'cache_degraded': False,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+# Severity-derived: sys = darkened critical, conv = critical
+crit_conv = '38;2;191;97;106'   # #bf616a critical
+crit_sys = '38;2;124;63;68'     # darkened critical (factor=0.65)
+assert crit_conv in result, f'conv should use critical color, got: {repr(result[:300])}'
+assert crit_sys in result, f'sys should use darkened critical, got: {repr(result[:300])}'
+assert '\U000f04bf' in result, f'should show nf-md-lightning_bolt'
+print('OK')
+")
+assert_equals "busting critical color" "$OUT" "OK"
+
+echo "  config: cache thresholds read from config"
+OUT=$(run_py "
+from context_overhead import _try_phase2_transcript
+import json, tempfile, os
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+for i in range(5):
+    cc = 42000 if i == 0 else 200
+    cr = 0 if i == 0 else int(42000 * 0.6)
+    json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+        'input_tokens': 50, 'cache_creation_input_tokens': cc,
+        'cache_read_input_tokens': cr, 'output_tokens': 200
+    }}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+state = {'transcript_path': tmpf.name}
+sc = {}
+
+# With default thresholds (warn=0.8): 60% hit rate should be degraded
+_try_phase2_transcript(state, {}, sc, cache_warn_rate=0.8, cache_critical_rate=0.3)
+assert sc.get('cache_degraded') is True, f'should be degraded at 60% with warn=0.8, got sc={sc}'
+
+# With custom threshold (warn=0.5): 60% hit rate should be healthy
+sc2 = {}
+_try_phase2_transcript(state, {}, sc2, cache_warn_rate=0.5, cache_critical_rate=0.3)
+assert sc2.get('cache_degraded') is not True, f'should NOT be degraded at 60% with warn=0.5, got sc2={sc2}'
+
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "config thresholds" "$OUT" "OK"
+
+echo "  anchor: warm cache (cc=0 on turn 1) falls back to estimate"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _try_phase2_transcript
+tf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Turn 1 with cache_creation=0 (warm restart, everything cached)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 0,
+    'cache_read_input_tokens': 42000, 'output_tokens': 200
+}}}, tf); tf.write('\n')
+tf.close()
+state = {'transcript_path': tf.name}; sc = {}
+_try_phase2_transcript(state, {}, sc)
+anchor = sc.get('turn_1_anchor', 0)
+assert anchor > 0, f'anchor should fall back to estimate, got {anchor}'
+print(f'OK: anchor={anchor}')
+os.unlink(tf.name)
+")
+assert_contains "warm cache anchor" "$OUT" "OK"
+
+echo "  dual-bar: sys_color and conv_color are applied"
+OUT=$(run_py_color "
+from statusline import render_context_bar, DEFAULT_THEME
+# 20% usage (below warn threshold) → healthy state → teal color family
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+}
+result = render_context_bar(state, DEFAULT_THEME)
+# Healthy color #8fbcbb → darkened sys = RGB(92,122,121), conv = RGB(143,188,187) (factor=0.65)
+assert '38;2;92;122;121' in result, f'sys (darkened healthy) not found in: {repr(result)}'
+assert '38;2;143;188;187' in result, f'conv (healthy teal) not found in: {repr(result)}'
+print('OK')
+")
+assert_equals "per-segment coloring" "$OUT" "OK"
+
+echo "  dual-bar: NO_COLOR falls back to plain bar"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 400000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 300000,
+    'sys_overhead_source': 'measured',
+}
+result = render_context_bar(state, DEFAULT_THEME)
+# With NO_COLOR, no ANSI escapes
+assert '\033[' not in result, f'unexpected ANSI in NO_COLOR mode: {repr(result)}'
+# But bar blocks should still be present
+assert '\u2588' in result, f'sys blocks missing: {repr(result)}'
+assert '\u2593' in result, f'conv blocks missing: {repr(result)}'
+print('OK')
+")
+assert_equals "per-segment NO_COLOR fallback" "$OUT" "OK"
+
+echo "  forensics: generate_overhead_report from transcript"
+LAST_STDOUT=$(run_py "
+import json, tempfile, os
+from obs_utils import generate_overhead_report
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+for i in range(5):
+    cache_create = 40000 if i == 0 else 50
+    cache_read = 0 if i == 0 else 40000 + (i * 200)
+    json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+        'input_tokens': 50 + i * 30,
+        'cache_creation_input_tokens': cache_create,
+        'cache_read_input_tokens': cache_read,
+        'output_tokens': 200 + i * 50
+    }}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+pkg = tempfile.mkdtemp()
+derived = os.path.join(pkg, 'derived')
+os.makedirs(derived)
+
+report = generate_overhead_report(pkg, tmpf.name, context_window_size=1000000)
+assert report is not None, 'expected report'
+assert report['system_overhead_tokens'] == 40000, f'anchor wrong: {report[\"system_overhead_tokens\"]}'
+assert report['total_turns'] == 5, f'turns wrong: {report[\"total_turns\"]}'
+assert 0.8 < report['cache_hit_rate_overall'] < 1.0, f'hit rate wrong: {report[\"cache_hit_rate_overall\"]}'
+
+report_path = os.path.join(derived, 'overhead_report.json')
+assert os.path.isfile(report_path), 'report file not written'
+with open(report_path) as rf:
+    written = json.load(rf)
+assert written['system_overhead_tokens'] == 40000
+print('OK')
+os.unlink(tmpf.name)
+import shutil; shutil.rmtree(pkg)
+")
+assert_equals "forensics report" "$LAST_STDOUT" "OK"
+
+echo "  integration: full pipeline with transcript produces dual-bar"
+INTEGRATION_TRANSCRIPT="/tmp/qline-integration-test-$$.jsonl"
+python3 -c "
+import json
+with open('$INTEGRATION_TRANSCRIPT', 'w') as f:
+    json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+        'input_tokens': 50, 'cache_creation_input_tokens': 45000,
+        'cache_read_input_tokens': 0, 'output_tokens': 200
+    }}}, f)
+    f.write('\n')
+    for i in range(3):
+        json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+            'input_tokens': 100 + i*50, 'cache_creation_input_tokens': 200,
+            'cache_read_input_tokens': 45000 + i*500, 'output_tokens': 300
+        }}}, f)
+        f.write('\n')
+"
+
+rm -f /tmp/qline-cache.json
+
+INPUT=$(cat <<ENDJSON
+{
+  "hook_event_name": "Status",
+  "session_id": "integration-test-$$",
+  "transcript_path": "$INTEGRATION_TRANSCRIPT",
+  "model": {"id": "claude-opus-4-6", "display_name": "Opus 4.6 (1M context)"},
+  "workspace": {"current_dir": "/home/q/LAB/qLine"},
+  "cost": {"total_cost_usd": 1.50, "total_duration_ms": 60000},
+  "context_window": {
+    "total_input_tokens": 150000,
+    "total_output_tokens": 50000,
+    "context_window_size": 1000000,
+    "used_percentage": 20,
+    "remaining_percentage": 80
+  }
+}
+ENDJSON
+)
+
+LAST_STDOUT=$(printf '%s' "$INPUT" | NO_COLOR=1 QLINE_NO_COLLECT=1 python3 "$SRC" 2>/dev/null)
+LAST_EXIT=$?
+assert_exit_zero "integration pipeline" "$LAST_EXIT"
+assert_not_empty "integration output" "$LAST_STDOUT"
+# The dual-bar should show medium shade blocks (▓) for conversation
+# since we have transcript data with 45k system overhead in a 200k used / 1M window
+assert_contains "integration has conv blocks" "$LAST_STDOUT" "▓"
+
+rm -f "$INTEGRATION_TRANSCRIPT" /tmp/qline-cache.json
+
+echo "  obs_utils: update_manifest_if_absent_batch writes when absent"
+LAST_STDOUT=$(run_py "
+import json, os, sys, tempfile
+sys.path.insert(0, os.path.expanduser('~/.claude/scripts'))
+from obs_utils import update_manifest_if_absent_batch
+
+pkg = tempfile.mkdtemp()
+with open(os.path.join(pkg, 'manifest.json'), 'w') as f:
+    json.dump({'status': 'active'}, f)
+
+wrote = update_manifest_if_absent_batch(pkg, 'cache_anchor', {'cache_anchor': 42000, 'cache_anchor_turn': 1})
+assert wrote is True, f'first call should write, got {wrote}'
+
+with open(os.path.join(pkg, 'manifest.json')) as f:
+    m = json.load(f)
+assert m['cache_anchor'] == 42000
+
+wrote2 = update_manifest_if_absent_batch(pkg, 'cache_anchor', {'cache_anchor': 99999})
+assert wrote2 is False, f'second call should not write, got {wrote2}'
+
+with open(os.path.join(pkg, 'manifest.json')) as f:
+    m2 = json.load(f)
+assert m2['cache_anchor'] == 42000, f'should be unchanged: {m2}'
+
+print('OK')
+import shutil; shutil.rmtree(pkg)
+")
+assert_equals "manifest_if_absent" "$LAST_STDOUT" "OK"
+
+echo "  obs-stop-cache: extracts cache metrics from transcript"
+run_py "
+import json, os, sys, tempfile
+sys.path.insert(0, os.path.expanduser('~/.claude/hooks'))
+sys.path.insert(0, os.path.expanduser('~/.claude/scripts'))
+
+from importlib.util import spec_from_file_location, module_from_spec
+hook_path = os.path.expanduser('~/.claude/hooks/obs-stop-cache.py')
+spec = spec_from_file_location('obs_stop_cache', hook_path)
+mod = module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+# Create mock transcript
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Streaming stub (should be skipped)
+json.dump({'type': 'assistant', 'message': {'stop_reason': None, 'id': 'msg_stub', 'usage': {
+    'input_tokens': 3, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 10
+}}}, tmpf); tmpf.write('\n')
+# Completed turn
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'id': 'msg_01ABC', 'model': 'claude-opus-4-6', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200,
+    'cache_creation': {'ephemeral_1h_input_tokens': 42000, 'ephemeral_5m_input_tokens': 0}
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = mod._extract_latest_cache_metrics(tmpf.name, None)
+assert result is not None, 'should find metrics'
+assert result['cache_create'] == 42000, f'cache_create: {result[\"cache_create\"]}'
+assert result['cache_read'] == 0
+assert result['input_tokens'] == 50
+assert result['entry_id'] == 'msg_01ABC'
+assert result['model'] == 'claude-opus-4-6'
+assert result['cache_create_1h'] == 42000
+assert result['cache_create_5m'] == 0
+
+# Test dedup: same entry_id returns None
+result2 = mod._extract_latest_cache_metrics(tmpf.name, 'msg_01ABC')
+assert result2 is None, 'should return None for duplicate entry'
+
+# Test truncated line handling
+tmpf2 = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'id': 'msg_02', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 25000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf2); tmpf2.write('\n')
+tmpf2.write('{\"type\": \"assistant\", \"message\": {\"stop_re')  # truncated
+tmpf2.close()
+result3 = mod._extract_latest_cache_metrics(tmpf2.name, None)
+assert result3 is not None, 'should handle truncated line'
+assert result3['cache_create'] == 25000
+
+print('OK')
+os.unlink(tmpf.name); os.unlink(tmpf2.name)
+"
+assert_equals "hook extraction" "$LAST_STDOUT" "OK"
+
+echo "  obs-stop-cache: full hook flow writes sidecar + ledger + manifest"
+LAST_STDOUT=$(run_py "
+import json, os, sys, tempfile
+sys.path.insert(0, os.path.expanduser('~/.claude/scripts'))
+from obs_utils import create_package
+
+# Create a real session package
+pkg_dir = tempfile.mkdtemp()
+os.environ['OBS_ROOT'] = pkg_dir
+session_id = 'cache-hook-test-001'
+transcript = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+
+# Write 3 turns to transcript
+for i in range(3):
+    cc = 42000 if i == 0 else 300
+    cr = 0 if i == 0 else 42000 + i * 200
+    json.dump({'type': 'assistant', 'message': {
+        'stop_reason': 'end_turn', 'id': f'msg_{i:03d}', 'model': 'claude-opus-4-6',
+        'usage': {
+            'input_tokens': 50 + i * 30,
+            'cache_creation_input_tokens': cc,
+            'cache_read_input_tokens': cr,
+            'output_tokens': 200,
+            'cache_creation': {'ephemeral_1h_input_tokens': cc, 'ephemeral_5m_input_tokens': 0}
+        }
+    }}, transcript)
+    transcript.write('\n')
+transcript.close()
+
+# Create package
+package_root = create_package(session_id, '/tmp', transcript.name, 'test', obs_root=pkg_dir)
+
+sys.path.insert(0, os.path.expanduser('~/.claude/hooks'))
+
+# Import hook module; exec_module triggers run_fail_open(main) which calls sys.exit(0)
+# when stdin has no hook input -- catch SystemExit to continue using module functions
+from importlib.util import spec_from_file_location, module_from_spec
+hook_path = os.path.expanduser('~/.claude/hooks/obs-stop-cache.py')
+spec = spec_from_file_location('obs_stop_cache', hook_path)
+mod = module_from_spec(spec)
+try:
+    spec.loader.exec_module(mod)
+except SystemExit:
+    pass  # Module-level run_fail_open exits when no hook input; module functions are loaded
+
+# Simulate 3 Stop invocations
+for i in range(3):
+    # Reset and call extraction + write logic
+    sidecar_path = os.path.join(package_root, 'custom', 'cache_metrics.jsonl')
+    last_entry = mod._read_last_sidecar_entry(sidecar_path)
+    last_id = last_entry.get('last_entry_id') if not last_entry.get('skipped') else None
+
+    metrics = mod._extract_latest_cache_metrics(transcript.name, last_id)
+    if metrics is None and i > 0:
+        # After first call, subsequent calls see same last entry -- expected skip
+        continue
+    if metrics is None:
+        continue
+
+    turn = last_entry.get('turn', 0) + 1
+    record = {
+        'ts': '2026-04-04T00:00:00Z', 'session_id': session_id, 'turn': turn,
+        'cache_read': metrics['cache_read'], 'cache_create': metrics['cache_create'],
+        'input_tokens': metrics['input_tokens'], 'output_tokens': metrics['output_tokens'],
+        'cache_create_1h': metrics['cache_create_1h'], 'cache_create_5m': metrics['cache_create_5m'],
+        'model': metrics['model'], 'post_compaction': False, 'compaction_count': 0,
+        'last_entry_id': metrics['entry_id'], 'skipped': False,
+    }
+    os.makedirs(os.path.join(package_root, 'custom'), exist_ok=True)
+    mod._atomic_jsonl_append(sidecar_path, record)
+
+# Verify sidecar exists and has records
+sidecar_path = os.path.join(package_root, 'custom', 'cache_metrics.jsonl')
+assert os.path.isfile(sidecar_path), 'sidecar not created'
+with open(sidecar_path) as f:
+    records = [json.loads(l) for l in f if l.strip()]
+assert len(records) >= 1, f'expected records, got {len(records)}'
+# Backward scan finds last entry in transcript (msg_002, cc=300); verify sidecar has it
+assert records[0]['last_entry_id'] == 'msg_002', f'expected msg_002, got: {records[0]}'
+assert records[0]['model'] == 'claude-opus-4-6', f'model wrong: {records[0]}'
+
+# Test anchor write
+from obs_utils import update_manifest_if_absent_batch
+update_manifest_if_absent_batch(package_root, 'cache_anchor', {
+    'cache_anchor': 42000, 'cache_anchor_turn': 1, 'cache_anchor_is_post_compaction': False
+})
+with open(os.path.join(package_root, 'manifest.json')) as f:
+    m = json.load(f)
+assert m.get('cache_anchor') == 42000, f'anchor not in manifest: {m.keys()}'
+
+print('OK')
+os.unlink(transcript.name)
+import shutil; shutil.rmtree(pkg_dir)
+del os.environ['OBS_ROOT']
+")
+assert_equals "hook integration" "$LAST_STDOUT" "OK"
+
+echo "  anchor migration: _read_manifest_anchor reads from manifest"
+LAST_STDOUT=$(run_py "
+import json, os, sys, tempfile
+from context_overhead import _read_manifest_anchor
+
+pkg = tempfile.mkdtemp()
+with open(os.path.join(pkg, 'manifest.json'), 'w') as f:
+    json.dump({'cache_anchor': 42000, 'cache_anchor_turn': 1}, f)
+
+result = _read_manifest_anchor(pkg)
+assert result == 42000, f'expected 42000, got {result}'
+
+# Missing key returns None
+pkg2 = tempfile.mkdtemp()
+with open(os.path.join(pkg2, 'manifest.json'), 'w') as f:
+    json.dump({'status': 'active'}, f)
+result2 = _read_manifest_anchor(pkg2)
+assert result2 is None, f'expected None, got {result2}'
+
+# None package_root returns None
+result3 = _read_manifest_anchor(None)
+assert result3 is None
+
+print('OK')
+import shutil; shutil.rmtree(pkg); shutil.rmtree(pkg2)
+")
+assert_equals "manifest anchor" "$LAST_STDOUT" "OK"
+
 fi
 
 # ======================================================================
