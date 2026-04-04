@@ -835,13 +835,26 @@ def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_sys_overhead(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render system overhead pill: 󰳲 27.4k"""
+    """Render system overhead pill: 󰳲 27.4k 92%
+
+    Shows system overhead tokens and cache hit rate when measured.
+    Source suffix: nothing for measured, ≈ for estimated.
+    """
     if "sys_overhead_tokens" not in state:
         return None
     cfg = theme.get("sys_overhead", {})
     tokens = state["sys_overhead_tokens"]
     glyph = cfg.get("glyph", "\U000f0cf2 ")
-    text = f"{glyph}{_abbreviate_count(tokens)}"
+    source = state.get("sys_overhead_source", "")
+    source_suffix = "\u2248" if source == "estimated" else ""
+
+    # Cache hit rate as percentage (compact: "92%" not "92.3%")
+    hit_rate = state.get("cache_hit_rate")
+    if hit_rate is not None and source == "measured":
+        rate_pct = int(hit_rate * 100)
+        text = f"{glyph}{_abbreviate_count(tokens)}{source_suffix} {rate_pct}%"
+    else:
+        text = f"{glyph}{_abbreviate_count(tokens)}{source_suffix}"
     return _pill(text, cfg, theme=theme)
 
 
