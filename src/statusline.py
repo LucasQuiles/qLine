@@ -99,8 +99,9 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_threshold": 70.0,
         "critical_color": "#d06070",
         # Overhead monitor: dual-bar colors
-        "sys_color": "#d08070",
-        "conv_color": "#80b0d0",
+        # sys_color must be darker/muted against bg for clear contrast with conv
+        "sys_color": "#6b4a4a",   # muted dark rust — system overhead (darker)
+        "conv_color": "#88c0d0",  # bright nordic blue — conversation (lighter)
         # Overhead monitor: system overhead thresholds (% of total context window)
         "sys_warn_threshold": 30.0,
         "sys_critical_threshold": 50.0,
@@ -745,10 +746,10 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         elif state.get("cache_degraded") is True:
             sev = max(sev, 1)  # Force at least warn (produces ~ suffix)
 
-    # Numeric overhead indicator (e.g., "sys:27k")
+    # Numeric overhead indicator with brain glyph (e.g., "🧠27k")
     overhead_label = ""
     if has_overhead:
-        overhead_label = f" sys:{_abbreviate_count(state['sys_overhead_tokens'])}"
+        overhead_label = f" \U000f09d8{_abbreviate_count(state['sys_overhead_tokens'])}"  # nf-md-head_cog
 
     if sev == 2:
         suffix = f" {total_pct}%!{cache_suffix}{overhead_label}"
@@ -1443,11 +1444,20 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
 
     state["_compact"] = force_single
 
-    # Always merge all layout lines and auto-wrap at max_width.
-    merged: list[str] = []
+    if force_single:
+        # Compact: merge all into one auto-wrapped line
+        merged: list[str] = []
+        for modules in layout_lines:
+            merged.extend(modules)
+        return _render_wrapped(state, theme, merged)
+
+    # Multi-line: render each layout line separately, enforce line breaks
+    rendered_lines: list[str] = []
     for modules in layout_lines:
-        merged.extend(modules)
-    return _render_wrapped(state, theme, merged)
+        line = _render_wrapped(state, theme, modules)
+        if line:
+            rendered_lines.append(line)
+    return "\n".join(rendered_lines)
 
 
 # --- Observability snapshot ---

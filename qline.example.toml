@@ -25,12 +25,12 @@
 
 # [context_bar]
 # enabled = true
-# width = 10                        # progress bar character width
+# width = 0                         # 0 = auto (fill terminal width); or set fixed number
 # warn_threshold = 40.0             # % context used → yellow
 # critical_threshold = 70.0         # % context used → red
 # Overhead monitor: dual-bar colors (system overhead vs conversation)
-# sys_color = "#d08070"
-# conv_color = "#80b0d0"
+# sys_color = "#6b4a4a"             # dark rust — system overhead (must be darker than conv)
+# conv_color = "#88c0d0"            # bright blue — conversation (must be lighter than sys)
 # System overhead thresholds (% of total context window)
 # sys_warn_threshold = 30.0
 # sys_critical_threshold = 50.0
