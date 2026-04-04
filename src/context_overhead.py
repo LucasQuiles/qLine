@@ -28,6 +28,8 @@ def _estimate_static_overhead(
 ) -> int:
     """Estimate system token overhead from measurable local sources.
 
+    Includes: system prompt, CLAUDE.md files, built-in tool definitions,
+    and a baseline for deferred tool names and skill stubs.
     Returns a lower-bound token count.
     """
     total = _SYSTEM_PROMPT_TOKENS
@@ -48,6 +50,31 @@ def _estimate_static_overhead(
             total += int(size * _TOKENS_PER_BYTE)
         except OSError:
             pass
+
+    # Built-in tool definitions (Read, Write, Edit, Bash, Grep, Glob, etc.)
+    # ~968 tokens after deferral (v2.1.69+), ~11k before
+    total += 968
+
+    # Deferred tool names — count from settings.json MCP servers if available
+    settings_path = os.path.expanduser("~/.claude/settings.json")
+    try:
+        import json as _json
+        with open(settings_path) as f:
+            settings = _json.load(f)
+        mcp_servers = settings.get("mcpServers", {})
+        # Each MCP server contributes ~15-30 deferred tool names
+        total += len(mcp_servers) * 20 * _TOKENS_PER_DEFERRED_TOOL
+    except Exception:
+        # Fallback: assume ~5 MCP servers
+        total += 5 * 20 * _TOKENS_PER_DEFERRED_TOOL
+
+    # Skill stubs from plugins
+    plugins_dir = os.path.expanduser("~/.claude/plugins/cache")
+    try:
+        plugin_count = sum(1 for d in os.listdir(plugins_dir) if os.path.isdir(os.path.join(plugins_dir, d)))
+        total += plugin_count * 3 * _TOKENS_PER_SKILL_STUB  # ~3 skills per plugin avg
+    except OSError:
+        total += 10 * _TOKENS_PER_SKILL_STUB  # Fallback
 
     return total
 

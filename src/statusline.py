@@ -704,6 +704,11 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         raw_sys_pct = (sys_overhead * 100) // ctx_total if ctx_total > 0 else 0
         sys_pct = min(raw_sys_pct, total_pct)
         sys_blocks = min((sys_pct * width) // 100, filled)
+        # Minimum 1-block guarantee: if overhead exists and there are filled blocks,
+        # always show at least 1 system block so the dual-color is visible.
+        # On 1M context models, 27k overhead = 2.7% which rounds to 0 blocks.
+        if sys_blocks == 0 and sys_overhead > 0 and filled > 0:
+            sys_blocks = 1
         conv_blocks = filled - sys_blocks
         free_blocks = width - filled
         bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
