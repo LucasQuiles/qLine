@@ -732,14 +732,15 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         sys_sev = 2 if sys_pct_of_window >= sys_crit_t else (1 if sys_pct_of_window >= sys_warn_t else 0)
     sev = max(total_sev, sys_sev)
 
-    # Cache health suffix (Phase 2 measured data only)
-    cache_suffix = ""
+    # Cache health: degraded forces warn severity, busting forces critical
     source = state.get("sys_overhead_source", "")
+    cache_suffix = ""
     if source == "measured":
         if state.get("cache_busting") is True:
             cache_suffix = "\u26a1"  # ⚡
+            sev = 2  # Force entire bar to critical
         elif state.get("cache_degraded") is True:
-            cache_suffix = "\u2248"  # ≈
+            sev = max(sev, 1)  # Force at least warn (produces ~ suffix)
 
     if sev == 2:
         suffix = f" {total_pct}%!{cache_suffix}"

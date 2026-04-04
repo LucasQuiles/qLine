@@ -1680,7 +1680,7 @@ state = {
     'cache_busting': True,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-assert '%~\u26a1' in result, f'expected %~⚡, got: {result}'
+assert '%!\u26a1' in result, f'busting forces critical: expected %!⚡, got: {result}'
 print('OK')
 ")
 assert_equals "compound warn+bust" "$OUT" "OK"
@@ -1696,9 +1696,8 @@ state = {
     'cache_busting': True,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-assert '%\u26a1' in result, f'expected %⚡, got: {result}'
+assert '%!\u26a1' in result, f'busting forces critical: expected %!⚡, got: {result}'
 assert '%~' not in result, f'should not have warn suffix'
-assert '%!' not in result, f'should not have critical suffix'
 print('OK')
 ")
 assert_equals "compound normal+bust" "$OUT" "OK"
@@ -1949,7 +1948,7 @@ state = {
     'cache_busting': False,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-assert '\u2248' in result, f'degraded indicator not found: {result}'
+assert '~' in result, f'degraded should show warn suffix ~, got: {result}'
 assert '\u26a1' not in result, f'should not show busting indicator'
 print('OK')
 ")
