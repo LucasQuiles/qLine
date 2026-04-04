@@ -821,6 +821,8 @@ def _read_transcript_anchor(path: str) -> int | None:
 def _try_phase2_transcript(
     state: dict[str, Any], payload: dict, session_cache: dict,
     package_root: str | None = None,
+    cache_warn_rate: float = 0.8,
+    cache_critical_rate: float = 0.3,
 ) -> bool:
     """Attempt Phase 2 measured overhead from transcript. Returns True if successful."""
     path = state.get("transcript_path") or payload.get("transcript_path")
@@ -851,9 +853,8 @@ def _try_phase2_transcript(
     session_cache["cache_hit_rate"] = result["cache_hit_rate"]
     session_cache["trailing_turns"] = result["trailing_turns"][-5:]
 
-    cache_crit = 0.3
     n_turns = len(result["trailing_turns"])
-    if n_turns >= 3 and result["cache_hit_rate"] < cache_crit:
+    if n_turns >= 3 and result["cache_hit_rate"] < cache_critical_rate:
         prev_compactions = session_cache.get("prev_compactions", 0)
         current_compactions = state.get("obs_compactions", 0)
         suppress_until = session_cache.get("compaction_suppress_until_turn", 0)
@@ -866,8 +867,13 @@ def _try_phase2_transcript(
             session_cache["cache_busting"] = False
         else:
             session_cache["cache_busting"] = True
+        session_cache["cache_degraded"] = False
+    elif n_turns >= 2 and result["cache_hit_rate"] < cache_warn_rate:
+        session_cache["cache_busting"] = False
+        session_cache["cache_degraded"] = True
     else:
         session_cache["cache_busting"] = False
+        session_cache["cache_degraded"] = False
 
     return True
 
@@ -882,6 +888,8 @@ def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> No
         state["cache_hit_rate"] = session_cache["cache_hit_rate"]
     if "cache_busting" in session_cache:
         state["cache_busting"] = session_cache["cache_busting"]
+    if "cache_degraded" in session_cache:
+        state["cache_degraded"] = session_cache["cache_degraded"]
 
 
 def _inject_context_overhead(state: dict[str, Any], payload: dict, theme: dict) -> None:
@@ -912,7 +920,13 @@ def _inject_context_overhead(state: dict[str, Any], payload: dict, theme: dict) 
 
         measured = False
         if cfg_source in ("auto", "measured"):
-            measured = _try_phase2_transcript(state, payload, session_cache, package_root)
+            ctx_cfg = theme.get("context_bar", {})
+            cache_warn = ctx_cfg.get("cache_warn_rate", 0.8)
+            cache_crit = ctx_cfg.get("cache_critical_rate", 0.3)
+            measured = _try_phase2_transcript(
+                state, payload, session_cache, package_root,
+                cache_warn_rate=cache_warn, cache_critical_rate=cache_crit,
+            )
 
         if not measured and cfg_source in ("auto", "estimated"):
             estimate = session_cache.get("overhead_estimate")
@@ -982,8 +996,11 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     # Cache health suffix (Phase 2 measured data only)
     cache_suffix = ""
     source = state.get("sys_overhead_source", "")
-    if source == "measured" and state.get("cache_busting") is True:
-        cache_suffix = "\u26a1"
+    if source == "measured":
+        if state.get("cache_busting") is True:
+            cache_suffix = "\u26a1"  # ⚡
+        elif state.get("cache_degraded") is True:
+            cache_suffix = "\u2248"  # ≈
 
     if sev == 2:
         suffix = f" {total_pct}%!{cache_suffix}"

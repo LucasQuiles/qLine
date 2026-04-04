@@ -1929,6 +1929,74 @@ os.unlink(tmpf.name)
 ")
 assert_equals "anchor from start" "$OUT" "OK"
 
+echo "  cache degraded: shows indicator for 0.3-0.8 hit rate"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_degraded': True,
+    'cache_busting': False,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u2248' in result, f'degraded indicator not found: {result}'
+assert '\u26a1' not in result, f'should not show busting indicator'
+print('OK')
+")
+assert_equals "cache degraded" "$OUT" "OK"
+
+echo "  cache degraded: no indicator when busting (busting takes priority)"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_degraded': False,
+    'cache_busting': True,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+assert '\u26a1' in result, f'busting indicator expected: {result}'
+assert '\u2248' not in result, f'should not show degraded indicator when busting'
+print('OK')
+")
+assert_equals "cache busting not degraded" "$OUT" "OK"
+
+echo "  config: cache thresholds read from config"
+OUT=$(run_py "
+from statusline import _try_phase2_transcript
+import json, tempfile, os
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+for i in range(5):
+    cc = 42000 if i == 0 else 200
+    cr = 0 if i == 0 else int(42000 * 0.6)
+    json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+        'input_tokens': 50, 'cache_creation_input_tokens': cc,
+        'cache_read_input_tokens': cr, 'output_tokens': 200
+    }}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+state = {'transcript_path': tmpf.name}
+sc = {}
+
+# With default thresholds (warn=0.8): 60% hit rate should be degraded
+_try_phase2_transcript(state, {}, sc, cache_warn_rate=0.8, cache_critical_rate=0.3)
+assert sc.get('cache_degraded') is True, f'should be degraded at 60% with warn=0.8, got sc={sc}'
+
+# With custom threshold (warn=0.5): 60% hit rate should be healthy
+sc2 = {}
+_try_phase2_transcript(state, {}, sc2, cache_warn_rate=0.5, cache_critical_rate=0.3)
+assert sc2.get('cache_degraded') is not True, f'should NOT be degraded at 60% with warn=0.5, got sc2={sc2}'
+
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "config thresholds" "$OUT" "OK"
+
 echo "  forensics: generate_overhead_report from transcript"
 LAST_STDOUT=$(run_py "
 import json, tempfile, os
