@@ -1727,6 +1727,128 @@ print('OK')
 ")
 assert_equals "sys critical conv zero" "$OUT" "OK"
 
+echo "  Phase 1: static estimate returns reasonable value"
+OUT=$(run_py "
+import os, tempfile
+from statusline import _estimate_static_overhead
+
+tmpdir = tempfile.mkdtemp()
+claude_md = os.path.join(tmpdir, 'CLAUDE.md')
+with open(claude_md, 'w') as f:
+    f.write('x' * 4000)
+
+estimate = _estimate_static_overhead(claude_md_paths=[claude_md])
+assert isinstance(estimate, int), f'expected int, got {type(estimate)}'
+assert estimate >= 1000, f'estimate too low: {estimate}'
+assert estimate < 100000, f'estimate unreasonably high: {estimate}'
+print('OK')
+import shutil; shutil.rmtree(tmpdir)
+")
+assert_equals "phase1 estimate" "$OUT" "OK"
+
+echo "  Phase 2: first-turn anchoring from transcript"
+OUT=$(run_py "
+import json, tempfile, os
+from statusline import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Turn 1: streaming stub (skip)
+json.dump({'type': 'assistant', 'message': {'stop_reason': None, 'usage': {
+    'input_tokens': 3, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 10
+}}}, tmpf); tmpf.write('\n')
+# Turn 1: final (anchor)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+# Turn 2: final
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 100, 'cache_creation_input_tokens': 500,
+    'cache_read_input_tokens': 42000, 'output_tokens': 300
+}}}, tmpf); tmpf.write('\n')
+# Turn 3: final
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 150, 'cache_creation_input_tokens': 200,
+    'cache_read_input_tokens': 42500, 'output_tokens': 400
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+assert result['turn_1_anchor'] == 42000, f'got {result[\"turn_1_anchor\"]}'
+assert len(result['trailing_turns']) == 3, f'got {len(result[\"trailing_turns\"])}'
+assert 0.6 < result['cache_hit_rate'] < 0.7, f'got {result[\"cache_hit_rate\"]}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "phase2 anchor" "$OUT" "OK"
+
+echo "  Phase 2: skips streaming stubs"
+OUT=$(run_py "
+import json, tempfile, os
+from statusline import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+json.dump({'type': 'assistant', 'message': {'stop_reason': None, 'usage': {
+    'input_tokens': 3, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 10
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is None, f'should be None for stubs only, got {result}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "phase2 skip stubs" "$OUT" "OK"
+
+echo "  Phase 2: handles toolUseResult.usage path"
+OUT=$(run_py "
+import json, tempfile, os
+from statusline import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 30000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+json.dump({'type': 'user', 'toolUseResult': {'usage': {
+    'input_tokens': 100, 'cache_creation_input_tokens': 500,
+    'cache_read_input_tokens': 30000, 'output_tokens': 300
+}}, 'message': {'role': 'user', 'content': []}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+assert result['turn_1_anchor'] == 30000
+assert len(result['trailing_turns']) == 2
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "phase2 toolUseResult" "$OUT" "OK"
+
+echo "  Phase 2: handles truncated last line"
+OUT=$(run_py "
+import json, tempfile, os
+from statusline import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 25000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+tmpf.write('{\"type\": \"assistant\", \"message\": {\"stop_re')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+assert result['turn_1_anchor'] == 25000
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "phase2 truncated" "$OUT" "OK"
+
 fi
 
 # ======================================================================

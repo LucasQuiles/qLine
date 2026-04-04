@@ -665,6 +665,227 @@ def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     return _pill(text, d_cfg, theme=theme, dim=is_stale)
 
 
+# ── Overhead Monitor: Static Estimation (Phase 1) ───────────────────
+
+_TOKENS_PER_BYTE = 0.325
+_SYSTEM_PROMPT_TOKENS = 4000
+_TOKENS_PER_DEFERRED_TOOL = 12
+_TOKENS_PER_SKILL_STUB = 30
+
+
+def _estimate_static_overhead(
+    claude_md_paths: list[str] | None = None,
+) -> int:
+    """Estimate system token overhead from measurable local sources.
+
+    Returns a lower-bound token count.
+    """
+    total = _SYSTEM_PROMPT_TOKENS
+
+    if claude_md_paths is None:
+        candidates = [os.path.expanduser("~/.claude/CLAUDE.md")]
+        cwd_claude = os.path.join(os.getcwd(), ".claude", "CLAUDE.md")
+        if os.path.isfile(cwd_claude):
+            candidates.append(cwd_claude)
+        cwd_root = os.path.join(os.getcwd(), "CLAUDE.md")
+        if os.path.isfile(cwd_root):
+            candidates.append(cwd_root)
+        claude_md_paths = candidates
+
+    for path in claude_md_paths:
+        try:
+            size = os.path.getsize(path)
+            total += int(size * _TOKENS_PER_BYTE)
+        except OSError:
+            pass
+
+    return total
+
+
+# ── Overhead Monitor: Transcript Tailing (Phase 2) ──────────────────
+
+_TRANSCRIPT_TAIL_BYTES = 50 * 1024
+
+
+def _extract_usage(entry: dict) -> dict | None:
+    """Extract usage dict from a transcript entry.
+
+    Handles two paths: message.usage (direct turn) and toolUseResult.usage (subagent).
+    Skips streaming stubs (stop_reason=null) for the message path.
+    """
+    msg = entry.get("message")
+    if isinstance(msg, dict):
+        stop = msg.get("stop_reason")
+        if stop is not None:
+            usage = msg.get("usage")
+            if isinstance(usage, dict):
+                return usage
+
+    tur = entry.get("toolUseResult")
+    if isinstance(tur, dict):
+        usage = tur.get("usage")
+        if isinstance(usage, dict):
+            return usage
+
+    return None
+
+
+def _read_transcript_tail(path: str) -> dict | None:
+    """Read trailing turns from a session transcript JSONL.
+
+    Returns dict with turn_1_anchor, trailing_turns, cache_hit_rate.
+    Or None if no usable data found.
+    """
+    try:
+        size = os.path.getsize(path)
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            if size > _TRANSCRIPT_TAIL_BYTES:
+                f.seek(size - _TRANSCRIPT_TAIL_BYTES)
+                f.readline()  # Discard partial first line
+            lines = f.readlines()
+    except OSError:
+        return None
+
+    turns: list[dict] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        usage = _extract_usage(entry)
+        if usage is None:
+            continue
+
+        cache_create = usage.get("cache_creation_input_tokens")
+        cache_read = usage.get("cache_read_input_tokens")
+        if cache_create is None and cache_read is None:
+            continue
+
+        turns.append({
+            "cache_read": int(cache_read or 0),
+            "cache_create": int(cache_create or 0),
+            "input": int(usage.get("input_tokens") or 0),
+        })
+
+    if not turns:
+        return None
+
+    turn_1_anchor = turns[0]["cache_create"]
+    trailing = turns[-5:]
+
+    total_read = sum(t["cache_read"] for t in trailing)
+    total_create = sum(t["cache_create"] for t in trailing)
+    denom = total_read + total_create
+    cache_hit_rate = total_read / denom if denom > 0 else 0.0
+
+    return {
+        "turn_1_anchor": turn_1_anchor,
+        "trailing_turns": turns,
+        "cache_hit_rate": cache_hit_rate,
+    }
+
+
+def _try_phase2_transcript(
+    state: dict[str, Any], payload: dict, session_cache: dict
+) -> bool:
+    """Attempt Phase 2 measured overhead from transcript. Returns True if successful."""
+    path = state.get("transcript_path") or payload.get("transcript_path")
+    if not path:
+        return False
+
+    result = _read_transcript_tail(path)
+    if result is None:
+        return False
+
+    if "turn_1_anchor" not in session_cache:
+        session_cache["turn_1_anchor"] = result["turn_1_anchor"]
+    anchor = session_cache["turn_1_anchor"]
+
+    session_cache["sys_overhead_tokens"] = anchor
+    session_cache["sys_overhead_source"] = "measured"
+    session_cache["cache_hit_rate"] = result["cache_hit_rate"]
+    session_cache["trailing_turns"] = result["trailing_turns"][-5:]
+
+    cache_crit = 0.3
+    n_turns = len(result["trailing_turns"])
+    if n_turns >= 3 and result["cache_hit_rate"] < cache_crit:
+        prev_compactions = session_cache.get("prev_compactions", 0)
+        current_compactions = state.get("obs_compactions", 0)
+        suppress_until = session_cache.get("compaction_suppress_until_turn", 0)
+
+        if current_compactions > prev_compactions:
+            session_cache["compaction_suppress_until_turn"] = n_turns + 3
+            session_cache["prev_compactions"] = current_compactions
+
+        if n_turns <= suppress_until:
+            session_cache["cache_busting"] = False
+        else:
+            session_cache["cache_busting"] = True
+    else:
+        session_cache["cache_busting"] = False
+
+    return True
+
+
+def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> None:
+    """Copy overhead fields from session cache into renderer state."""
+    if "sys_overhead_tokens" in session_cache:
+        state["sys_overhead_tokens"] = session_cache["sys_overhead_tokens"]
+    if "sys_overhead_source" in session_cache:
+        state["sys_overhead_source"] = session_cache["sys_overhead_source"]
+    if "cache_hit_rate" in session_cache:
+        state["cache_hit_rate"] = session_cache["cache_hit_rate"]
+    if "cache_busting" in session_cache:
+        state["cache_busting"] = session_cache["cache_busting"]
+
+
+def _inject_context_overhead(state: dict[str, Any], payload: dict, theme: dict) -> None:
+    """Inject overhead monitor data into state. Never raises."""
+    try:
+        cfg_source = theme.get("context_bar", {}).get("overhead_source", "auto")
+        if cfg_source == "off":
+            return
+
+        session_id = payload.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            return
+
+        cache = load_cache()
+        obs_cache = cache.get("_obs", {})
+        session_cache = obs_cache.get(session_id, {})
+        now = time.time()
+
+        if now - session_cache.get("overhead_ts", 0) < 30:
+            _apply_overhead_from_cache(state, session_cache)
+            return
+
+        measured = False
+        if cfg_source in ("auto", "measured"):
+            measured = _try_phase2_transcript(state, payload, session_cache)
+
+        if not measured and cfg_source in ("auto", "estimated"):
+            estimate = session_cache.get("overhead_estimate")
+            if estimate is None or now - session_cache.get("overhead_estimate_ts", 0) >= CACHE_MAX_AGE_S:
+                estimate = _estimate_static_overhead()
+                session_cache["overhead_estimate"] = estimate
+                session_cache["overhead_estimate_ts"] = now
+            session_cache["sys_overhead_tokens"] = estimate
+            session_cache["sys_overhead_source"] = "estimated"
+
+        session_cache["overhead_ts"] = now
+        obs_cache[session_id] = session_cache
+        cache["_obs"] = obs_cache
+        save_cache(cache)
+
+        _apply_overhead_from_cache(state, session_cache)
+    except Exception:
+        pass
+
+
 def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Render context health pill with progress bar and optional token counts.
 
@@ -1585,6 +1806,7 @@ def main() -> None:
     state = normalize(payload)
     collect_system_data(state, theme)
     _inject_obs_counters(state, payload)
+    _inject_context_overhead(state, payload, theme)
     line = render(state, theme)
     _try_obs_snapshot(payload, state)
     if line:
