@@ -124,7 +124,7 @@ def _read_transcript_tail(path: str) -> dict | None:
     if not turns:
         return None
 
-    turn_1_anchor = turns[0]["cache_create"]
+    turn_1_anchor = turns[0]["cache_create"] if turns[0]["cache_create"] > 0 else None
     trailing = turns[-5:]
 
     total_read = sum(t["cache_read"] for t in trailing)
@@ -211,11 +211,19 @@ def _try_phase2_transcript(
             session_cache["turn_1_anchor"] = file_anchor
 
     if "turn_1_anchor" not in session_cache:
-        session_cache["turn_1_anchor"] = result["turn_1_anchor"]
-    anchor = session_cache["turn_1_anchor"]
+        if result["turn_1_anchor"] is not None and result["turn_1_anchor"] > 0:
+            session_cache["turn_1_anchor"] = result["turn_1_anchor"]
+    anchor = session_cache.get("turn_1_anchor", 0)
+    if anchor <= 0:
+        # Warm cache restart: cache_creation was 0 on turn 1
+        # Fall back to static estimate rather than showing 0 overhead
+        anchor = _estimate_static_overhead()
+        session_cache["turn_1_anchor"] = anchor
+        session_cache["sys_overhead_source"] = "estimated"  # Downgrade source
 
     session_cache["sys_overhead_tokens"] = anchor
-    session_cache["sys_overhead_source"] = "measured"
+    if session_cache.get("sys_overhead_source") != "estimated":
+        session_cache["sys_overhead_source"] = "measured"
     session_cache["cache_hit_rate"] = result["cache_hit_rate"]
     session_cache["trailing_turns"] = result["trailing_turns"][-5:]
 

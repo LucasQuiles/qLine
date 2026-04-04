@@ -2027,6 +2027,26 @@ os.unlink(tmpf.name)
 ")
 assert_equals "config thresholds" "$OUT" "OK"
 
+echo "  anchor: warm cache (cc=0 on turn 1) falls back to estimate"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _try_phase2_transcript
+tf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Turn 1 with cache_creation=0 (warm restart, everything cached)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 0,
+    'cache_read_input_tokens': 42000, 'output_tokens': 200
+}}}, tf); tf.write('\n')
+tf.close()
+state = {'transcript_path': tf.name}; sc = {}
+_try_phase2_transcript(state, {}, sc)
+anchor = sc.get('turn_1_anchor', 0)
+assert anchor > 0, f'anchor should fall back to estimate, got {anchor}'
+print(f'OK: anchor={anchor}')
+os.unlink(tf.name)
+")
+assert_contains "warm cache anchor" "$OUT" "OK"
+
 echo "  dual-bar: sys_color and conv_color are applied"
 OUT=$(run_py_color "
 from statusline import render_context_bar, DEFAULT_THEME
