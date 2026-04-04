@@ -393,12 +393,15 @@ def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
 def _read_transcript_anchor(path: str) -> int | None:
     """Read the first-turn cache_creation from the start of a transcript.
 
-    Reads first 4KB — the first completed entry is always near the start.
+    Reads first 128KB — transcripts start with metadata entries
+    (permission-mode, file-history-snapshot, user messages, attachments)
+    before the first assistant message with usage data appears.
+    Attachments alone can be 35KB+, pushing first API response past 64KB.
     Returns cache_creation_input_tokens or None.
     """
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            chunk = f.read(4096)
+            chunk = f.read(131072)
     except OSError:
         return None
 
@@ -416,6 +419,37 @@ def _read_transcript_anchor(path: str) -> int | None:
         cc = usage.get("cache_creation_input_tokens")
         if cc is not None and int(cc) > 0:
             return int(cc)
+    return None
+
+
+def _read_transcript_anchor_with_read(path: str) -> int | None:
+    """Read the first-turn system overhead from cache_read on warm restarts.
+
+    When a session starts with a warm cache (cache_creation < 5000),
+    the real system overhead is in cache_read_input_tokens — that's what
+    the API read from the existing cache. Reads first 128KB to find it
+    (transcript starts with metadata entries + attachments before first API response).
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            chunk = f.read(131072)
+    except OSError:
+        return None
+
+    for line in chunk.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        usage, _rid = _extract_usage(entry)
+        if usage is None:
+            continue
+        cr = usage.get("cache_read_input_tokens")
+        if cr is not None and int(cr) > 0:
+            return int(cr)
     return None
 
 
@@ -471,12 +505,31 @@ def _try_phase2_transcript(
         if result["turn_1_anchor"] is not None and result["turn_1_anchor"] > 0:
             session_cache["turn_1_anchor"] = result["turn_1_anchor"]
     anchor = session_cache.get("turn_1_anchor", 0)
-    if anchor <= 0:
-        # Warm cache restart: cache_creation was 0 on turn 1
-        # Fall back to static estimate rather than showing 0 overhead
-        anchor = _estimate_static_overhead()
-        session_cache["turn_1_anchor"] = anchor
-        session_cache["sys_overhead_source"] = "estimated"  # Downgrade source
+    # Warm cache detection: on resumed sessions or sessions started after
+    # another session warmed the cache, cache_creation on turn 1 is tiny
+    # (just the delta for new content). The real overhead is in cache_read.
+    # Threshold: if anchor < 5000, it's almost certainly a warm restart —
+    # the system prompt alone is 6.2k tokens, so anything below that
+    # means most content was read from cache, not created.
+    _WARM_CACHE_THRESHOLD = 5000
+    if anchor < _WARM_CACHE_THRESHOLD:
+        # Read the actual first turn from the file start (not tail window).
+        # On a warm restart, turn 1's cache_read IS the system overhead.
+        path = state.get("transcript_path") or payload.get("transcript_path")
+        if path:
+            first_anchor = _read_transcript_anchor_with_read(path)
+            if first_anchor and first_anchor > _WARM_CACHE_THRESHOLD:
+                anchor = first_anchor
+                session_cache["turn_1_anchor"] = anchor
+                session_cache["sys_overhead_source"] = "measured"
+            else:
+                anchor = _estimate_static_overhead()
+                session_cache["turn_1_anchor"] = anchor
+                session_cache["sys_overhead_source"] = "estimated"
+        else:
+            anchor = _estimate_static_overhead()
+            session_cache["turn_1_anchor"] = anchor
+            session_cache["sys_overhead_source"] = "estimated"
     else:
         # Calibration: compare measured anchor to static estimate.
         # Computes once per session when measured anchor is available.
@@ -679,6 +732,26 @@ def inject_context_overhead(
             obs_root = os.environ.get("OBS_ROOT")
             kwargs = {"obs_root": obs_root} if obs_root else {}
             package_root = resolve_package_root(session_id, **kwargs)
+
+        # Derive transcript path if not in payload (CC's statusline payload
+        # built by x05/liY does NOT include transcript_path).
+        # Transcripts live at: ~/.claude/projects/<project-hash>/<session-id>.jsonl
+        if not state.get("transcript_path") and not payload.get("transcript_path"):
+            projects_dir = os.path.expanduser("~/.claude/projects")
+            if os.path.isdir(projects_dir):
+                tp_name = f"{session_id}.jsonl"
+                # Check cached path first (avoids re-scanning every 30s)
+                cached_tp = session_cache.get("_transcript_path")
+                if cached_tp and os.path.isfile(cached_tp):
+                    state["transcript_path"] = cached_tp
+                else:
+                    # Scan project dirs for this session's transcript
+                    for d in os.listdir(projects_dir):
+                        candidate = os.path.join(projects_dir, d, tp_name)
+                        if os.path.isfile(candidate):
+                            state["transcript_path"] = candidate
+                            session_cache["_transcript_path"] = candidate
+                            break
 
         measured = False
         if cfg_source in ("auto", "measured"):
