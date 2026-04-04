@@ -592,6 +592,12 @@ def compute_context_thresholds(context_window: int) -> dict[str, int]:
     Mirrors the logic of EH_(model, window), nU(model, window), and
     dYH(tokens, model, window) from Claude Code v2.1.92.
     """
+    if context_window <= 0:
+        return {
+            "effective_window": 0, "autocompact_at": 0, "warning_at": 0,
+            "error_at": 0, "blocking_at": 0, "autocompact_pct": 0,
+            "blocking_pct": 0,
+        }
     effective = context_window - CC_OUTPUT_RESERVE
     autocompact = effective - CC_AUTOCOMPACT_BUFFER
     warning = autocompact - CC_WARNING_OFFSET

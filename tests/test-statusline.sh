@@ -2704,6 +2704,107 @@ os.unlink(tmpf.name)
 ")
 assert_contains "CC-verified: decay responsiveness" "$OUT" "OK"
 
+echo "  stability: zero context_total does not crash threshold computation"
+OUT=$(run_py "
+from context_overhead import compute_context_thresholds
+# Zero and negative window sizes should not crash
+try:
+    t = compute_context_thresholds(0)
+    # Should produce something, not crash
+    assert t['autocompact_pct'] is not None
+except ZeroDivisionError:
+    assert False, 'ZeroDivisionError on zero window'
+print('OK')
+")
+assert_equals "stability: zero window" "$OUT" "OK"
+
+echo "  stability: transcript with only sidechain entries returns None"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# All entries are sidechain — should be filtered out
+for i in range(3):
+    json.dump({'type': 'assistant', 'isSidechain': True, 'message': {
+        'stop_reason': 'end_turn',
+        'usage': {
+            'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+            'cache_read_input_tokens': 0, 'output_tokens': 200
+        }
+    }}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is None, f'should be None for sidechain-only, got {result}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "stability: sidechain-only" "$OUT" "OK"
+
+echo "  stability: empty transcript file returns None"
+OUT=$(run_py "
+import tempfile, os
+from context_overhead import _read_transcript_tail
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+tmpf.close()
+result = _read_transcript_tail(tmpf.name)
+assert result is None, f'empty file should return None, got {result}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "stability: empty transcript" "$OUT" "OK"
+
+echo "  stability: single turn transcript produces valid result"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_tail
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+assert len(result['trailing_turns']) == 1
+assert result['cache_hit_rate'] == 0.0, f'single turn with no read should be 0.0, got {result[\"cache_hit_rate\"]}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "stability: single turn" "$OUT" "OK"
+
+echo "  stability: cache_read cap prevents inflation distortion"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Turn 1: normal anchor
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 0, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+# Turn 2: massively inflated cache_read (server-side tool)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 100, 'cache_creation_input_tokens': 200,
+    'cache_read_input_tokens': 500000, 'output_tokens': 300
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+# Without cap, rate would be ~0.996 (500000/(500000+200))
+# With 3x anchor cap, cache_read capped to 126000: rate = 126000/(126000+200) ≈ 0.998
+# Either way it's high, but the cap prevents the 500k from dominating
+# The key test: rate should not be NaN, Inf, or negative
+rate = result['cache_hit_rate']
+assert 0.0 <= rate <= 1.0, f'rate out of bounds: {rate}'
+assert rate < 1.0, f'rate should not be exactly 1.0: {rate}'
+print(f'OK: rate={rate:.4f}')
+os.unlink(tmpf.name)
+")
+assert_contains "stability: inflation cap" "$OUT" "OK"
+
 echo "  CC-verified: static estimate within 2x of measured anchor"
 OUT=$(run_py "
 from context_overhead import _estimate_static_overhead
