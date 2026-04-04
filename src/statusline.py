@@ -858,6 +858,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         alert = None
         alert_color = "#bf616a"  # nord11 red
         warn_color_hex = "#ebcb8b"  # nord13 yellow
+        tuc = state.get("turns_until_compact")
 
         if state.get("cache_busting") is True:
             alert = _blink("\U000f04bf CACHE BUSTED", alert_color)
@@ -869,6 +870,10 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             alert = _blink("\U000f0cf2 SYS BLOAT", alert_color)
         elif total_pct >= crit_t:
             alert = _blink("\U000f02d1 HEAVY CONTEXT", alert_color)
+        elif tuc is not None and 0 < tuc <= 10:
+            alert = _blink(f"\U000f0520 COMPACT IN ~{tuc}", alert_color)
+        elif tuc is not None and 0 < tuc <= 50:
+            alert = _reverse(f"\U000f0520 ~{tuc} TURNS LEFT", warn_color_hex)
         elif state.get("cache_degraded") is True:
             alert = _reverse("\U000f04c5 CACHE DEGRADED", warn_color_hex)
 
@@ -915,6 +920,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
     # NO_COLOR fallback — bracket-delimited segments
     bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
+    tuc = state.get("turns_until_compact")
     parts = []
     # Alert messages (NO_COLOR uses caps text)
     if state.get("cache_busting") is True:
@@ -927,6 +933,10 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         parts.append("[!! SYS BLOAT !!]")
     elif total_pct >= crit_t:
         parts.append("[!! HEAVY CONTEXT !!]")
+    elif tuc is not None and 0 < tuc <= 10:
+        parts.append(f"[!! COMPACT IN ~{tuc} !!]")
+    elif tuc is not None and 0 < tuc <= 50:
+        parts.append(f"[! ~{tuc} TURNS LEFT]")
     elif state.get("cache_degraded") is True:
         parts.append("[! CACHE DEGRADED]")
     if "input_tokens" in state and state.get("input_tokens", 0) > 0:
