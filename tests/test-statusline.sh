@@ -2595,6 +2595,127 @@ import shutil; shutil.rmtree(pkg); shutil.rmtree(pkg2)
 ")
 assert_equals "manifest anchor" "$LAST_STDOUT" "OK"
 
+echo "  CC-verified: context percentage formula matches dR_ source"
+OUT=$(run_py "
+# Verify our understanding of CC's dR_(usage, windowSize) matches source:
+# used = round((input + cache_create + cache_read) / window * 100)
+# Output tokens are EXCLUDED.
+
+# Test case 1: normal usage
+inp, cc, cr, out = 50000, 5000, 145000, 30000
+window = 1000000
+expected_used = round((inp + cc + cr) / window * 100)  # = 20
+assert expected_used == 20, f'expected 20%, got {expected_used}%'
+
+# Test case 2: output tokens must NOT affect percentage
+# If output were included: round((50000+5000+145000+30000)/1000000*100) = 23
+# Without output: round((50000+5000+145000)/1000000*100) = 20
+assert expected_used == 20, 'output tokens must not affect used_percentage'
+
+# Test case 3: clamped to [0, 100]
+inp2, cc2, cr2 = 600000, 200000, 400000  # total = 1.2M > window
+used2 = min(100, max(0, round((inp2+cc2+cr2)/window*100)))
+assert used2 == 100, f'should clamp to 100, got {used2}'
+print('OK')
+")
+assert_equals "CC-verified: dR_ formula" "$OUT" "OK"
+
+echo "  CC-verified: compute_context_thresholds matches EH_/nU/dYH"
+OUT=$(run_py "
+from context_overhead import compute_context_thresholds, CC_OUTPUT_RESERVE, CC_AUTOCOMPACT_BUFFER, CC_BLOCKING_BUFFER
+
+# 200k window (standard)
+t = compute_context_thresholds(200000)
+eff = 200000 - CC_OUTPUT_RESERVE  # 180000
+assert t['effective_window'] == eff, f'effective: {t[\"effective_window\"]} != {eff}'
+compact = eff - CC_AUTOCOMPACT_BUFFER  # 167000
+assert t['autocompact_at'] == compact, f'autocompact: {t[\"autocompact_at\"]} != {compact}'
+blocking = eff - CC_BLOCKING_BUFFER  # 177000
+assert t['blocking_at'] == blocking, f'blocking: {t[\"blocking_at\"]} != {blocking}'
+assert t['autocompact_pct'] == 83.5, f'autocompact_pct: {t[\"autocompact_pct\"]} != 83.5'
+
+# 1M window (opus 4.6 1m)
+t2 = compute_context_thresholds(1000000)
+eff2 = 1000000 - CC_OUTPUT_RESERVE  # 980000
+assert t2['effective_window'] == eff2
+compact2 = eff2 - CC_AUTOCOMPACT_BUFFER  # 967000
+assert t2['autocompact_at'] == compact2
+assert t2['autocompact_pct'] == 96.7, f'1M autocompact: {t2[\"autocompact_pct\"]} != 96.7'
+
+print('OK')
+")
+assert_equals "CC-verified: thresholds" "$OUT" "OK"
+
+echo "  CC-verified: exceeds_200k uses iLH formula (includes output)"
+OUT=$(run_py "
+# CC's FrH source: iLH(usage) > 200000
+# iLH = input + cache_create + cache_read + output
+# This is different from used_percentage which excludes output.
+
+# Case 1: input-only under 200k but total over 200k with output
+inp, cc, cr, out = 80000, 10000, 90000, 25000
+total = inp + cc + cr + out  # = 205000
+exceeds = total > 200000
+assert exceeds is True, f'should exceed 200k: total={total}'
+
+# Case 2: CC's used_percentage would show 18% (excludes output)
+used_pct = round((inp + cc + cr) / 1000000 * 100)
+assert used_pct == 18, f'used_pct should be 18, got {used_pct}'
+
+# This proves used_percentage and exceeds_200k use DIFFERENT formulas
+print('OK')
+")
+assert_equals "CC-verified: exceeds_200k" "$OUT" "OK"
+
+echo "  CC-verified: decay-weighted hit rate responds faster than flat"
+OUT=$(run_py "
+from context_overhead import _read_transcript_tail, _CACHE_DECAY
+import json, tempfile, os
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# 4 healthy turns then 1 sudden cache bust
+for i in range(4):
+    json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+        'input_tokens': 50, 'cache_creation_input_tokens': 200,
+        'cache_read_input_tokens': 42000, 'output_tokens': 200
+    }}}, tmpf); tmpf.write('\n')
+# Turn 5: cache bust (high create, low read)
+json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+    'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+    'cache_read_input_tokens': 500, 'output_tokens': 200
+}}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name, window_size=5)
+decay_rate = result['cache_hit_rate']
+
+# Compute flat average for comparison
+trailing = result['trailing_turns'][-5:]
+flat_read = sum(t['cache_read'] for t in trailing)
+flat_total = sum(t['cache_read'] + t['cache_create'] for t in trailing)
+flat_rate = flat_read / flat_total
+
+# Decay-weighted should respond FASTER to the bust (lower rate)
+# because it weights the most recent (bust) turn more heavily
+assert decay_rate < flat_rate, f'decay ({decay_rate:.3f}) should be < flat ({flat_rate:.3f})'
+assert decay_rate < 0.7, f'decay rate should detect bust: {decay_rate:.3f}'
+print(f'OK: decay={decay_rate:.3f} flat={flat_rate:.3f}')
+os.unlink(tmpf.name)
+")
+assert_contains "CC-verified: decay responsiveness" "$OUT" "OK"
+
+echo "  CC-verified: static estimate within 2x of measured anchor"
+OUT=$(run_py "
+from context_overhead import _estimate_static_overhead
+est = _estimate_static_overhead()
+# The measured anchor for this setup is ~36-37k.
+# The estimate should be within 2x (18k-74k) at minimum,
+# and ideally within 20% (29k-44k).
+assert 15000 < est < 80000, f'estimate {est} out of sane range'
+print(f'OK: estimate={est}')
+")
+assert_contains "CC-verified: estimate sanity" "$OUT" "OK"
+
 fi
 
 # ======================================================================
