@@ -1863,6 +1863,75 @@ os.unlink(tmpf.name)
 ")
 assert_equals "phase2 skip stubs" "$OUT" "OK"
 
+echo "  Phase 2: deduplicates PRELIM entries by requestId"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Extended thinking generates 2-5 PRELIM entries with same requestId
+# and identical cache values, then one FINAL entry.
+# Without dedup: 4 turns counted (inflating trailing window).
+# With dedup: 2 turns (one per unique requestId).
+
+# API call 1: 3 entries (2 PRELIM + 1 FINAL), same requestId
+for _ in range(3):
+    json.dump({'type': 'assistant', 'message': {
+        'stop_reason': 'end_turn', 'requestId': 'req-aaa',
+        'usage': {
+            'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+            'cache_read_input_tokens': 0, 'output_tokens': 200
+        }
+    }}, tmpf); tmpf.write('\n')
+
+# API call 2: 2 entries (1 PRELIM + 1 FINAL), different requestId
+for _ in range(2):
+    json.dump({'type': 'assistant', 'message': {
+        'stop_reason': 'end_turn', 'requestId': 'req-bbb',
+        'usage': {
+            'input_tokens': 100, 'cache_creation_input_tokens': 500,
+            'cache_read_input_tokens': 42000, 'output_tokens': 300
+        }
+    }}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+# Should be 2 deduplicated turns, not 5 raw entries
+assert len(result['trailing_turns']) == 2, f'expected 2, got {len(result[\"trailing_turns\"])}'
+assert result['turn_1_anchor'] == 42000
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "phase2 PRELIM dedup" "$OUT" "OK"
+
+echo "  Phase 2: entries without requestId remain distinct"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# 3 entries with no requestId — all should be kept as separate turns
+for i in range(3):
+    json.dump({'type': 'assistant', 'message': {
+        'stop_reason': 'end_turn',
+        'usage': {
+            'input_tokens': 50 + i*10,
+            'cache_creation_input_tokens': 42000 if i == 0 else 200,
+            'cache_read_input_tokens': 0 if i == 0 else 42000,
+            'output_tokens': 200
+        }
+    }}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+assert len(result['trailing_turns']) == 3, f'expected 3, got {len(result[\"trailing_turns\"])}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "phase2 no-requestId distinct" "$OUT" "OK"
+
 echo "  Phase 2: handles toolUseResult.usage path"
 OUT=$(run_py "
 import json, tempfile, os

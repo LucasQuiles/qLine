@@ -327,8 +327,21 @@ def _try_phase2_transcript(
         if len(trailing) >= 2:
             prev = trailing[-2]["cache_create"]
             session_cache["prev_cache_create"] = prev
+
+            # MicroCompact detection: a large drop in cache_create between
+            # consecutive turns suggests silent content clearing (tool results
+            # replaced with "[Old tool result content cleared]").
+            # This is distinct from full compaction (tracked by obs_compactions)
+            # and helps explain sudden cache_read drops.
+            if prev > 0:
+                drop_ratio = latest["cache_create"] / prev
+                # >50% drop in cache creation suggests content was cleared
+                session_cache["microcompact_suspected"] = drop_ratio < 0.5
+            else:
+                session_cache["microcompact_suspected"] = False
         else:
             session_cache["prev_cache_create"] = 0
+            session_cache["microcompact_suspected"] = False
 
     # Monotonic session turn counter (does not saturate like trailing window)
     session_turn = session_cache.get("session_turn_count", 0) + 1
