@@ -40,18 +40,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from context_overhead import (
-    _TOKENS_PER_BYTE,
-    _SYSTEM_PROMPT_TOKENS,
-    _TOKENS_PER_DEFERRED_TOOL,
-    _TOKENS_PER_SKILL_STUB,
-    _TRANSCRIPT_TAIL_BYTES,
     _estimate_static_overhead,
-    _extract_usage,
     _read_transcript_tail,
     _read_transcript_anchor,
     _read_manifest_anchor,
     _try_phase2_transcript,
-    _apply_overhead_from_cache,
     inject_context_overhead,
 )
 
@@ -708,8 +701,8 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     sys_blocks = conv_blocks = 0
     if has_overhead:
         sys_overhead = min(state["sys_overhead_tokens"], ctx_total)
-        sys_pct = (sys_overhead * 100) // ctx_total if ctx_total > 0 else 0
-        sys_pct = min(sys_pct, total_pct)
+        raw_sys_pct = (sys_overhead * 100) // ctx_total if ctx_total > 0 else 0
+        sys_pct = min(raw_sys_pct, total_pct)
         sys_blocks = min((sys_pct * width) // 100, filled)
         conv_blocks = filled - sys_blocks
         free_blocks = width - filled
@@ -728,8 +721,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     total_sev = 2 if total_pct >= crit_t else (1 if total_pct >= warn_t else 0)
     sys_sev = 0
     if has_overhead:
-        sys_pct_of_window = (min(state["sys_overhead_tokens"], ctx_total) * 100) // ctx_total if ctx_total > 0 else 0
-        sys_sev = 2 if sys_pct_of_window >= sys_crit_t else (1 if sys_pct_of_window >= sys_warn_t else 0)
+        sys_sev = 2 if raw_sys_pct >= sys_crit_t else (1 if raw_sys_pct >= sys_warn_t else 0)
     sev = max(total_sev, sys_sev)
 
     # Cache health: degraded forces warn severity, busting forces critical

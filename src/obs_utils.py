@@ -398,10 +398,17 @@ def generate_overhead_report(
         except (json.JSONDecodeError, ValueError):
             continue
 
-        usage = _extract_report_usage(entry)
-        if usage is None:
-            continue
-        turns.append(usage)
+        msg = entry.get("message")
+        if isinstance(msg, dict) and msg.get("stop_reason") is not None:
+            usage = msg.get("usage")
+            if isinstance(usage, dict):
+                turns.append(usage)
+                continue
+        tur = entry.get("toolUseResult")
+        if isinstance(tur, dict):
+            usage = tur.get("usage")
+            if isinstance(usage, dict):
+                turns.append(usage)
 
     if not turns:
         return None
@@ -453,24 +460,6 @@ def generate_overhead_report(
 
     return report
 
-
-def _extract_report_usage(entry: dict) -> dict | None:
-    """Extract usage from transcript entry for report generation."""
-    msg = entry.get("message")
-    if isinstance(msg, dict):
-        stop = msg.get("stop_reason")
-        if stop is not None:
-            usage = msg.get("usage")
-            if isinstance(usage, dict):
-                return usage
-
-    tur = entry.get("toolUseResult")
-    if isinstance(tur, dict):
-        usage = tur.get("usage")
-        if isinstance(usage, dict):
-            return usage
-
-    return None
 
 
 def update_health(
