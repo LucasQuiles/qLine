@@ -28,6 +28,17 @@
 # width = 10                        # progress bar character width
 # warn_threshold = 40.0             # % context used → yellow
 # critical_threshold = 70.0         # % context used → red
+# Overhead monitor: dual-bar colors (system overhead vs conversation)
+# sys_color = "#d08070"
+# conv_color = "#80b0d0"
+# System overhead thresholds (% of total context window)
+# sys_warn_threshold = 30.0
+# sys_critical_threshold = 50.0
+# Cache health thresholds (prompt cache hit rate)
+# cache_warn_rate = 0.8
+# cache_critical_rate = 0.3
+# Data source: "auto" | "measured" | "estimated" | "off"
+# overhead_source = "auto"
 
 # [cost]
 # enabled = true
