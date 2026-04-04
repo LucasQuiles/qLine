@@ -185,6 +185,10 @@ def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
         except (json.JSONDecodeError, ValueError):
             continue
 
+        # Skip sidechain entries (subagent forks have separate cache state)
+        if entry.get("isSidechain") is True:
+            continue
+
         usage, req_id = _extract_usage(entry)
         if usage is None:
             continue
@@ -335,7 +339,7 @@ def _try_phase2_transcript(
     if session_cache.get("sys_overhead_source") != "estimated":
         session_cache["sys_overhead_source"] = "measured"
     session_cache["cache_hit_rate"] = result["cache_hit_rate"]
-    session_cache["trailing_turns"] = result["trailing_turns"][-5:]
+    session_cache["trailing_turns"] = result["trailing_turns"][-window:]
 
     # Per-turn injection delta: what was written to cache THIS turn
     trailing = result["trailing_turns"]
