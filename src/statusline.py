@@ -504,10 +504,21 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(worktree, bool):
         state["is_worktree"] = worktree
 
-    # Optional: current_usage
-    current_usage = payload.get("current_usage")
+    # Optional: current_usage (per-turn cache tokens from context_window)
+    current_usage = None
+    if isinstance(ctx_window, dict):
+        current_usage = ctx_window.get("current_usage")
+    if not isinstance(current_usage, dict):
+        current_usage = payload.get("current_usage")
     if isinstance(current_usage, dict):
         state["current_usage"] = current_usage
+        # Extract cache tokens for direct use (avoids transcript parsing)
+        cc = current_usage.get("cache_creation_input_tokens")
+        cr = current_usage.get("cache_read_input_tokens")
+        if isinstance(cc, (int, float)):
+            state["payload_cache_create"] = int(cc)
+        if isinstance(cr, (int, float)):
+            state["payload_cache_read"] = int(cr)
 
     # Optional: agent_id
     agent_id = payload.get("agent_id")
