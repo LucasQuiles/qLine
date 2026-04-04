@@ -36,6 +36,10 @@ _MCP_TOKENS_PER_SERVER_FULL = 1500
 _DEFERRED_TOOL_LISTING_TOKENS = 16  # per tool, in system-reminder block
 _MCP_INSTRUCTION_TOKENS = 300       # per server, usage guidance injected
 _SYSTEM_REMINDER_FRAMING = 650      # XML tags, formatting overhead
+# Session-start overhead: skills with SessionStart hooks get their full
+# content expanded into system-reminders. Plus plugin hook instructions,
+# MCP connection status messages, and per-block XML tag framing.
+_SESSION_START_OVERHEAD = 3500      # Measured: ~3.5k from hook expansions + framing
 
 
 def _estimate_static_overhead(
@@ -52,7 +56,7 @@ def _estimate_static_overhead(
 
     Returns a lower-bound token count.
     """
-    total = _SYSTEM_PROMPT_TOKENS  # ~6.2k measured
+    total = _SYSTEM_PROMPT_TOKENS + _SESSION_START_OVERHEAD
 
     if claude_md_paths is None:
         candidates = [os.path.expanduser("~/.claude/CLAUDE.md")]
