@@ -369,10 +369,11 @@ def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
     #
     # Server-side tool inflation guard: web_search and web_fetch accumulate
     # internal API cache_reads that aren't real conversation cache hits.
-    # These show as outlier spikes where cache_read >> anchor value.
-    # Cap per-turn cache_read at 3x anchor to prevent distortion.
-    anchor_val = turn_1_anchor or 0
-    read_cap = anchor_val * 3 if anchor_val > 0 else float("inf")
+    # These show as outlier spikes where cache_read >> median of the window.
+    # Cap at 3x median to catch spikes without clipping normal growth.
+    reads = sorted(t["cache_read"] for t in trailing)
+    median_read = reads[len(reads) // 2] if reads else 0
+    read_cap = max(median_read * 3, 1) if median_read > 0 else float("inf")
     weighted_read = 0.0
     weighted_total = 0.0
     n = len(trailing)
