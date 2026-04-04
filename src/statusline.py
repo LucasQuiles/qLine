@@ -346,6 +346,17 @@ def style_dim(text: str) -> str:
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 
+def _darken_hex(hex_color: str, factor: float = 0.55) -> str:
+    """Darken a hex color by a factor (0=black, 1=unchanged)."""
+    rgb = _parse_hex(hex_color)
+    if not rgb:
+        return hex_color
+    r = int(rgb[0] * factor)
+    g = int(rgb[1] * factor)
+    b = int(rgb[2] * factor)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 def _visible_len(text: str) -> int:
     """Return visible character count, stripping ANSI escape sequences."""
     return len(_ANSI_RE.sub("", text))
@@ -774,17 +785,15 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             token_prefix = f"\u2191{_abbreviate_count(inp)}\u2193{_abbreviate_count(out)} "
 
     if has_overhead and not NO_COLOR:
-        # Per-segment coloring: each bar segment gets its own fg + shared bg
+        # Semantic bar coloring: segments derive from the computed severity color.
+        # sys blocks = darkened severity color (heavy/dim)
+        # conv blocks = severity color itself (active/bright)
+        # free blocks = muted gray (available)
+        # The entire bar shifts with health state: teal → yellow → red.
         bg_hex = cfg.get("bg")
-        # Semantic coloring: frost family (dark→light), critical overrides all
-        if state.get("cache_busting") is True and source == "measured":
-            sys_color_hex = cfg.get("critical_color", "#bf616a")
-            conv_color_hex = cfg.get("critical_color", "#bf616a")
-            free_color_hex = "#4c566a"  # nord3 muted
-        else:
-            sys_color_hex = cfg.get("sys_color", "#5e81ac")
-            conv_color_hex = cfg.get("conv_color", "#88c0d0")
-            free_color_hex = "#4c566a"  # nord3 — muted gray (empty/available)
+        conv_color_hex = color  # severity color (teal/yellow/red)
+        sys_color_hex = _darken_hex(color, 0.55)  # same hue, darker
+        free_color_hex = "#4c566a"  # nord3 muted gray
         pre = style(f" {token_prefix}{glyph}", color, bold, bg_hex)
         bar_styled = ""
         if sys_blocks > 0:

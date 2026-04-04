@@ -1993,12 +1993,11 @@ state = {
     'cache_degraded': False,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-# Should have critical color for sys blocks AND conv blocks
-# critical_color = #d06070 = RGB(208,96,112)
-crit_rgb = '38;2;191;97;106'
-# Count occurrences — both sys and conv segments should use it
-count = result.count(crit_rgb)
-assert count >= 2, f'expected critical color in both segments, found {count} occurrences in {repr(result[:300])}'
+# Severity-derived: sys = darkened critical, conv = critical
+crit_conv = '38;2;191;97;106'   # #bf616a critical
+crit_sys = '38;2;105;53;58'     # darkened critical
+assert crit_conv in result, f'conv should use critical color, got: {repr(result[:300])}'
+assert crit_sys in result, f'sys should use darkened critical, got: {repr(result[:300])}'
 assert '\u26a1' in result, f'should show ⚡'
 print('OK')
 ")
@@ -2059,17 +2058,17 @@ assert_contains "warm cache anchor" "$OUT" "OK"
 echo "  dual-bar: sys_color and conv_color are applied"
 OUT=$(run_py_color "
 from statusline import render_context_bar, DEFAULT_THEME
+# 20% usage (below warn threshold) → healthy state → teal color family
 state = {
-    'context_used': 400000,
+    'context_used': 200000,
     'context_total': 1000000,
-    'sys_overhead_tokens': 300000,
+    'sys_overhead_tokens': 50000,
     'sys_overhead_source': 'measured',
 }
 result = render_context_bar(state, DEFAULT_THEME)
-# sys_color default #d08070 = RGB(208,128,112)
-assert '38;2;94;129;172' in result, f'sys_color (#5e81ac) ANSI not found in: {repr(result)}'
-# conv_color default #80b0d0 = RGB(128,176,208)
-assert '38;2;136;192;208' in result, f'conv_color ANSI not found in: {repr(result)}'
+# Healthy color #8fbcbb → darkened sys = RGB(78,103,102), conv = RGB(143,188,187)
+assert '38;2;78;103;102' in result, f'sys (darkened healthy) not found in: {repr(result)}'
+assert '38;2;143;188;187' in result, f'conv (healthy teal) not found in: {repr(result)}'
 print('OK')
 ")
 assert_equals "per-segment coloring" "$OUT" "OK"
