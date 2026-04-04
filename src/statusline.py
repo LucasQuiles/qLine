@@ -766,9 +766,18 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         free_blocks = width - filled
         bar = "\u2588" * filled + "\u2591" * free_blocks
 
-    # Threshold: system overhead vs total usage, more severe wins
-    warn_t = cfg.get("warn_threshold", 40.0)
-    crit_t = cfg.get("critical_threshold", 70.0)
+    # Threshold: system overhead vs total usage.
+    # When CC's autocompact threshold is known (from source-verified constants),
+    # use it for dynamic warn/critical. Otherwise fall back to static config.
+    cc_compact_pct = state.get("cc_autocompact_pct")
+    cc_block_pct = state.get("cc_blocking_pct")
+    if cc_compact_pct:
+        # Warn at 80% of autocompact, critical at autocompact threshold
+        warn_t = round(cc_compact_pct * 0.80, 1)
+        crit_t = cc_compact_pct
+    else:
+        warn_t = cfg.get("warn_threshold", 40.0)
+        crit_t = cfg.get("critical_threshold", 70.0)
     sys_warn_t = cfg.get("sys_warn_threshold", 30.0)
     sys_crit_t = cfg.get("sys_critical_threshold", 50.0)
 
