@@ -322,6 +322,14 @@ def _try_phase2_transcript(
         anchor = _estimate_static_overhead()
         session_cache["turn_1_anchor"] = anchor
         session_cache["sys_overhead_source"] = "estimated"  # Downgrade source
+    else:
+        # Calibration: compare measured anchor to static estimate.
+        # Ratio >1 means static underestimates; <1 means overestimates.
+        # This is informational — helps tune _TOKENS_PER_BYTE et al.
+        if "calibration_ratio" not in session_cache:
+            estimate = _estimate_static_overhead()
+            if estimate > 0:
+                session_cache["calibration_ratio"] = round(anchor / estimate, 3)
 
     session_cache["sys_overhead_tokens"] = anchor
     if session_cache.get("sys_overhead_source") != "estimated":
