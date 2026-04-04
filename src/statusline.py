@@ -486,6 +486,11 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(agent_id, str) and agent_id:
         state["agent_id"] = agent_id
 
+    # Transcript path (for overhead monitor Phase 2)
+    transcript_path = payload.get("transcript_path")
+    if isinstance(transcript_path, str) and transcript_path:
+        state["transcript_path"] = transcript_path
+
     return state
 
 

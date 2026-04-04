@@ -432,6 +432,26 @@ print('IN:' + str(state.get('input_tokens', 'ABSENT')))
 ")
 assert_contains "N-11: tokens absent when fields missing" "$OUT" "IN:ABSENT"
 
+# N-12: transcript_path extracted from payload
+OUT=$(run_py "
+import json
+from statusline import normalize
+payload = json.load(open('$FIXTURES/valid-full.json'))
+state = normalize(payload)
+print(state.get('transcript_path', 'MISSING'))
+")
+assert_equals "N-12: transcript_path extracted" "$OUT" "/tmp/transcript.json"
+
+# N-13: transcript_path absent when not in payload
+OUT=$(run_py "
+import json
+from statusline import normalize
+payload = json.load(open('$FIXTURES/valid-minimal.json'))
+state = normalize(payload)
+print(state.get('transcript_path', 'ABSENT'))
+")
+assert_equals "N-13: transcript_path absent" "$OUT" "ABSENT"
+
 echo ""
 fi
 
