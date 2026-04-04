@@ -2704,6 +2704,33 @@ os.unlink(tmpf.name)
 ")
 assert_contains "CC-verified: decay responsiveness" "$OUT" "OK"
 
+echo "  CC-verified: output tokens correction applied to context bar"
+OUT=$(run_py "
+from statusline import render_context_bar, DEFAULT_THEME
+import copy
+
+# With used_percentage source: output tokens should be ADDED
+state_pct = {
+    'context_used': 150000,      # from used_percentage (excludes output)
+    'context_total': 1000000,
+    'input_tokens': 150000,
+    'output_tokens': 50000,
+    'context_used_corrected': 200000,  # 150k + 50k output
+}
+result_pct = render_context_bar(state_pct, DEFAULT_THEME)
+assert '20%' in result_pct, f'corrected should show 20%, got: {result_pct}'
+
+# Without correction field: should use original context_used
+state_no_corr = {
+    'context_used': 150000,
+    'context_total': 1000000,
+}
+result_no = render_context_bar(state_no_corr, DEFAULT_THEME)
+assert '15%' in result_no, f'uncorrected should show 15%, got: {result_no}'
+print('OK')
+")
+assert_equals "CC-verified: output correction" "$OUT" "OK"
+
 echo "  stability: zero context_total does not crash threshold computation"
 OUT=$(run_py "
 from context_overhead import compute_context_thresholds
