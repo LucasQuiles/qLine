@@ -1932,6 +1932,47 @@ os.unlink(tmpf.name)
 ")
 assert_equals "phase2 no-requestId distinct" "$OUT" "OK"
 
+echo "  Phase 2: filters sidechain entries (subagent forks)"
+OUT=$(run_py "
+import json, tempfile, os
+from context_overhead import _read_transcript_tail
+
+tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+# Main thread turn 1
+json.dump({'type': 'assistant', 'message': {
+    'stop_reason': 'end_turn',
+    'usage': {
+        'input_tokens': 50, 'cache_creation_input_tokens': 42000,
+        'cache_read_input_tokens': 0, 'output_tokens': 200
+    }
+}}, tmpf); tmpf.write('\n')
+# Sidechain turn (subagent) — should be excluded
+json.dump({'type': 'assistant', 'isSidechain': True, 'message': {
+    'stop_reason': 'end_turn',
+    'usage': {
+        'input_tokens': 50, 'cache_creation_input_tokens': 15000,
+        'cache_read_input_tokens': 0, 'output_tokens': 100
+    }
+}}, tmpf); tmpf.write('\n')
+# Main thread turn 2
+json.dump({'type': 'assistant', 'message': {
+    'stop_reason': 'end_turn',
+    'usage': {
+        'input_tokens': 100, 'cache_creation_input_tokens': 200,
+        'cache_read_input_tokens': 42000, 'output_tokens': 300
+    }
+}}, tmpf); tmpf.write('\n')
+tmpf.close()
+
+result = _read_transcript_tail(tmpf.name)
+assert result is not None
+# Should be 2 turns (sidechain excluded), not 3
+assert len(result['trailing_turns']) == 2, f'expected 2, got {len(result[\"trailing_turns\"])}'
+print('OK')
+os.unlink(tmpf.name)
+")
+assert_equals "phase2 sidechain filter" "$OUT" "OK"
+
 echo "  Phase 2: handles toolUseResult.usage path"
 OUT=$(run_py "
 import json, tempfile, os
