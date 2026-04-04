@@ -82,6 +82,31 @@ if [ -f "$OVERHEAD_SRC" ]; then
     echo "Installed: $OVERHEAD_DEST"
 fi
 
+# Install shared scripts (obs_utils.py, hook_utils.py)
+SCRIPTS_DIR="$DEST_DIR/scripts"
+mkdir -p "$SCRIPTS_DIR"
+for script in "$SCRIPT_DIR/scripts/"*.py; do
+    [ -f "$script" ] || continue
+    cp "$script" "$SCRIPTS_DIR/"
+    echo "Installed: $SCRIPTS_DIR/$(basename "$script")"
+done
+
+# Install observability hooks
+HOOKS_DIR="$DEST_DIR/hooks"
+mkdir -p "$HOOKS_DIR"
+HOOKS_INSTALLED=0
+for hook in "$SCRIPT_DIR/hooks/obs-"*.py; do
+    [ -f "$hook" ] || continue
+    cp "$hook" "$HOOKS_DIR/"
+    chmod +x "$HOOKS_DIR/$(basename "$hook")"
+    HOOKS_INSTALLED=$((HOOKS_INSTALLED + 1))
+done
+if [ "$HOOKS_INSTALLED" -gt 0 ]; then
+    echo "Installed: $HOOKS_INSTALLED observability hooks to $HOOKS_DIR/"
+else
+    echo "NOTE: No obs hooks found in repo — observability will be limited"
+fi
+
 # Fix shebang only if `python3` doesn't exist or is too old
 if ! command -v python3 > /dev/null 2>&1; then
     # python3 missing — use whatever we found
