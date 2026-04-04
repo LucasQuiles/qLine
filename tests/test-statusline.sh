@@ -1940,6 +1940,55 @@ os.unlink(tmpf.name)
 import shutil; shutil.rmtree(pkg)
 ")
 assert_equals "forensics report" "$LAST_STDOUT" "OK"
+
+echo "  integration: full pipeline with transcript produces dual-bar"
+INTEGRATION_TRANSCRIPT="/tmp/qline-integration-test-$$.jsonl"
+python3 -c "
+import json
+with open('$INTEGRATION_TRANSCRIPT', 'w') as f:
+    json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+        'input_tokens': 50, 'cache_creation_input_tokens': 45000,
+        'cache_read_input_tokens': 0, 'output_tokens': 200
+    }}}, f)
+    f.write('\n')
+    for i in range(3):
+        json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
+            'input_tokens': 100 + i*50, 'cache_creation_input_tokens': 200,
+            'cache_read_input_tokens': 45000 + i*500, 'output_tokens': 300
+        }}}, f)
+        f.write('\n')
+"
+
+rm -f /tmp/qline-cache.json
+
+INPUT=$(cat <<ENDJSON
+{
+  "hook_event_name": "Status",
+  "session_id": "integration-test-$$",
+  "transcript_path": "$INTEGRATION_TRANSCRIPT",
+  "model": {"id": "claude-opus-4-6", "display_name": "Opus 4.6 (1M context)"},
+  "workspace": {"current_dir": "/home/q/LAB/qLine"},
+  "cost": {"total_cost_usd": 1.50, "total_duration_ms": 60000},
+  "context_window": {
+    "total_input_tokens": 150000,
+    "total_output_tokens": 50000,
+    "context_window_size": 1000000,
+    "used_percentage": 20,
+    "remaining_percentage": 80
+  }
+}
+ENDJSON
+)
+
+LAST_STDOUT=$(printf '%s' "$INPUT" | NO_COLOR=1 QLINE_NO_COLLECT=1 python3 "$SRC" 2>/dev/null)
+LAST_EXIT=$?
+assert_exit_zero "integration pipeline" "$LAST_EXIT"
+assert_not_empty "integration output" "$LAST_STDOUT"
+# The dual-bar should show medium shade blocks (▓) for conversation
+# since we have transcript data with 45k system overhead in a 200k used / 1M window
+assert_contains "integration has conv blocks" "$LAST_STDOUT" "▓"
+
+rm -f "$INTEGRATION_TRANSCRIPT" /tmp/qline-cache.json
 fi
 
 # ======================================================================
