@@ -57,6 +57,17 @@ CC_AUTOCOMPACT_BUFFER = 13_000 # W68: reserved for compaction request
 CC_WARNING_OFFSET = 20_000     # _a1: offset below effective for warning
 CC_ERROR_OFFSET = 20_000       # qa1: offset below effective for error
 CC_BLOCKING_BUFFER = 3_000     # R68: hard blocking limit buffer
+# CC internal estimation: Cs6 = 4 chars per token (0.25 tokens/char).
+# Our _TOKENS_PER_BYTE = 0.325 is more accurate vs real tokenizer output.
+CC_CHARS_PER_TOKEN = 4         # Cs6: CC's internal rough estimate
+# Per-tool maxResultSizeChars (from tool definitions, verified):
+CC_TOOL_BUDGET_BASH = 30_000   # chars, before persisting to disk
+CC_TOOL_BUDGET_GREP = 20_000   # chars, before persisting to disk
+CC_TOOL_BUDGET_DEFAULT = 1     # other tools use 2000-char preview path
+CC_PERSISTED_PREVIEW = 2_000   # Fy6: preview chars for persisted output
+# MicroCompact: per-message-group tool result budget
+CC_MESSAGE_TOOL_BUDGET = 200_000  # AR4: chars per message group
+# Feature flag: tengu_hawthorn_steeple gates MicroCompact
 
 
 def _estimate_static_overhead(
@@ -146,23 +157,17 @@ def _estimate_static_overhead(
         pass
     n_mcp_servers = len(mcp_server_names) if mcp_server_names else 5  # Fallback
 
-    # Deferral detection: CC defers tools when MCP schema total exceeds
-    # 10% of context window. Estimate undeferred cost to check.
-    undeferred_mcp = n_mcp_servers * _MCP_TOKENS_PER_SERVER_FULL
-    deferral_threshold = context_window * 0.10
-    tools_deferred = (undeferred_mcp + _SYSTEM_TOOLS_TOKENS) > deferral_threshold
-
-    if tools_deferred:
-        total += _SYSTEM_TOOLS_DEFERRED_TOKENS
-        total += n_mcp_servers * _MCP_TOKENS_PER_SERVER_DEFERRED
-        # Deferred tool listing: all tool names are injected as a
-        # system-reminder block. Estimate ~20 tools per MCP server +
-        # ~25 built-in deferred tools.
-        n_deferred_tools = n_mcp_servers * 20 + 25
-        total += n_deferred_tools * _DEFERRED_TOOL_LISTING_TOKENS
-    else:
-        total += _SYSTEM_TOOLS_TOKENS
-        total += undeferred_mcp
+    # Tool deferral (VERIFIED from CC v2.1.92 npm source, isDeferredTool):
+    # - ALL MCP tools are ALWAYS deferred (isMcp === true → deferred)
+    # - Built-in tools have static shouldDefer boolean
+    # - There is NO dynamic percentage threshold — deferral is structural
+    # So MCP tools always use deferred cost, built-in tools are split.
+    total += _SYSTEM_TOOLS_DEFERRED_TOKENS  # Built-in deferred stubs
+    total += n_mcp_servers * _MCP_TOKENS_PER_SERVER_DEFERRED
+    # Deferred tool listing: all deferred tool names injected as system-reminder.
+    # ~20 tools per MCP server + ~25 built-in deferred tools.
+    n_deferred_tools = n_mcp_servers * 20 + 25
+    total += n_deferred_tools * _DEFERRED_TOOL_LISTING_TOKENS
 
     # MCP server instructions: injected regardless of deferral mode.
     # Each server contributes auth info + usage guidance as system-reminder.
