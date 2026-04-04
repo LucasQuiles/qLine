@@ -836,6 +836,45 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         def _mkpill(text, c, bg=bg_hex, b=False):
             return style(text, c, b, bg)
 
+        def _blink(text, c):
+            """ANSI slow blink (SGR 5) for critical alerts."""
+            if NO_COLOR:
+                return text
+            rgb = _parse_hex(c)
+            if not rgb:
+                return text
+            return f"\033[5;1;38;2;{rgb[0]};{rgb[1]};{rgb[2]}m{text}\033[0m"
+
+        def _reverse(text, c):
+            """ANSI reverse video for warn alerts."""
+            if NO_COLOR:
+                return text
+            rgb = _parse_hex(c)
+            if not rgb:
+                return text
+            return f"\033[7;1;38;2;{rgb[0]};{rgb[1]};{rgb[2]}m{text}\033[0m"
+
+        # ── Dynamic alert messages ──
+        alert = None
+        alert_color = "#bf616a"  # nord11 red
+        warn_color_hex = "#ebcb8b"  # nord13 yellow
+
+        if state.get("cache_busting") is True:
+            alert = _blink("\U000f04bf CACHE BUSTED", alert_color)
+        elif state.get("cache_expired") is True:
+            alert = _reverse("\U000f0150 CACHE EXPIRED", warn_color_hex)
+        elif state.get("microcompact_suspected") is True:
+            alert = _reverse("\U000f0456 MICROCOMPACT", warn_color_hex)
+        elif has_overhead and raw_sys_pct >= sys_crit_t:
+            alert = _blink("\U000f0cf2 SYS BLOAT", alert_color)
+        elif total_pct >= crit_t:
+            alert = _blink("\U000f02d1 HEAVY CONTEXT", alert_color)
+        elif state.get("cache_degraded") is True:
+            alert = _reverse("\U000f04c5 CACHE DEGRADED", warn_color_hex)
+
+        # [ALERT] — dynamic messages for critical/warn states
+        if alert:
+            pills.append(alert)
         # [↑count]
         if "input_tokens" in state and state["input_tokens"] > 0:
             pills.append(_mkpill(f"\u2191{_abbreviate_count(state['input_tokens'])}", color, b=bold))
@@ -877,6 +916,19 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     # NO_COLOR fallback — bracket-delimited segments
     bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
     parts = []
+    # Alert messages (NO_COLOR uses caps text)
+    if state.get("cache_busting") is True:
+        parts.append("[!! CACHE BUSTED !!]")
+    elif state.get("cache_expired") is True:
+        parts.append("[! CACHE EXPIRED]")
+    elif state.get("microcompact_suspected") is True:
+        parts.append("[! MICROCOMPACT]")
+    elif has_overhead and raw_sys_pct >= sys_crit_t:
+        parts.append("[!! SYS BLOAT !!]")
+    elif total_pct >= crit_t:
+        parts.append("[!! HEAVY CONTEXT !!]")
+    elif state.get("cache_degraded") is True:
+        parts.append("[! CACHE DEGRADED]")
     if "input_tokens" in state and state.get("input_tokens", 0) > 0:
         parts.append(f"[\u2191{_abbreviate_count(state['input_tokens'])}]")
     if "output_tokens" in state and state.get("output_tokens", 0) > 0:
