@@ -26,34 +26,13 @@ from obs_utils import (
     append_event,
     record_error,
     _atomic_jsonl_append,
+    _now_iso,
+    _load_read_state,
+    _save_read_state,
 )
 
 _HOOK_NAME = "obs-pretool-read"
 _EVENT_NAME = "PreToolUse"
-
-
-def _load_read_state(state_path: str) -> dict[str, Any]:
-    """Load read state sidecar. Returns {} on any error."""
-    try:
-        with open(state_path) as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-
-
-def _save_read_state(state_path: str, state: dict) -> None:
-    """Write read state sidecar atomically. Never raises."""
-    try:
-        parent = os.path.dirname(state_path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        tmp_path = state_path + ".tmp"
-        with open(tmp_path, "w") as f:
-            json.dump(state, f)
-        os.replace(tmp_path, state_path)
-    except Exception:
-        pass
 
 
 def main() -> None:
@@ -106,11 +85,6 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Step 3: Build read record for custom/reads.jsonl
     # ------------------------------------------------------------------
-    from datetime import datetime, timezone
-
-    def _now_iso() -> str:
-        return datetime.now(timezone.utc).isoformat()
-
     read_record: dict[str, Any] = {
         "ts": _now_iso(),
         "session_id": session_id,

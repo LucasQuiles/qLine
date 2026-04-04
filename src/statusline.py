@@ -39,14 +39,7 @@ except ModuleNotFoundError:
 from datetime import datetime, timezone
 from typing import Any
 
-from context_overhead import (
-    _estimate_static_overhead,
-    _read_transcript_tail,
-    _read_transcript_anchor,
-    _read_manifest_anchor,
-    _try_phase2_transcript,
-    inject_context_overhead,
-)
+from context_overhead import inject_context_overhead
 
 # --- Observability integration (guarded import) ---
 try:

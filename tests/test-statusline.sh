@@ -1790,7 +1790,7 @@ assert_equals "sys_overhead module" "$LAST_STDOUT" "OK"
 echo "  Phase 1: static estimate returns reasonable value"
 OUT=$(run_py "
 import os, tempfile
-from statusline import _estimate_static_overhead
+from context_overhead import _estimate_static_overhead
 
 tmpdir = tempfile.mkdtemp()
 claude_md = os.path.join(tmpdir, 'CLAUDE.md')
@@ -1809,7 +1809,7 @@ assert_equals "phase1 estimate" "$OUT" "OK"
 echo "  Phase 2: first-turn anchoring from transcript"
 OUT=$(run_py "
 import json, tempfile, os
-from statusline import _read_transcript_tail
+from context_overhead import _read_transcript_tail
 
 tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
 # Turn 1: streaming stub (skip)
@@ -1847,7 +1847,7 @@ assert_equals "phase2 anchor" "$OUT" "OK"
 echo "  Phase 2: skips streaming stubs"
 OUT=$(run_py "
 import json, tempfile, os
-from statusline import _read_transcript_tail
+from context_overhead import _read_transcript_tail
 
 tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
 json.dump({'type': 'assistant', 'message': {'stop_reason': None, 'usage': {
@@ -1866,7 +1866,7 @@ assert_equals "phase2 skip stubs" "$OUT" "OK"
 echo "  Phase 2: handles toolUseResult.usage path"
 OUT=$(run_py "
 import json, tempfile, os
-from statusline import _read_transcript_tail
+from context_overhead import _read_transcript_tail
 
 tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
 json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
@@ -1891,7 +1891,7 @@ assert_equals "phase2 toolUseResult" "$OUT" "OK"
 echo "  Phase 2: handles truncated last line"
 OUT=$(run_py "
 import json, tempfile, os
-from statusline import _read_transcript_tail
+from context_overhead import _read_transcript_tail
 
 tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
 json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
@@ -1947,7 +1947,7 @@ assert_equals "cache boundary 0.8" "$OUT" "OK"
 echo "  cache health: fewer than 2 turns has no turns data"
 OUT=$(run_py "
 import json, tempfile, os
-from statusline import _read_transcript_tail
+from context_overhead import _read_transcript_tail
 tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
 json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
     'input_tokens': 50, 'cache_creation_input_tokens': 42000,
@@ -1966,7 +1966,7 @@ assert_equals "cache <2 turns" "$OUT" "OK"
 echo "  anchor: reads from file start, not tail"
 OUT=$(run_py "
 import json, tempfile, os
-from statusline import _read_transcript_anchor
+from context_overhead import _read_transcript_anchor
 
 tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
 # Turn 1 (the anchor) at the START
@@ -2049,7 +2049,7 @@ assert_equals "busting critical color" "$OUT" "OK"
 
 echo "  config: cache thresholds read from config"
 OUT=$(run_py "
-from statusline import _try_phase2_transcript
+from context_overhead import _try_phase2_transcript
 import json, tempfile, os
 
 tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
@@ -2410,7 +2410,7 @@ assert_equals "hook integration" "$LAST_STDOUT" "OK"
 echo "  anchor migration: _read_manifest_anchor reads from manifest"
 LAST_STDOUT=$(run_py "
 import json, os, sys, tempfile
-from statusline import _read_manifest_anchor
+from context_overhead import _read_manifest_anchor
 
 pkg = tempfile.mkdtemp()
 with open(os.path.join(pkg, 'manifest.json'), 'w') as f:

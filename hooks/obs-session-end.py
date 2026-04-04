@@ -7,7 +7,6 @@ All I/O is bounded: symlink (not copy), line-count only for event ledger, no hea
 import json
 import os
 import sys
-from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
 from hook_utils import read_hook_input, run_fail_open
@@ -19,11 +18,8 @@ from obs_utils import (
     register_artifact,
     record_error,
     generate_overhead_report,
+    _now_iso,
 )
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _count_lines(path: str) -> int:

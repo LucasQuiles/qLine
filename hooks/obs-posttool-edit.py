@@ -18,32 +18,12 @@ from obs_utils import (
     register_artifact,
     record_error,
     update_health,
+    _load_read_state,
+    _save_read_state,
 )
 
 _HOOK_NAME = "obs-posttool-edit"
 _EVENT_NAME = "PostToolUse"
-
-
-def _load_read_state(state_path: str) -> dict[str, Any]:
-    try:
-        with open(state_path) as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-
-
-def _save_read_state(state_path: str, state: dict) -> None:
-    try:
-        parent = os.path.dirname(state_path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        tmp_path = state_path + ".tmp"
-        with open(tmp_path, "w") as f:
-            json.dump(state, f)
-        os.replace(tmp_path, state_path)
-    except Exception:
-        pass
 
 
 def _build_patch_from_structured(file_path: str, structured_patch: list) -> tuple[str, int, int]:

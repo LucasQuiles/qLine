@@ -11,8 +11,6 @@ Steps:
 """
 import os
 import sys
-from datetime import datetime, timezone
-
 sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
 from hook_utils import read_hook_input, run_fail_open
 from obs_utils import (
@@ -22,11 +20,8 @@ from obs_utils import (
     update_manifest_array,
     record_error,
     update_health,
+    _now_iso,
 )
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def main() -> None:

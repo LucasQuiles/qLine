@@ -59,6 +59,30 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _load_read_state(state_path: str) -> dict[str, Any]:
+    """Load read state sidecar. Returns {} on any error."""
+    try:
+        with open(state_path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_read_state(state_path: str, state: dict) -> None:
+    """Write read state sidecar atomically. Never raises."""
+    try:
+        parent = os.path.dirname(state_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        tmp_path = state_path + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp_path, state_path)
+    except Exception:
+        pass
+
+
 def _atomic_jsonl_append(path: str, record: dict) -> bool:
     """O_APPEND write. Returns True on success, False on failure. Never raises."""
     try:

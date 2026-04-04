@@ -15,15 +15,9 @@ Steps:
 import json
 import os
 import sys
-from datetime import datetime, timezone
-
 sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
 from hook_utils import read_hook_input, run_fail_open
-from obs_utils import resolve_package_root, append_event, update_manifest_array
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from obs_utils import resolve_package_root, append_event, update_manifest_array, _now_iso
 
 
 def main() -> None:
