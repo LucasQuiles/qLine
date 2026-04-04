@@ -1989,6 +1989,36 @@ assert_not_empty "integration output" "$LAST_STDOUT"
 assert_contains "integration has conv blocks" "$LAST_STDOUT" "▓"
 
 rm -f "$INTEGRATION_TRANSCRIPT" /tmp/qline-cache.json
+
+echo "  obs_utils: update_manifest_if_absent_batch writes when absent"
+LAST_STDOUT=$(run_py "
+import json, os, sys, tempfile
+sys.path.insert(0, os.path.expanduser('~/.claude/scripts'))
+from obs_utils import update_manifest_if_absent_batch
+
+pkg = tempfile.mkdtemp()
+with open(os.path.join(pkg, 'manifest.json'), 'w') as f:
+    json.dump({'status': 'active'}, f)
+
+wrote = update_manifest_if_absent_batch(pkg, 'cache_anchor', {'cache_anchor': 42000, 'cache_anchor_turn': 1})
+assert wrote is True, f'first call should write, got {wrote}'
+
+with open(os.path.join(pkg, 'manifest.json')) as f:
+    m = json.load(f)
+assert m['cache_anchor'] == 42000
+
+wrote2 = update_manifest_if_absent_batch(pkg, 'cache_anchor', {'cache_anchor': 99999})
+assert wrote2 is False, f'second call should not write, got {wrote2}'
+
+with open(os.path.join(pkg, 'manifest.json')) as f:
+    m2 = json.load(f)
+assert m2['cache_anchor'] == 42000, f'should be unchanged: {m2}'
+
+print('OK')
+import shutil; shutil.rmtree(pkg)
+")
+assert_equals "manifest_if_absent" "$LAST_STDOUT" "OK"
+
 fi
 
 # ======================================================================
