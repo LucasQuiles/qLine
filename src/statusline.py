@@ -768,8 +768,13 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     if has_overhead and not NO_COLOR:
         # Per-segment coloring: each bar segment gets its own fg + shared bg
         bg_hex = cfg.get("bg")
-        sys_color_hex = cfg.get("sys_color", "#d08070")
-        conv_color_hex = cfg.get("conv_color", "#80b0d0")
+        # Per-segment coloring (overridden to critical when cache busting)
+        if state.get("cache_busting") is True and source == "measured":
+            sys_color_hex = cfg.get("critical_color", "#d06070")
+            conv_color_hex = cfg.get("critical_color", "#d06070")
+        else:
+            sys_color_hex = cfg.get("sys_color", "#d08070")
+            conv_color_hex = cfg.get("conv_color", "#80b0d0")
         pre = style(f" {token_prefix}{glyph}", color, bold, bg_hex)
         bar_styled = ""
         if sys_blocks > 0:

@@ -1972,6 +1972,29 @@ print('OK')
 ")
 assert_equals "cache busting not degraded" "$OUT" "OK"
 
+echo "  cache busting: forces entire bar to critical color"
+OUT=$(run_py_color "
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 50000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+    'cache_degraded': False,
+}
+result = render_context_bar(state, DEFAULT_THEME)
+# Should have critical color for sys blocks AND conv blocks
+# critical_color = #d06070 = RGB(208,96,112)
+crit_rgb = '38;2;208;96;112'
+# Count occurrences — both sys and conv segments should use it
+count = result.count(crit_rgb)
+assert count >= 2, f'expected critical color in both segments, found {count} occurrences in {repr(result[:300])}'
+assert '\u26a1' in result, f'should show ⚡'
+print('OK')
+")
+assert_equals "busting critical color" "$OUT" "OK"
+
 echo "  config: cache thresholds read from config"
 OUT=$(run_py "
 from statusline import _try_phase2_transcript
