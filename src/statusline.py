@@ -857,10 +857,10 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         # [󰳲 overhead]
         if has_overhead:
             oh_suffix = "\u2248" if source == "estimated" else ""
-            pills.append(_mkpill(f"\U000f0cf2 {_abbreviate_count(state['sys_overhead_tokens'])}{oh_suffix}", oh_color))
+            pills.append(_mkpill(f"\U000f0cf2 {_abbreviate_count(state['sys_overhead_tokens'])}{oh_suffix} tkn", oh_color))
         # [󰁍 writes]
         if last_cc and last_cc > 0:
-            pills.append(_mkpill(f"\U000f004d {_abbreviate_count(last_cc)}", cw_color))
+            pills.append(_mkpill(f"\U000f004d {_abbreviate_count(last_cc)} tkn", cw_color))
         # [󰓅 rate%]
         hit_rate = state.get("cache_hit_rate")
         if hit_rate is not None and source == "measured":
@@ -880,9 +880,9 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     parts.append(f"[{pct_text}]")
     if has_overhead:
         oh_suffix = "\u2248" if source == "estimated" else ""
-        parts.append(f"[\U000f0cf2 {_abbreviate_count(state['sys_overhead_tokens'])}{oh_suffix}]")
+        parts.append(f"[\U000f0cf2 {_abbreviate_count(state['sys_overhead_tokens'])}{oh_suffix} tkn]")
     if last_cc and last_cc > 0:
-        parts.append(f"[\U000f004d {_abbreviate_count(last_cc)}]")
+        parts.append(f"[\U000f004d {_abbreviate_count(last_cc)} tkn]")
     hit_rate = state.get("cache_hit_rate")
     if hit_rate is not None and source == "measured":
         parts.append(f"[\U000f04c5 {int(hit_rate * 100)}%]")
