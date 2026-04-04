@@ -834,13 +834,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         free_color_hex = "#4c566a"
 
         def _mkpill(text, c, bg=bg_hex, b=False):
-            pill_cfg = (theme or {}).get("pill", {})
-            left = pill_cfg.get("left", "")
-            right = pill_cfg.get("right", "")
-            inner = style(f" {text} ", c, b, bg)
-            if left and right and bg:
-                return style(left, bg) + inner + style(right, bg)
-            return inner
+            return style(text, c, b, bg)
 
         # [↑count]
         if "input_tokens" in state and state["input_tokens"] > 0:
@@ -856,14 +850,8 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             bar_styled += style("\u2593" * conv_blocks, conv_color_hex, bg_color=bg_hex)
         if free_blocks > 0:
             bar_styled += style("\u2591" * free_blocks, free_color_hex, bg_color=bg_hex)
-        bar_inner = style(" ", color, bg_color=bg_hex) + bar_styled + style(f" {glyph} ", color, bold, bg_hex)
-        pill_cfg = (theme or {}).get("pill", {})
-        left = pill_cfg.get("left", "")
-        right = pill_cfg.get("right", "")
-        if left and right and bg_hex:
-            pills.append(style(left, bg_hex) + bar_inner + style(right, bg_hex))
-        else:
-            pills.append(bar_inner)
+        bar_inner = bar_styled + style(glyph, color, bold, bg_hex)
+        pills.append(bar_inner)
         # [pct%]
         pills.append(_mkpill(pct_text, color, b=bold))
         # [󰳲 overhead]
@@ -878,7 +866,8 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         if hit_rate is not None and source == "measured":
             pills.append(_mkpill(f"\U000f04c5 {int(hit_rate * 100)}%", rate_color))
 
-        return "".join(pills)
+        sep = style(" ", "#4c566a", bg_color=bg_hex)
+        return sep.join(pills)
 
     # NO_COLOR fallback — bracket-delimited segments
     bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
