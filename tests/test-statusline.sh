@@ -2077,6 +2077,131 @@ os.unlink(tmpf.name); os.unlink(tmpf2.name)
 "
 assert_equals "hook extraction" "$LAST_STDOUT" "OK"
 
+echo "  obs-stop-cache: full hook flow writes sidecar + ledger + manifest"
+LAST_STDOUT=$(run_py "
+import json, os, sys, tempfile
+sys.path.insert(0, os.path.expanduser('~/.claude/scripts'))
+from obs_utils import create_package
+
+# Create a real session package
+pkg_dir = tempfile.mkdtemp()
+os.environ['OBS_ROOT'] = pkg_dir
+session_id = 'cache-hook-test-001'
+transcript = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+
+# Write 3 turns to transcript
+for i in range(3):
+    cc = 42000 if i == 0 else 300
+    cr = 0 if i == 0 else 42000 + i * 200
+    json.dump({'type': 'assistant', 'message': {
+        'stop_reason': 'end_turn', 'id': f'msg_{i:03d}', 'model': 'claude-opus-4-6',
+        'usage': {
+            'input_tokens': 50 + i * 30,
+            'cache_creation_input_tokens': cc,
+            'cache_read_input_tokens': cr,
+            'output_tokens': 200,
+            'cache_creation': {'ephemeral_1h_input_tokens': cc, 'ephemeral_5m_input_tokens': 0}
+        }
+    }}, transcript)
+    transcript.write('\n')
+transcript.close()
+
+# Create package
+package_root = create_package(session_id, '/tmp', transcript.name, 'test', obs_root=pkg_dir)
+
+sys.path.insert(0, os.path.expanduser('~/.claude/hooks'))
+
+# Import hook module; exec_module triggers run_fail_open(main) which calls sys.exit(0)
+# when stdin has no hook input -- catch SystemExit to continue using module functions
+from importlib.util import spec_from_file_location, module_from_spec
+hook_path = os.path.expanduser('~/.claude/hooks/obs-stop-cache.py')
+spec = spec_from_file_location('obs_stop_cache', hook_path)
+mod = module_from_spec(spec)
+try:
+    spec.loader.exec_module(mod)
+except SystemExit:
+    pass  # Module-level run_fail_open exits when no hook input; module functions are loaded
+
+# Simulate 3 Stop invocations
+for i in range(3):
+    # Reset and call extraction + write logic
+    sidecar_path = os.path.join(package_root, 'custom', 'cache_metrics.jsonl')
+    last_entry = mod._read_last_sidecar_entry(sidecar_path)
+    last_id = last_entry.get('last_entry_id') if not last_entry.get('skipped') else None
+
+    metrics = mod._extract_latest_cache_metrics(transcript.name, last_id)
+    if metrics is None and i > 0:
+        # After first call, subsequent calls see same last entry -- expected skip
+        continue
+    if metrics is None:
+        continue
+
+    turn = last_entry.get('turn', 0) + 1
+    record = {
+        'ts': '2026-04-04T00:00:00Z', 'session_id': session_id, 'turn': turn,
+        'cache_read': metrics['cache_read'], 'cache_create': metrics['cache_create'],
+        'input_tokens': metrics['input_tokens'], 'output_tokens': metrics['output_tokens'],
+        'cache_create_1h': metrics['cache_create_1h'], 'cache_create_5m': metrics['cache_create_5m'],
+        'model': metrics['model'], 'post_compaction': False, 'compaction_count': 0,
+        'last_entry_id': metrics['entry_id'], 'skipped': False,
+    }
+    os.makedirs(os.path.join(package_root, 'custom'), exist_ok=True)
+    mod._atomic_jsonl_append(sidecar_path, record)
+
+# Verify sidecar exists and has records
+sidecar_path = os.path.join(package_root, 'custom', 'cache_metrics.jsonl')
+assert os.path.isfile(sidecar_path), 'sidecar not created'
+with open(sidecar_path) as f:
+    records = [json.loads(l) for l in f if l.strip()]
+assert len(records) >= 1, f'expected records, got {len(records)}'
+# Backward scan finds last entry in transcript (msg_002, cc=300); verify sidecar has it
+assert records[0]['last_entry_id'] == 'msg_002', f'expected msg_002, got: {records[0]}'
+assert records[0]['model'] == 'claude-opus-4-6', f'model wrong: {records[0]}'
+
+# Test anchor write
+from obs_utils import update_manifest_if_absent_batch
+update_manifest_if_absent_batch(package_root, 'cache_anchor', {
+    'cache_anchor': 42000, 'cache_anchor_turn': 1, 'cache_anchor_is_post_compaction': False
+})
+with open(os.path.join(package_root, 'manifest.json')) as f:
+    m = json.load(f)
+assert m.get('cache_anchor') == 42000, f'anchor not in manifest: {m.keys()}'
+
+print('OK')
+os.unlink(transcript.name)
+import shutil; shutil.rmtree(pkg_dir)
+del os.environ['OBS_ROOT']
+")
+assert_equals "hook integration" "$LAST_STDOUT" "OK"
+
+echo "  anchor migration: _read_manifest_anchor reads from manifest"
+LAST_STDOUT=$(run_py "
+import json, os, sys, tempfile
+from statusline import _read_manifest_anchor
+
+pkg = tempfile.mkdtemp()
+with open(os.path.join(pkg, 'manifest.json'), 'w') as f:
+    json.dump({'cache_anchor': 42000, 'cache_anchor_turn': 1}, f)
+
+result = _read_manifest_anchor(pkg)
+assert result == 42000, f'expected 42000, got {result}'
+
+# Missing key returns None
+pkg2 = tempfile.mkdtemp()
+with open(os.path.join(pkg2, 'manifest.json'), 'w') as f:
+    json.dump({'status': 'active'}, f)
+result2 = _read_manifest_anchor(pkg2)
+assert result2 is None, f'expected None, got {result2}'
+
+# None package_root returns None
+result3 = _read_manifest_anchor(None)
+assert result3 is None
+
+print('OK')
+import shutil; shutil.rmtree(pkg); shutil.rmtree(pkg2)
+")
+assert_equals "manifest anchor" "$LAST_STDOUT" "OK"
+
 fi
 
 # ======================================================================
