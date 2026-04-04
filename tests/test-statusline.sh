@@ -1995,7 +1995,7 @@ state = {
 result = render_context_bar(state, DEFAULT_THEME)
 # Should have critical color for sys blocks AND conv blocks
 # critical_color = #d06070 = RGB(208,96,112)
-crit_rgb = '38;2;208;96;112'
+crit_rgb = '38;2;191;97;106'
 # Count occurrences — both sys and conv segments should use it
 count = result.count(crit_rgb)
 assert count >= 2, f'expected critical color in both segments, found {count} occurrences in {repr(result[:300])}'
@@ -2067,7 +2067,7 @@ state = {
 }
 result = render_context_bar(state, DEFAULT_THEME)
 # sys_color default #d08070 = RGB(208,128,112)
-assert '38;2;107;74;74' in result, f'sys_color ANSI not found in: {repr(result)}'
+assert '38;2;94;129;172' in result, f'sys_color (#5e81ac) ANSI not found in: {repr(result)}'
 # conv_color default #80b0d0 = RGB(128,176,208)
 assert '38;2;136;192;208' in result, f'conv_color ANSI not found in: {repr(result)}'
 print('OK')

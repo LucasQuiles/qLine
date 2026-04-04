@@ -29,8 +29,9 @@
 # warn_threshold = 40.0             # % context used → yellow
 # critical_threshold = 70.0         # % context used → red
 # Overhead monitor: dual-bar colors (system overhead vs conversation)
-# sys_color = "#6b4a4a"             # dark rust — system overhead (must be darker than conv)
-# conv_color = "#88c0d0"            # bright blue — conversation (must be lighter than sys)
+# sys_color = "#5e81ac"             # nord10 dark blue — system overhead (heavy/dim)
+# conv_color = "#88c0d0"            # nord8 light blue — conversation (active/bright)
+# Both from Nord frost family: dark→light = heavy→active, single color family
 # System overhead thresholds (% of total context window)
 # sys_warn_threshold = 30.0
 # sys_critical_threshold = 50.0

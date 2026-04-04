@@ -91,17 +91,16 @@ DEFAULT_THEME: dict[str, Any] = {
     "context_bar": {
         "enabled": True,
         "glyph": "\U000f02d1 ",  # nf-md-heart (Supplementary PUA)
-        "color": "#b5d4a0",
+        "color": "#8fbcbb",     # nord7 — teal (healthy: cohesive with frost bar)
         "bg": "#2e3440",
         "width": 0,  # 0 = auto (fill available width on its own line)
         "warn_threshold": 40.0,
-        "warn_color": "#f0d399",
+        "warn_color": "#ebcb8b",   # nord13 — yellow (warn: aurora accent)
         "critical_threshold": 70.0,
-        "critical_color": "#d06070",
-        # Overhead monitor: dual-bar colors
-        # sys_color must be darker/muted against bg for clear contrast with conv
-        "sys_color": "#6b4a4a",   # muted dark rust — system overhead (darker)
-        "conv_color": "#88c0d0",  # bright nordic blue — conversation (lighter)
+        "critical_color": "#bf616a", # nord11 — red (critical: aurora danger)
+        # Overhead monitor: dual-bar colors (Nord frost family, dark→light)
+        "sys_color": "#5e81ac",   # nord10 — dark blue (system: heavy/dim)
+        "conv_color": "#88c0d0",  # nord8 — light blue (conversation: active/bright)
         # Overhead monitor: system overhead thresholds (% of total context window)
         "sys_warn_threshold": 30.0,
         "sys_critical_threshold": 50.0,
@@ -777,13 +776,15 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     if has_overhead and not NO_COLOR:
         # Per-segment coloring: each bar segment gets its own fg + shared bg
         bg_hex = cfg.get("bg")
-        # Per-segment coloring (overridden to critical when cache busting)
+        # Semantic coloring: frost family (dark→light), critical overrides all
         if state.get("cache_busting") is True and source == "measured":
-            sys_color_hex = cfg.get("critical_color", "#d06070")
-            conv_color_hex = cfg.get("critical_color", "#d06070")
+            sys_color_hex = cfg.get("critical_color", "#bf616a")
+            conv_color_hex = cfg.get("critical_color", "#bf616a")
+            free_color_hex = "#4c566a"  # nord3 muted
         else:
-            sys_color_hex = cfg.get("sys_color", "#d08070")
-            conv_color_hex = cfg.get("conv_color", "#80b0d0")
+            sys_color_hex = cfg.get("sys_color", "#5e81ac")
+            conv_color_hex = cfg.get("conv_color", "#88c0d0")
+            free_color_hex = "#4c566a"  # nord3 — muted gray (empty/available)
         pre = style(f" {token_prefix}{glyph}", color, bold, bg_hex)
         bar_styled = ""
         if sys_blocks > 0:
@@ -791,7 +792,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         if conv_blocks > 0:
             bar_styled += style("\u2593" * conv_blocks, conv_color_hex, bg_color=bg_hex)
         if free_blocks > 0:
-            bar_styled += style("\u2591" * free_blocks, None, bg_color=bg_hex)
+            bar_styled += style("\u2591" * free_blocks, free_color_hex, bg_color=bg_hex)
         post = style(f"{suffix} ", color, bold, bg_hex)
         pill_cfg = (theme or {}).get("pill", {})
         left = pill_cfg.get("left", "")
