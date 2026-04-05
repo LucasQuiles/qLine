@@ -142,8 +142,8 @@ def main() -> None:
 
     cb = CircuitBreaker()
 
-    # OPEN or DEGRADED -> skip enrichment
-    if not cb.allow_request() or cb.is_degraded():
+    # OPEN -> skip entirely
+    if not cb.allow_request():
         sys.exit(0)
 
     tool_input = input_data.get("tool_input", {})
@@ -153,10 +153,6 @@ def main() -> None:
     if not should_enrich(tool_name, file_path, lines_changed):
         sys.exit(0)
 
-    api_key = _get_api_key()
-    if not api_key:
-        sys.exit(0)
-
     # Determine content and format hint
     if tool_name == "Write":
         content = tool_input.get("content", "")
@@ -164,6 +160,23 @@ def main() -> None:
     else:
         content = tool_input.get("new_string", "")
         format_hint = "diff"
+
+    # DEGRADED -> downgrade to async spool instead of sync call
+    if cb.is_degraded():
+        try:
+            from enrich_posttool_bash import write_spool_entry
+            import uuid
+            _SPOOL_ROOT = "/tmp/brick-lab/enrich-queue"
+            session_id = input_data.get("session_id", "unknown")
+            trace_id = str(uuid.uuid4())[:12]
+            write_spool_entry(_SPOOL_ROOT, tool_name, content, session_id, trace_id)
+        except Exception:
+            pass  # fail-open
+        sys.exit(0)
+
+    api_key = _get_api_key()
+    if not api_key:
+        sys.exit(0)
 
     summary = call_brick_preprocess(content, format_hint, api_key)
 

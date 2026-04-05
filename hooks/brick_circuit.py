@@ -6,6 +6,12 @@ State machine:
   HALF_OPEN + 1 success -> CLOSED
   HALF_OPEN + 1 failure -> OPEN
   Success in CLOSED/DEGRADED resets counters -> CLOSED
+
+Note: There is a theoretical TOCTOU race between _read() and _write() when
+concurrent hooks fire across different sessions. The consequence is losing
+at most one failure count, which delays a state transition by one tick.
+File locking was intentionally omitted to avoid adding latency to every
+hook call. The state machine is designed to be self-healing.
 """
 import json
 import os
