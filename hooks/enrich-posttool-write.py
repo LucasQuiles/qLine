@@ -195,9 +195,11 @@ def main() -> None:
         sys.exit(0)
 
     # Use "generic" for all tools — "diff_review" cache collisions produce
-    # hallucinated results, and "generic" + flag_risks catches more issues.
-    # Depth 2 for Edit/MultiEdit to catch subtle bugs in diffs.
-    task_class = "generic"
+    # Write = new file → "generic" (whole-file review)
+    # Edit/MultiEdit = changes → "diff_review" (change-focused, catches regressions)
+    # Cache fix deployed: fingerprint now includes content hash, so diff_review
+    # no longer collides across different content.
+    task_class = "generic" if tool_name == "Write" else "diff_review"
     t0 = time.monotonic()
     summary = call_brick_preprocess(content, format_hint, api_key, task_class=task_class)
     latency_ms = int((time.monotonic() - t0) * 1000)
