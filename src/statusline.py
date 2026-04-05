@@ -62,7 +62,10 @@ NO_COLOR = bool(os.environ.get("NO_COLOR"))
 PROC_DIR = os.environ.get("QLINE_PROC_DIR", "/proc")
 CACHE_PATH = os.environ.get("QLINE_CACHE_PATH", "/tmp/qline-cache.json")
 CACHE_MAX_AGE_S = 60.0
-_alert_state: dict[str, Any] = {}  # tracks alert onset for 5s expand/collapse
+_alert_state: dict[str, Any] = {}  # in-process cache (reset per invocation)
+# NOTE: Since the script runs once and exits per CC call, _alert_state
+# must be loaded from / saved to the disk cache for persistence.
+# The load/save happens in inject_context_overhead via cache_ctx.
 CACHE_VERSION = 1
 
 # --- Default Theme (Muted Ocean) ---
@@ -863,16 +866,33 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     elif state.get("cache_degraded") is True:
         alert_key = "degraded"
 
-    # Track onset, compute banner
+    # Track onset via disk file (script runs once per CC call, no in-memory state)
+    import time as _time
+    _ALERT_FILE = "/tmp/qline-alert.json"
     alert_glyph_str = None
     alert_crit = False
+
+    def _load_alert():
+        try:
+            with open(_ALERT_FILE) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_alert(d):
+        try:
+            with open(_ALERT_FILE, "w") as f:
+                json.dump(d, f)
+        except Exception:
+            pass
+
     if alert_key:
-        import time as _time
         now = _time.time()
-        if alert_key != _alert_state.get("key"):
-            _alert_state["key"] = alert_key
-            _alert_state["onset"] = now
-        elapsed = now - _alert_state.get("onset", now)
+        persisted = _load_alert()
+        if alert_key != persisted.get("key"):
+            persisted = {"key": alert_key, "onset": now}
+            _save_alert(persisted)
+        elapsed = now - persisted.get("onset", now)
         gdef = _ALERT_DEFS.get(alert_key, _ALERT_DEFS["degraded"])
         alert_glyph_str, alert_crit = gdef[0], gdef[1]
 
@@ -885,7 +905,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
                 msg = gdef[2]
             state["_alert_banner"] = f"{alert_glyph_str} {msg}"
     else:
-        _alert_state.clear()
+        _save_alert({})
 
     if not NO_COLOR:
         pills = []
