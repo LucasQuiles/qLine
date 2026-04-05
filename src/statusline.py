@@ -345,7 +345,10 @@ def style(text: str, hex_color: str | None = None, bold: bool = False,
             codes.append(f"48;2;{bg[0]};{bg[1]};{bg[2]}")
     if not codes:
         return text
-    return f"\033[{';'.join(codes)}m{text}\033[0m"
+    # Full reset: \033[0m clears all, \033[49m explicitly clears bg
+    # (Apple Terminal sometimes needs the explicit bg reset)
+    reset = "\033[0m" if not bg_color else "\033[0;49m"
+    return f"\033[{';'.join(codes)}m{text}{reset}"
 
 
 def style_dim(text: str) -> str:
@@ -917,12 +920,15 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             return style(text, c, b, bg)
 
         def _flash(text, c, critical=False):
-            """SGR 5 blink — terminal-native animation at ~1Hz.
+            """Alert styling — visible in ALL terminals including Apple Terminal.
 
-            This is the only animation that works between CC calls because
-            the terminal itself toggles visibility. No re-renders needed.
-            Critical: blink + bold + reverse (high visibility).
-            Warn: blink + bold (moderate visibility).
+            SGR 5 blink only works in iTerm2/kitty/WezTerm. Apple Terminal
+            ignores it. So we use reverse video (SGR 7) as the primary
+            attention-getter — it works everywhere and is highly visible.
+            SGR 5 is added as a bonus for terminals that support it.
+
+            Critical: reverse + bold + blink (white-on-color box).
+            Warn: bold + underline + blink (colored + underlined).
             """
             if NO_COLOR:
                 return text
@@ -931,9 +937,11 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
                 return text
             cc = f"38;2;{rgb[0]};{rgb[1]};{rgb[2]}"
             if critical:
-                return f"\033[5;7;1;{cc}m {text} \033[0m"  # blink+reverse+bold
+                # Reverse video: renders as bright bg block — visible everywhere
+                return f"\033[7;1;5;{cc}m {text} \033[0m"
             else:
-                return f"\033[5;1;{cc}m{text}\033[0m"        # blink+bold
+                # Bold + underline: visible in Apple Terminal without blink
+                return f"\033[1;4;5;{cc}m{text}\033[0m"
 
         # ── Dynamic alert messages ──
         # Full text shows for 5s on first appearance, then collapses
@@ -1081,30 +1089,62 @@ def render_duration(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 # --- System Collectors ---
 
 
-def collect_cpu(state: dict[str, Any]) -> None:
-    """Collect CPU load as percentage from /proc/loadavg."""
+def _collect_cpu_proc(state: dict[str, Any]) -> bool:
+    """Linux/WSL: CPU load from /proc/loadavg."""
     try:
         with open(os.path.join(PROC_DIR, "loadavg")) as f:
             content = f.read()
         if not content.strip():
-            return
+            return False
         load1 = float(content.split()[0])
         cpus = os.cpu_count()
         if cpus is None or cpus <= 0:
-            return
+            return False
         pct = int((load1 / cpus) * 100)
         state["cpu_percent"] = max(0, min(999, pct))
+        return True
     except Exception:
-        return
+        return False
 
 
-def collect_memory(state: dict[str, Any]) -> None:
-    """Collect memory usage percentage from /proc/meminfo."""
+def _collect_cpu_sysctl(state: dict[str, Any]) -> bool:
+    """macOS: CPU load from sysctl."""
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["sysctl", "-n", "vm.loadavg"], timeout=1, stderr=subprocess.DEVNULL
+        ).decode().strip()
+        # Output: "{ 1.23 1.45 1.67 }"
+        parts = out.strip("{ }").split()
+        if not parts:
+            return False
+        load1 = float(parts[0])
+        cpus = os.cpu_count()
+        if cpus is None or cpus <= 0:
+            return False
+        pct = int((load1 / cpus) * 100)
+        state["cpu_percent"] = max(0, min(999, pct))
+        return True
+    except Exception:
+        return False
+
+
+def collect_cpu(state: dict[str, Any]) -> None:
+    """Collect CPU load — /proc on Linux/WSL, sysctl on macOS."""
+    if not _collect_cpu_proc(state):
+        # Only use macOS fallback when /proc is genuinely unavailable
+        # (not when tests override PROC_DIR to a fake path)
+        if PROC_DIR == "/proc":
+            _collect_cpu_sysctl(state)
+
+
+def _collect_memory_proc(state: dict[str, Any]) -> bool:
+    """Linux/WSL: memory from /proc/meminfo."""
     try:
         with open(os.path.join(PROC_DIR, "meminfo")) as f:
             content = f.read()
         if not content.strip():
-            return
+            return False
         fields: dict[str, int] = {}
         for line in content.splitlines():
             parts = line.split(":")
@@ -1119,19 +1159,69 @@ def collect_memory(state: dict[str, Any]) -> None:
             except ValueError:
                 continue
         if "MemTotal" not in fields or fields["MemTotal"] <= 0:
-            return
+            return False
         total = fields["MemTotal"]
         if "MemAvailable" in fields:
             available = fields["MemAvailable"]
         elif "MemFree" in fields:
             available = fields["MemFree"] + fields.get("Buffers", 0) + fields.get("Cached", 0)
         else:
-            return
+            return False
         used = total - available
         pct = (used * 100) // total
         state["memory_percent"] = max(0, min(100, pct))
+        return True
     except Exception:
-        return
+        return False
+
+
+def _collect_memory_sysctl(state: dict[str, Any]) -> bool:
+    """macOS: memory from vm_stat + sysctl."""
+    try:
+        import subprocess
+        # Total memory
+        total_bytes = int(subprocess.check_output(
+            ["sysctl", "-n", "hw.memsize"], timeout=1, stderr=subprocess.DEVNULL
+        ).decode().strip())
+        # Page size and usage from vm_stat
+        vm = subprocess.check_output(
+            ["vm_stat"], timeout=1, stderr=subprocess.DEVNULL
+        ).decode()
+        pages: dict[str, int] = {}
+        for line in vm.splitlines():
+            if ":" not in line:
+                continue
+            k, v = line.split(":", 1)
+            v = v.strip().rstrip(".")
+            try:
+                pages[k.strip()] = int(v)
+            except ValueError:
+                continue
+        page_size = 16384  # default on Apple Silicon
+        for line in vm.splitlines():
+            if "page size" in line.lower():
+                try:
+                    page_size = int("".join(c for c in line if c.isdigit()))
+                except ValueError:
+                    pass
+                break
+        free = pages.get("Pages free", 0)
+        inactive = pages.get("Pages inactive", 0)
+        speculative = pages.get("Pages speculative", 0)
+        available_bytes = (free + inactive + speculative) * page_size
+        used_bytes = total_bytes - available_bytes
+        pct = (used_bytes * 100) // total_bytes if total_bytes > 0 else 0
+        state["memory_percent"] = max(0, min(100, pct))
+        return True
+    except Exception:
+        return False
+
+
+def collect_memory(state: dict[str, Any]) -> None:
+    """Collect memory usage — /proc on Linux/WSL, vm_stat on macOS."""
+    if not _collect_memory_proc(state):
+        if PROC_DIR == "/proc":
+            _collect_memory_sysctl(state)
 
 
 def collect_disk(state: dict[str, Any]) -> None:
@@ -1916,6 +2006,9 @@ def main() -> None:
     line = render(state, theme)
     _try_obs_snapshot(payload, state)
     if line:
+        # Trailing reset prevents bg color bleeding into CC's UI
+        if not NO_COLOR:
+            line += "\033[0m"
         print(line)
 
 
