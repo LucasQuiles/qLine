@@ -830,8 +830,8 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
     if not NO_COLOR:
         pills = []
-        conv_color_hex = color
-        sys_color_hex = _darken_hex(color, 0.65)
+        sys_color_hex = color                    # bright — system overhead stands out
+        conv_color_hex = _darken_hex(color, 0.55)  # dimmed — conversation content
         free_color_hex = "#4c566a"
 
         def _mkpill(text, c, bg=bg_hex, b=False):

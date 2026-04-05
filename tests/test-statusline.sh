@@ -2253,9 +2253,10 @@ state = {
     'sys_overhead_source': 'measured',
 }
 result = render_context_bar(state, DEFAULT_THEME)
-# Healthy color #8fbcbb → darkened sys = RGB(92,122,121), conv = RGB(143,188,187) (factor=0.65)
-assert '38;2;92;122;121' in result, f'sys (darkened healthy) not found in: {repr(result)}'
-assert '38;2;143;188;187' in result, f'conv (healthy teal) not found in: {repr(result)}'
+# Sys = bright healthy teal #8fbcbb = RGB(143,188,187)
+# Conv = darkened #8fbcbb at 0.55 = RGB(78,103,102)
+assert '38;2;143;188;187' in result, f'sys (bright teal) not found in: {repr(result)}'
+assert '38;2;78;103;102' in result, f'conv (dimmed teal) not found in: {repr(result)}'
 print('OK')
 ")
 assert_equals "per-segment coloring" "$OUT" "OK"
