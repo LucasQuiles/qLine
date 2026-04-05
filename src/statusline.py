@@ -941,15 +941,35 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         # [↓count]
         if "output_tokens" in state and state["output_tokens"] > 0:
             pills.append(_mkpill(f"\u2193{_abbreviate_count(state['output_tokens'])}", color, b=bold))
-        # [bar 󰋑]
+        # [bar 󰋑] — animated: scanner pixel at fill edge + heart pulse
+        import time as _t
+        now_t = _t.time()
+
+        # Scanner: a bright pixel sweeps back and forth along the bar edge.
+        # 3-second cycle, bounces between position 0 and width-1 in the
+        # free zone. Creates a "scanning" effect at the frontier.
+        scan_cycle = 3.0
+        scan_phase = (now_t % scan_cycle) / scan_cycle  # 0→1
+        scan_pos_in_free = int(scan_phase * max(free_blocks - 1, 0)) if free_blocks > 1 else -1
+        # Highlight color: brighter version of the bar color
+        scan_color = color  # use severity color for the scanner
+
         bar_styled = ""
         if sys_blocks > 0:
             bar_styled += style("\u2588" * sys_blocks, sys_color_hex, bg_color=bg_hex)
         if conv_blocks > 0:
             bar_styled += style("\u2593" * conv_blocks, conv_color_hex, bg_color=bg_hex)
+        # Free blocks with scanner pixel
         if free_blocks > 0:
-            bar_styled += style("\u2591" * free_blocks, free_color_hex, bg_color=bg_hex)
-        bar_inner = bar_styled + style(glyph, color, bold, bg_hex)
+            for fi in range(free_blocks):
+                if fi == scan_pos_in_free:
+                    bar_styled += style("\u2592", scan_color, bg_color=bg_hex)  # medium shade = scanner
+                else:
+                    bar_styled += style("\u2591", free_color_hex, bg_color=bg_hex)
+
+        # Heart pulse: alternates bold/normal on 1s cycle
+        heart_bright = (now_t % 1.0) < 0.5
+        bar_inner = bar_styled + style(glyph, color, heart_bright, bg_hex)
         pills.append(bar_inner)
         # [pct%]
         pills.append(_mkpill(pct_text, color, b=bold))
