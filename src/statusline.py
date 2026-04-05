@@ -828,6 +828,69 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     elif last_cc and last_cc > notable_t:
         cw_color = "#ebcb8b"  # nord13 yellow
 
+    # ── Alert detection (runs before color/no-color split) ──
+    alert_color_hex = "#bf616a"   # nord11 red
+    warn_color_hex = "#ebcb8b"    # nord13 yellow
+    tuc = state.get("turns_until_compact")
+
+    _ALERT_DEFS = {
+        "bust":     ("\U000f04bf", True,  "CACHE BUSTED",  "Cache hit rate critical \u2014 full reprocess each turn, 10-20x cost"),
+        "expired":  ("\U000f0150", False, "CACHE EXPIRED", "Cache TTL expired after idle \u2014 rebuilds automatically next turn"),
+        "micro":    ("\U000f0456", False, "MICROCOMPACT",  "Tool results silently cleared \u2014 earlier file reads lost from context"),
+        "bloat":    ("\U000f0cf2", True,  "SYS BLOAT",     "System overhead >50% of window \u2014 reduce plugins or MCP servers"),
+        "heavy":    ("\U000f02d1", True,  "HEAVY CONTEXT", "Approaching autocompact \u2014 conversation will be summarized soon"),
+        "compact":  ("\U000f0520", True,  None, None),
+        "turns":    ("\U000f0520", False, None, None),
+        "degraded": ("\U000f04c5", False, "CACHE DEGRADED","Cache partially missing \u2014 some content re-sent each turn"),
+    }
+
+    alert_key = None
+    if state.get("cache_busting") is True:
+        alert_key = "bust"
+    elif state.get("cache_expired") is True:
+        alert_key = "expired"
+    elif state.get("microcompact_suspected") is True:
+        alert_key = "micro"
+    elif has_overhead and raw_sys_pct >= sys_crit_t:
+        alert_key = "bloat"
+    elif total_pct >= crit_t:
+        alert_key = "heavy"
+    elif tuc is not None and 0 < tuc <= 10:
+        alert_key = "compact"
+    elif tuc is not None and 0 < tuc <= 50:
+        alert_key = "turns"
+    elif state.get("cache_degraded") is True:
+        alert_key = "degraded"
+
+    # Track onset, compute banner
+    alert_glyph_str = None
+    alert_crit = False
+    if alert_key:
+        import time as _time
+        now = _time.time()
+        if alert_key != _alert_state.get("key"):
+            _alert_state["key"] = alert_key
+            _alert_state["onset"] = now
+        elapsed = now - _alert_state.get("onset", now)
+        gdef = _ALERT_DEFS.get(alert_key, _ALERT_DEFS["degraded"])
+        alert_glyph_str, alert_crit = gdef[0], gdef[1]
+
+        if elapsed < 5.0:
+            if alert_key == "compact":
+                title = f"COMPACT IN ~{tuc} TURNS"
+                desc = "Autocompact imminent \u2014 context will be summarized"
+            elif alert_key == "turns":
+                title = f"~{tuc} TURNS REMAINING"
+                desc = "Approaching autocompact threshold"
+            else:
+                title, desc = gdef[2], gdef[3]
+            banner = f"{alert_glyph_str} {title}"
+            if desc:
+                banner += f"\n  {desc}"
+            state["_alert_banner"] = banner
+    else:
+        _alert_state.clear()
+
     if not NO_COLOR:
         pills = []
         sys_color_hex = color                    # bright — system overhead stands out
@@ -869,50 +932,13 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         # to a blinking glyph. Onset tracked per alert key.
         alert_color = "#bf616a"  # nord11 red
         warn_color_hex = "#ebcb8b"  # nord13 yellow
-        tuc = state.get("turns_until_compact")
-
-        # Determine alert key + text + glyph + severity
-        alert_key = None   # unique key per condition type
-        alert_text = None  # full text (shown first 5s)
-        alert_glyph = None # collapsed glyph (shown after 5s)
-        alert_crit = False # True=blink, False=reverse
-
-        if state.get("cache_busting") is True:
-            alert_key, alert_text, alert_glyph, alert_crit = "bust", "\U000f04bf CACHE BUSTED", "\U000f04bf", True
-        elif state.get("cache_expired") is True:
-            alert_key, alert_text, alert_glyph = "expired", "\U000f0150 CACHE EXPIRED", "\U000f0150"
-        elif state.get("microcompact_suspected") is True:
-            alert_key, alert_text, alert_glyph = "micro", "\U000f0456 MICROCOMPACT", "\U000f0456"
-        elif has_overhead and raw_sys_pct >= sys_crit_t:
-            alert_key, alert_text, alert_glyph, alert_crit = "bloat", "\U000f0cf2 SYS BLOAT", "\U000f0cf2", True
-        elif total_pct >= crit_t:
-            alert_key, alert_text, alert_glyph, alert_crit = "heavy", "\U000f02d1 HEAVY CONTEXT", "\U000f02d1", True
-        elif tuc is not None and 0 < tuc <= 10:
-            alert_key, alert_text, alert_glyph, alert_crit = f"compact{tuc}", f"\U000f0520 COMPACT IN ~{tuc}", "\U000f0520", True
-        elif tuc is not None and 0 < tuc <= 50:
-            alert_key, alert_text, alert_glyph = f"turns{tuc//10}", f"\U000f0520 ~{tuc} TURNS LEFT", "\U000f0520"
-        elif state.get("cache_degraded") is True:
-            alert_key, alert_text, alert_glyph = "degraded", "\U000f04c5 CACHE DEGRADED", "\U000f04c5"
-
-        if alert_key:
-            import time as _time
-            now = _time.time()
-            # Track onset per alert key in module-level dict
-            if alert_key != _alert_state.get("key"):
-                _alert_state["key"] = alert_key
-                _alert_state["onset"] = now
-            elapsed = now - _alert_state.get("onset", now)
-            ac = alert_color if alert_crit else warn_color_hex
-
-            if elapsed < 5.0:
-                # Full text (first 5 seconds)
-                pill = _flash(alert_text, ac, critical=alert_crit)
-            else:
-                # Collapsed to flashing glyph
-                pill = _flash(alert_glyph, ac, critical=alert_crit)
-            pills.append(pill)
-        else:
-            _alert_state.clear()
+        # Inline alert glyph (flashing)
+        if alert_glyph_str:
+            ac = alert_color_hex if alert_crit else warn_color_hex
+            pills.append(_flash(alert_glyph_str, ac, critical=alert_crit))
+            # Colorize the banner too
+            if "_alert_banner" in state:
+                state["_alert_banner"] = _flash(state["_alert_banner"], ac, critical=alert_crit)
         # [↑count]
         if "input_tokens" in state and state["input_tokens"] > 0:
             pills.append(_mkpill(f"\u2191{_abbreviate_count(state['input_tokens'])}", color, b=bold))
@@ -955,34 +981,9 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
     tuc = state.get("turns_until_compact")
     parts = []
-    # Alert messages — full text for 5s then collapse to glyph
-    nc_alert_key = nc_alert_text = nc_alert_glyph = None
-    if state.get("cache_busting") is True:
-        nc_alert_key, nc_alert_text, nc_alert_glyph = "bust", "[!! CACHE BUSTED !!]", "[\u26a0]"
-    elif state.get("cache_expired") is True:
-        nc_alert_key, nc_alert_text, nc_alert_glyph = "expired", "[! CACHE EXPIRED]", "[\u26a0]"
-    elif state.get("microcompact_suspected") is True:
-        nc_alert_key, nc_alert_text, nc_alert_glyph = "micro", "[! MICROCOMPACT]", "[\u26a0]"
-    elif has_overhead and raw_sys_pct >= sys_crit_t:
-        nc_alert_key, nc_alert_text, nc_alert_glyph = "bloat", "[!! SYS BLOAT !!]", "[\u26a0]"
-    elif total_pct >= crit_t:
-        nc_alert_key, nc_alert_text, nc_alert_glyph = "heavy", "[!! HEAVY CONTEXT !!]", "[\u26a0]"
-    elif tuc is not None and 0 < tuc <= 10:
-        nc_alert_key, nc_alert_text, nc_alert_glyph = f"compact{tuc}", f"[!! COMPACT IN ~{tuc} !!]", "[\u26a0]"
-    elif tuc is not None and 0 < tuc <= 50:
-        nc_alert_key, nc_alert_text, nc_alert_glyph = f"turns{tuc//10}", f"[! ~{tuc} TURNS LEFT]", "[\u26a0]"
-    elif state.get("cache_degraded") is True:
-        nc_alert_key, nc_alert_text, nc_alert_glyph = "degraded", "[! CACHE DEGRADED]", "[\u26a0]"
-    if nc_alert_key:
-        import time as _time
-        now = _time.time()
-        if nc_alert_key != _alert_state.get("key"):
-            _alert_state["key"] = nc_alert_key
-            _alert_state["onset"] = now
-        elapsed = now - _alert_state.get("onset", now)
-        parts.append(nc_alert_text if elapsed < 5.0 else nc_alert_glyph)
-    else:
-        _alert_state.clear()
+    # Alert glyph inline (banner already set above)
+    if alert_glyph_str:
+        parts.append(f"[\u26a0]")
     if "input_tokens" in state and state.get("input_tokens", 0) > 0:
         parts.append(f"[\u2191{_abbreviate_count(state['input_tokens'])}]")
     if "output_tokens" in state and state.get("output_tokens", 0) > 0:
@@ -1692,6 +1693,13 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         line = _render_wrapped(state, theme, modules)
         if line:
             rendered_lines.append(line)
+
+    # Alert banner: when active, replace lines 2+ with the banner text.
+    # Line 1 (the health bar with inline glyph) always shows.
+    banner = state.get("_alert_banner")
+    if banner and rendered_lines:
+        return rendered_lines[0] + "\n" + banner
+
     return "\n".join(rendered_lines)
 
 

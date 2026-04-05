@@ -2721,24 +2721,30 @@ echo "  alerts: critical/warn messages appear for each condition"
 OUT=$(run_py "
 from statusline import render_context_bar, DEFAULT_THEME
 
-# CACHE BUSTED → critical alert
+# CACHE BUSTED → banner with description
 state = {
     'context_used': 100000, 'context_total': 1000000,
     'sys_overhead_tokens': 50000, 'sys_overhead_source': 'measured',
     'cache_busting': True,
 }
+from statusline import _alert_state
+_alert_state.clear()
 bar = render_context_bar(state, DEFAULT_THEME)
-assert 'CACHE BUSTED' in bar, f'missing CACHE BUSTED: {bar[:80]}'
+banner = state.get('_alert_banner', '')
+assert 'CACHE BUSTED' in banner, f'missing CACHE BUSTED in banner: {banner[:80]}'
+assert 'reprocess' in banner, f'missing description in banner: {banner[:120]}'
 
-# SYS BLOAT → system overhead critical
+# SYS BLOAT → banner
 state2 = {
     'context_used': 100000, 'context_total': 1000000,
     'sys_overhead_tokens': 600000, 'sys_overhead_source': 'measured',
 }
+_alert_state.clear()
 bar2 = render_context_bar(state2, DEFAULT_THEME)
-assert 'SYS BLOAT' in bar2, f'missing SYS BLOAT: {bar2[:80]}'
+banner2 = state2.get('_alert_banner', '')
+assert 'SYS BLOAT' in banner2, f'missing SYS BLOAT in banner: {banner2[:80]}'
 
-# Healthy → no alert
+# Healthy → no banner
 state3 = {
     'context_used': 100000, 'context_total': 1000000,
 }
