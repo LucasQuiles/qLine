@@ -96,16 +96,17 @@ def _get_api_key() -> str | None:
 
 
 def call_brick_preprocess(
-    content: str, format_hint: str, api_key: str
+    content: str, format_hint: str, api_key: str,
+    task_class: str = "diff_review",
 ) -> str | None:
     """POST to Brick preprocess endpoint. Returns summary or None on failure."""
     url = f"{BRICK_BASE_URL}/enrich/v1/preprocess"
     payload = json.dumps({
         "content": content,
-        "task_class": "diff_review",
+        "task_class": task_class,
         "format_hint": format_hint,
         "intent_key": "flag_risks",
-        "intent_note": "PostToolUse enrichment",
+        "intent_note": "PostToolUse enrichment — flag security issues, logic errors, regressions, missing error handling",
         "tree_depth": 1,
     }).encode()
 
@@ -182,7 +183,10 @@ def main() -> None:
     if not api_key:
         sys.exit(0)
 
-    summary = call_brick_preprocess(content, format_hint, api_key)
+    # Write = new file → "generic" (whole-file review)
+    # Edit/MultiEdit = changes → "diff_review" (change-focused review)
+    task_class = "generic" if tool_name == "Write" else "diff_review"
+    summary = call_brick_preprocess(content, format_hint, api_key, task_class=task_class)
 
     if summary is not None:
         cb.record_success()
