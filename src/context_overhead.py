@@ -566,8 +566,11 @@ def _try_phase2_transcript(
             # and helps explain sudden cache_read drops.
             if prev > 0:
                 drop_ratio = latest["cache_create"] / prev
-                # >50% drop in cache creation suggests content was cleared
-                session_cache["microcompact_suspected"] = drop_ratio < 0.5
+                abs_drop = prev - latest["cache_create"]
+                # MicroCompact: >50% drop AND absolute drop > 5000 tokens.
+                # Small fluctuations (246→101) are normal noise, not clearing.
+                # Real MicroCompact drops are 30k→500 (tool results wiped).
+                session_cache["microcompact_suspected"] = drop_ratio < 0.5 and abs_drop > 5000
             else:
                 session_cache["microcompact_suspected"] = False
         else:

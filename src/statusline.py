@@ -941,40 +941,15 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         # [↓count]
         if "output_tokens" in state and state["output_tokens"] > 0:
             pills.append(_mkpill(f"\u2193{_abbreviate_count(state['output_tokens'])}", color, b=bold))
-        # [bar 󰋑] — animated: scanner pixel at fill edge + heart pulse
-        import time as _t
-        now_t = _t.time()
-
-        # Scanner: a 3-char bright pulse sweeps across the free zone.
-        # 4-second bounce cycle (left→right→left). White highlight on dark bg.
-        scan_cycle = 4.0
-        scan_phase = (now_t % scan_cycle) / scan_cycle  # 0→1
-        # Bounce: 0→0.5 = left→right, 0.5→1 = right→left
-        scan_t = scan_phase * 2 if scan_phase < 0.5 else 2 - scan_phase * 2
-        scan_center = int(scan_t * max(free_blocks - 1, 0)) if free_blocks > 2 else -1
-        scan_color = "#eceff4"  # nord6 — bright white for max visibility
-
+        # [bar 󰋑]
         bar_styled = ""
         if sys_blocks > 0:
             bar_styled += style("\u2588" * sys_blocks, sys_color_hex, bg_color=bg_hex)
         if conv_blocks > 0:
             bar_styled += style("\u2593" * conv_blocks, conv_color_hex, bg_color=bg_hex)
-        # Free blocks with scanner pulse (3 chars wide)
         if free_blocks > 0:
-            free_chars = []
-            for fi in range(free_blocks):
-                dist = abs(fi - scan_center) if scan_center >= 0 else 99
-                if dist == 0:
-                    free_chars.append(style("\u2593", scan_color, True, bg_hex))   # center: bright ▓
-                elif dist == 1 and free_blocks > 3:
-                    free_chars.append(style("\u2592", color, bg_color=bg_hex))      # edge: medium ▒
-                else:
-                    free_chars.append(style("\u2591", free_color_hex, bg_color=bg_hex))  # normal ░
-            bar_styled += "".join(free_chars)
-
-        # Heart pulse: alternates bold/normal on 1s cycle
-        heart_bright = (now_t % 1.0) < 0.5
-        bar_inner = bar_styled + style(glyph, color, heart_bright, bg_hex)
+            bar_styled += style("\u2591" * free_blocks, free_color_hex, bg_color=bg_hex)
+        bar_inner = bar_styled + style(glyph, color, bold, bg_hex)
         pills.append(bar_inner)
         # [pct%]
         pills.append(_mkpill(pct_text, color, b=bold))
