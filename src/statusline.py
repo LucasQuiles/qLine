@@ -833,15 +833,16 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     warn_color_hex = "#ebcb8b"    # nord13 yellow
     tuc = state.get("turns_until_compact")
 
+    # (glyph, is_critical, "TITLE — inline description")
     _ALERT_DEFS = {
-        "bust":     ("\U000f04bf", True,  "CACHE BUSTED",  "Cache hit rate critical \u2014 full reprocess each turn, 10-20x cost"),
-        "expired":  ("\U000f0150", False, "CACHE EXPIRED", "Cache TTL expired after idle \u2014 rebuilds automatically next turn"),
-        "micro":    ("\U000f0456", False, "MICROCOMPACT",  "Tool results silently cleared \u2014 earlier file reads lost from context"),
-        "bloat":    ("\U000f0cf2", True,  "SYS BLOAT",     "System overhead >50% of window \u2014 reduce plugins or MCP servers"),
-        "heavy":    ("\U000f02d1", True,  "HEAVY CONTEXT", "Approaching autocompact \u2014 conversation will be summarized soon"),
-        "compact":  ("\U000f0520", True,  None, None),
-        "turns":    ("\U000f0520", False, None, None),
-        "degraded": ("\U000f04c5", False, "CACHE DEGRADED","Cache partially missing \u2014 some content re-sent each turn"),
+        "bust":     ("\U000f04bf", True,  "CACHE BUSTED \u2014 cache miss on every turn, 10-20x token cost until session restart"),
+        "expired":  ("\U000f0150", False, "CACHE EXPIRED \u2014 idle timeout, rebuilds automatically on next turn"),
+        "micro":    ("\U000f0456", False, "MICRO COMPACT \u2014 old tool results silently cleared, earlier file reads lost from context"),
+        "bloat":    ("\U000f0cf2", True,  "SYSTEM BLOAT \u2014 system overhead consuming >50% of context window, reduce plugins or MCP servers"),
+        "heavy":    ("\U000f02d1", True,  "HEAVY CONTEXT \u2014 approaching autocompact threshold, conversation will be summarized soon"),
+        "compact":  ("\U000f0520", True,  None),  # dynamic
+        "turns":    ("\U000f0520", False, None),   # dynamic
+        "degraded": ("\U000f04c5", False, "CACHE DEGRADED \u2014 partial cache misses each turn, token efficiency reduced"),
     }
 
     alert_key = None
@@ -877,17 +878,12 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
         if elapsed < 5.0:
             if alert_key == "compact":
-                title = f"COMPACT IN ~{tuc} TURNS"
-                desc = "Autocompact imminent \u2014 context will be summarized"
+                msg = f"COMPACT IN ~{tuc} TURNS \u2014 autocompact imminent, context will be summarized"
             elif alert_key == "turns":
-                title = f"~{tuc} TURNS REMAINING"
-                desc = "Approaching autocompact threshold"
+                msg = f"~{tuc} TURNS LEFT \u2014 approaching autocompact threshold"
             else:
-                title, desc = gdef[2], gdef[3]
-            banner = f"{alert_glyph_str} {title}"
-            if desc:
-                banner += f"\n  {desc}"
-            state["_alert_banner"] = banner
+                msg = gdef[2]
+            state["_alert_banner"] = f"{alert_glyph_str} {msg}"
     else:
         _alert_state.clear()
 

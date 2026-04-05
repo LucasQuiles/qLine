@@ -2732,7 +2732,7 @@ _alert_state.clear()
 bar = render_context_bar(state, DEFAULT_THEME)
 banner = state.get('_alert_banner', '')
 assert 'CACHE BUSTED' in banner, f'missing CACHE BUSTED in banner: {banner[:80]}'
-assert 'reprocess' in banner, f'missing description in banner: {banner[:120]}'
+assert '10-20x' in banner, f'missing impact description in banner: {banner[:120]}'
 
 # SYS BLOAT → banner
 state2 = {
@@ -2742,7 +2742,7 @@ state2 = {
 _alert_state.clear()
 bar2 = render_context_bar(state2, DEFAULT_THEME)
 banner2 = state2.get('_alert_banner', '')
-assert 'SYS BLOAT' in banner2, f'missing SYS BLOAT in banner: {banner2[:80]}'
+assert 'SYSTEM BLOAT' in banner2, f'missing SYSTEM BLOAT in banner: {banner2[:80]}'
 
 # Healthy → no banner
 state3 = {
