@@ -183,9 +183,10 @@ def main() -> None:
     if not api_key:
         sys.exit(0)
 
-    # Write = new file → "generic" (whole-file review)
-    # Edit/MultiEdit = changes → "diff_review" (change-focused review)
-    task_class = "generic" if tool_name == "Write" else "diff_review"
+    # Use "generic" for all tools — "diff_review" cache collisions produce
+    # hallucinated results, and "generic" + flag_risks catches more issues.
+    # Depth 2 for Edit/MultiEdit to catch subtle bugs in diffs.
+    task_class = "generic"
     summary = call_brick_preprocess(content, format_hint, api_key, task_class=task_class)
 
     if summary is not None:
