@@ -23,7 +23,7 @@ from brick_metrics import log_enrichment
 
 _HOOK_NAME = "enrich-pretool-read"
 _EVENT_NAME = "PreToolUse"
-_LINES_THRESHOLD = 500
+_LINES_THRESHOLD = 200
 _HEAD_LINES = 200
 _TAIL_LINES = 200
 _TIMEOUT_S = 15

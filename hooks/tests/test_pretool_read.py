@@ -47,11 +47,11 @@ class TestGetLineCount:
 # =============================================================================
 
 class TestSmallFileSkip:
-    """Files <= 500 lines should be skipped."""
+    """Files <= threshold should be skipped."""
 
     def test_threshold_boundary(self):
-        """500 lines exactly should not trigger enrichment."""
-        assert 500 <= _mod._LINES_THRESHOLD
+        """Threshold lines exactly should not trigger enrichment."""
+        assert _mod._LINES_THRESHOLD == 200
 
     def test_above_threshold_qualifies(self):
         """501 lines should qualify."""
