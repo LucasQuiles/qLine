@@ -54,6 +54,8 @@ def log_enrichment(
     tokens_summary: int = 0,  # for Read gate: summary tokens
     relevance_score: float = 0.0,  # for SessionStart: Pinecone score
     spool_stage: str = "",  # for async: pending | ready | injected
+    action_id: str = "",  # link to action ledger
+    trace_id: str = "",  # for spool correlation
 ) -> None:
     """Log a single enrichment event. Never raises."""
     try:
@@ -91,6 +93,10 @@ def log_enrichment(
             entry["top_score"] = round(relevance_score, 3)
         if spool_stage:
             entry["spool_stage"] = spool_stage
+        if action_id:
+            entry["action_id"] = action_id
+        if trace_id:
+            entry["trace_id"] = trace_id
 
         # Derived fields (clearly labeled as derived)
         if quality:
