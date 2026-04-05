@@ -837,23 +837,32 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         def _mkpill(text, c, bg=bg_hex, b=False):
             return style(text, c, b, bg)
 
-        def _blink(text, c):
-            """ANSI slow blink (SGR 5) for critical alerts."""
-            if NO_COLOR:
-                return text
-            rgb = _parse_hex(c)
-            if not rgb:
-                return text
-            return f"\033[5;1;38;2;{rgb[0]};{rgb[1]};{rgb[2]}m{text}\033[0m"
+        def _flash(text, c, critical=False):
+            """Animated flash via time-based bright/dim alternation.
 
-        def _reverse(text, c):
-            """ANSI reverse video for warn alerts."""
+            Uses SGR 5 (blink) as primary + time-based reverse as fallback.
+            Critical: alternates reverse-video ↔ bold (fast, 0.5s cycle).
+            Warn: alternates bold ↔ dim (slow, 1s cycle).
+            Works in all terminals since it alternates on each render.
+            """
             if NO_COLOR:
                 return text
+            import time as _t
+            phase = _t.time() % (0.5 if critical else 1.0)
             rgb = _parse_hex(c)
             if not rgb:
                 return text
-            return f"\033[7;1;38;2;{rgb[0]};{rgb[1]};{rgb[2]}m{text}\033[0m"
+            cc = f"38;2;{rgb[0]};{rgb[1]};{rgb[2]}"
+            if critical:
+                if phase < 0.25:
+                    return f"\033[5;7;1;{cc}m {text} \033[0m"  # reverse+blink
+                else:
+                    return f"\033[5;1;{cc}m{text}\033[0m"       # bold+blink
+            else:
+                if phase < 0.5:
+                    return f"\033[1;{cc}m{text}\033[0m"          # bold
+                else:
+                    return f"\033[2;{cc}m{text}\033[0m"          # dim
 
         # ── Dynamic alert messages ──
         # Full text shows for 5s on first appearance, then collapses
@@ -897,10 +906,10 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
             if elapsed < 5.0:
                 # Full text (first 5 seconds)
-                pill = _blink(alert_text, ac) if alert_crit else _reverse(alert_text, ac)
+                pill = _flash(alert_text, ac, critical=alert_crit)
             else:
-                # Collapsed to blinking glyph
-                pill = _blink(alert_glyph, ac)
+                # Collapsed to flashing glyph
+                pill = _flash(alert_glyph, ac, critical=alert_crit)
             pills.append(pill)
         else:
             _alert_state.clear()
