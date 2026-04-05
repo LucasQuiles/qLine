@@ -241,6 +241,11 @@ def main() -> None:
     session_id = input_data.get("session_id", "")
     cwd = input_data.get("cwd", "") or os.getcwd()
 
+    # Skip on compact events — no need to inject session history during compaction
+    source = input_data.get("source", "")
+    if source == "compact":
+        sys.exit(0)
+
     # Build query
     query_text = build_query_text(cwd)
     if not query_text:
