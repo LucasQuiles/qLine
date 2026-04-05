@@ -27,13 +27,6 @@ _FAILURES_TO_DEGRADE = 3
 _FAILURES_TO_OPEN = 3  # 3 more after DEGRADED (6 total)
 _COOLDOWN_S = 120
 
-_DEFAULT_STATE: dict[str, Any] = {
-    "state": CircuitState.CLOSED.value,
-    "failure_timestamps": [],
-    "opened_at": None,
-}
-
-
 class CircuitBreaker:
     """Circuit breaker for Brick enrichment pipeline.
 
