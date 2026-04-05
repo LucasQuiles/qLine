@@ -137,8 +137,8 @@ def main() -> None:
 
     cb = CircuitBreaker()
 
-    # OPEN or DEGRADED -> skip
-    if not cb.allow_request() or cb.is_degraded():
+    # OPEN -> skip entirely; DEGRADED -> still allow (so record_success can heal)
+    if not cb.allow_request():
         log_enrichment("read", session_id, "Read", file_path, action="skipped", reason="circuit_breaker")
         sys.exit(0)
 

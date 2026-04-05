@@ -120,7 +120,7 @@ def main():
 
     session_id = input_data.get("session_id", "")
     cb = CircuitBreaker()
-    if not cb.allow_request() or cb.is_degraded():
+    if not cb.allow_request():
         log_enrichment("commit", session_id, "Bash", action="skipped", reason="circuit_breaker")
         sys.exit(0)
 
