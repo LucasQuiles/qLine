@@ -39,8 +39,43 @@ LEDGER_PATH = Path(
 
 
 def generate_action_id() -> str:
-    """Short stable UUID for action linkage."""
+    """Random UUID fallback — prefer derive_action_id() for deterministic linking."""
     return str(uuid.uuid4())[:12]
+
+
+def derive_action_id(input_data: dict) -> str:
+    """Deterministic action_id from hook input payload.
+
+    Both obs hooks and enrichment hooks receive the same stdin payload.
+    This function produces the same ID from either, enabling linkage
+    without timestamp matching or row scanning.
+
+    Fields used (all stable across parallel hook invocations):
+    - session_id
+    - tool_name
+    - tool_use_id (unique per tool call, set by Claude Code)
+    - file_path or command (for disambiguation)
+    """
+    import hashlib
+
+    session_id = input_data.get("session_id", "")
+    tool_name = input_data.get("tool_name", "")
+    tool_use_id = input_data.get("tool_use_id", "")
+
+    # tool_use_id is the best key — it's unique per tool call
+    if tool_use_id:
+        raw = f"{session_id}:{tool_use_id}"
+    else:
+        # Fallback: use tool + target
+        tool_input = input_data.get("tool_input", {})
+        target = (
+            tool_input.get("file_path", "")
+            or tool_input.get("command", "")
+            or ""
+        )
+        raw = f"{session_id}:{tool_name}:{target}"
+
+    return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
 def log_action(

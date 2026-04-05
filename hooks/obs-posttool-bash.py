@@ -63,12 +63,13 @@ def main() -> None:
     # Log to action ledger
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from brick_action_ledger import log_action
+        from brick_action_ledger import log_action, derive_action_id
         _ti = input_data.get("tool_input", {})
         _tr = input_data.get("tool_response", {})
         _ec = _tr.get("exit_code") if isinstance(_tr, dict) else None
+        action_id = derive_action_id(input_data)
         log_action(session_id, "Bash", command=_ti.get("command", ""),
-                   exit_code=_ec, cwd=input_data.get("cwd", ""))
+                   exit_code=_ec, cwd=input_data.get("cwd", ""), action_id=action_id)
     except Exception:
         pass
 

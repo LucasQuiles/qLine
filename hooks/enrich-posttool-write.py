@@ -162,6 +162,13 @@ def main() -> None:
         sys.exit(0)
 
     session_id = input_data.get("session_id", "")
+
+    # Derive deterministic action_id — same as obs hook derives from same payload
+    try:
+        from brick_action_ledger import derive_action_id
+        action_id = derive_action_id(input_data)
+    except Exception:
+        action_id = ""
     cb = CircuitBreaker()
 
     # OPEN -> skip entirely
@@ -216,14 +223,14 @@ def main() -> None:
 
     if summary is not None:
         cb.record_success()
-        log_enrichment("write", session_id, tool_name, file_path, action="enriched", latency_ms=latency_ms, findings_preview=summary, lines_changed=lines_changed)
+        log_enrichment("write", session_id, tool_name, file_path, action="enriched", latency_ms=latency_ms, findings_preview=summary, lines_changed=lines_changed, action_id=action_id)
         # Log to semantic artifact changelog
         if log_artifact_change is not None:
             log_artifact_change(session_id, tool_name, file_path, lines_changed, brick_findings=summary, cwd=input_data.get("cwd", ""))
         allow_with_context(f"[Brick review] {summary}", event=_EVENT_NAME)
     else:
         cb.record_failure()
-        log_enrichment("write", session_id, tool_name, file_path, action="failed", reason=failure_reason, latency_ms=latency_ms, lines_changed=lines_changed)
+        log_enrichment("write", session_id, tool_name, file_path, action="failed", reason=failure_reason, latency_ms=latency_ms, lines_changed=lines_changed, action_id=action_id)
         sys.exit(0)
 
 
