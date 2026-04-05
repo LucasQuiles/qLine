@@ -7,6 +7,7 @@ sends to Brick preprocess, injects suggested description as additionalContext.
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import urllib.request
@@ -113,7 +114,10 @@ def _call_brick(content, api_key):
     }, method="POST")
 
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=_TIMEOUT_S, context=ctx) as resp:
             data = json.loads(resp.read())
             return data.get("tree", {}).get("root", {}).get("content", "").strip() or None
     except Exception:

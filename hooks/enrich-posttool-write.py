@@ -7,6 +7,7 @@ Fail-open: any uncaught exception exits 0 silently.
 """
 import json
 import os
+import ssl
 import subprocess
 import sys
 import urllib.error
@@ -119,7 +120,10 @@ def call_brick_preprocess(
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=_TIMEOUT_S, context=ctx) as resp:
             resp_data = json.loads(resp.read())
             return extract_summary(resp_data)
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError,
