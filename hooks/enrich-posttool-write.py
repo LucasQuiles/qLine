@@ -10,6 +10,7 @@ import os
 import ssl
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -19,6 +20,7 @@ from hook_utils import read_hook_input, allow_with_context, run_fail_open
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from brick_circuit import CircuitBreaker
+from brick_metrics import log_enrichment
 
 _HOOK_NAME = "enrich-posttool-write"
 _EVENT_NAME = "PostToolUse"
@@ -145,10 +147,12 @@ def main() -> None:
     if tool_name not in _ENRICHABLE_TOOLS:
         sys.exit(0)
 
+    session_id = input_data.get("session_id", "")
     cb = CircuitBreaker()
 
     # OPEN -> skip entirely
     if not cb.allow_request():
+        log_enrichment("write", session_id, tool_name, action="skipped", reason="circuit_open")
         sys.exit(0)
 
     tool_input = input_data.get("tool_input", {})
@@ -156,6 +160,8 @@ def main() -> None:
     lines_changed = count_lines_changed(input_data)
 
     if not should_enrich(tool_name, file_path, lines_changed):
+        reason = "non_code_file" if not is_code_file(file_path) else "below_threshold"
+        log_enrichment("write", session_id, tool_name, file_path, action="skipped", reason=reason, lines_changed=lines_changed)
         sys.exit(0)
 
     # Determine content and format hint
@@ -172,28 +178,33 @@ def main() -> None:
             from enrich_posttool_bash import write_spool_entry
             import uuid
             _SPOOL_ROOT = "/tmp/brick-lab/enrich-queue"
-            session_id = input_data.get("session_id", "unknown")
             trace_id = str(uuid.uuid4())[:12]
-            write_spool_entry(_SPOOL_ROOT, tool_name, content, session_id, trace_id)
+            write_spool_entry(_SPOOL_ROOT, tool_name, content, session_id or "unknown", trace_id)
         except Exception:
             pass  # fail-open
+        log_enrichment("write", session_id, tool_name, file_path, action="degraded", reason="circuit_degraded", lines_changed=lines_changed)
         sys.exit(0)
 
     api_key = _get_api_key()
     if not api_key:
+        log_enrichment("write", session_id, tool_name, file_path, action="skipped", reason="no_api_key")
         sys.exit(0)
 
     # Use "generic" for all tools — "diff_review" cache collisions produce
     # hallucinated results, and "generic" + flag_risks catches more issues.
     # Depth 2 for Edit/MultiEdit to catch subtle bugs in diffs.
     task_class = "generic"
+    t0 = time.monotonic()
     summary = call_brick_preprocess(content, format_hint, api_key, task_class=task_class)
+    latency_ms = int((time.monotonic() - t0) * 1000)
 
     if summary is not None:
         cb.record_success()
+        log_enrichment("write", session_id, tool_name, file_path, action="enriched", latency_ms=latency_ms, findings_preview=summary, lines_changed=lines_changed)
         allow_with_context(f"[Brick review] {summary}", event=_EVENT_NAME)
     else:
         cb.record_failure()
+        log_enrichment("write", session_id, tool_name, file_path, action="failed", latency_ms=latency_ms, lines_changed=lines_changed)
         sys.exit(0)
 
 

@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from hook_utils import read_hook_input, run_fail_open
 from brick_circuit import CircuitBreaker
+from brick_metrics import log_enrichment
 
 _TEST_PATTERNS = [
     (re.compile(r'\b(pytest|python\s+-m\s+pytest)\b'), 'pytest'),
@@ -141,7 +142,9 @@ def main() -> None:
 
     # Circuit breaker check — exit if OPEN (not allowing requests)
     cb = CircuitBreaker()
+    session_id = input_data.get("session_id", "")
     if not cb.allow_request():
+        log_enrichment("bash", session_id, "Bash", action="skipped", reason="circuit_open")
         sys.exit(0)
 
     tool_response = input_data.get("tool_response")
@@ -164,10 +167,11 @@ def main() -> None:
         and exit_code != 0
     )
     if not should_spool_bash(output) and not is_failed_test:
+        log_enrichment("bash", session_id, "Bash", action="skipped", reason="below_threshold", command_family=command_family)
         sys.exit(0)
 
-    session_id = input_data.get("session_id", "")
     trace_id = str(uuid.uuid4())
+    reason = "test_failure" if is_failed_test else "large_output"
 
     write_spool_entry(
         _SPOOL_ROOT,
@@ -181,6 +185,7 @@ def main() -> None:
             "exit_code": exit_code,
         },
     )
+    log_enrichment("bash", session_id, "Bash", action="spool", command_family=command_family, reason=reason)
     sys.exit(0)
 
 

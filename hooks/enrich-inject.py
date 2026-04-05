@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from hook_utils import read_hook_input, run_fail_open, allow_with_context
+from brick_metrics import log_enrichment
 
 _HOOK_NAME = "enrich-inject"
 _EVENT_NAME = "PostToolUse"
@@ -88,6 +89,7 @@ def main() -> None:
     for e in enrichments:
         _move_to_processed(_SPOOL_ROOT, e)
 
+    log_enrichment("inject", session_id, tool_name, action="enriched", findings_preview=context)
     allow_with_context(context, event=_EVENT_NAME)
 
 

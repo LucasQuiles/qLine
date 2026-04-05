@@ -10,6 +10,7 @@ import re
 import ssl
 import subprocess
 import sys
+import time
 import urllib.request
 import urllib.error
 import socket
@@ -19,6 +20,7 @@ from hook_utils import read_hook_input, allow_with_context, run_fail_open
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from brick_circuit import CircuitBreaker
+from brick_metrics import log_enrichment
 
 _HOOK_NAME = "enrich-pretool-commit"
 _EVENT_NAME = "PreToolUse"
@@ -116,26 +118,34 @@ def main():
     if _ALLOW_EMPTY_RE.search(command):
         sys.exit(0)
 
+    session_id = input_data.get("session_id", "")
     cb = CircuitBreaker()
     if not cb.allow_request() or cb.is_degraded():
+        log_enrichment("commit", session_id, "Bash", action="skipped", reason="circuit_breaker")
         sys.exit(0)
 
     api_key = _get_api_key()
     if not api_key:
+        log_enrichment("commit", session_id, "Bash", action="skipped", reason="no_api_key")
         sys.exit(0)
 
     diff_text, stats = _get_staged_diff()
     if not diff_text:
+        log_enrichment("commit", session_id, "Bash", action="skipped", reason="no_staged_changes")
         sys.exit(0)
 
     content = f"Staged changes:\n{stats}\n\nDiff:\n{diff_text}"
+    t0 = time.monotonic()
     suggestion = _call_brick(content, api_key)
+    latency_ms = int((time.monotonic() - t0) * 1000)
 
     if suggestion:
         cb.record_success()
+        log_enrichment("commit", session_id, "Bash", action="enriched", latency_ms=latency_ms, findings_preview=suggestion)
         allow_with_context(f"[Brick suggests commit message] {suggestion}", event=_EVENT_NAME)
     else:
         cb.record_failure()
+        log_enrichment("commit", session_id, "Bash", action="failed", latency_ms=latency_ms)
         sys.exit(0)
 
 
