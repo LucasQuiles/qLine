@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse(Read) hook: context window protection via Brick file summaries.
 
-When an agent is about to read a file >500 lines, sends head+tail to Brick
+When an agent is about to read a file >200 lines, sends head+tail to Brick
 for a structural summary and injects it as additionalContext. The agent
 still gets the full file — this just helps them navigate it.
 """
