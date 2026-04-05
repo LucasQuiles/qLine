@@ -21,6 +21,10 @@ from hook_utils import read_hook_input, allow_with_context, run_fail_open
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from brick_circuit import CircuitBreaker
 from brick_metrics import log_enrichment
+try:
+    from brick_changelog import log_artifact_change
+except ImportError:
+    log_artifact_change = None  # type: ignore
 
 _HOOK_NAME = "enrich-posttool-write"
 _EVENT_NAME = "PostToolUse"
@@ -201,6 +205,9 @@ def main() -> None:
     if summary is not None:
         cb.record_success()
         log_enrichment("write", session_id, tool_name, file_path, action="enriched", latency_ms=latency_ms, findings_preview=summary, lines_changed=lines_changed)
+        # Log to semantic artifact changelog
+        if log_artifact_change is not None:
+            log_artifact_change(session_id, tool_name, file_path, lines_changed, brick_findings=summary, cwd=input_data.get("cwd", ""))
         allow_with_context(f"[Brick review] {summary}", event=_EVENT_NAME)
     else:
         cb.record_failure()
