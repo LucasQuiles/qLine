@@ -25,7 +25,7 @@ _ENRICHABLE_TOOLS = {"Write", "Edit", "MultiEdit"}
 _LINES_THRESHOLD = 20
 _TIMEOUT_S = 15
 
-BRICK_BASE_URL = os.environ.get("BRICK_BASE_URL", "http://127.0.0.1:8340")
+BRICK_BASE_URL = os.environ.get("BRICK_BASE_URL", "https://brick.tail64ad01.ts.net:8443")
 
 CODE_EXTENSIONS: set[str] = {
     ".ts", ".tsx", ".js", ".jsx", ".py", ".sh", ".sql",
@@ -121,7 +121,7 @@ def call_brick_preprocess(
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
             resp_data = json.loads(resp.read())
-            return extract_summary(resp_data.get("data", {}))
+            return extract_summary(resp_data)
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError,
             OSError, TimeoutError):
         return None

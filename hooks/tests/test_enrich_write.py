@@ -139,11 +139,9 @@ class TestCallBrickPreprocess:
     @patch("urllib.request.urlopen")
     def test_success(self, mock_urlopen):
         response_data = {
-            "data": {
-                "tree": {
-                    "root": {
-                        "content": "No issues found."
-                    }
+            "tree": {
+                "root": {
+                    "content": "No issues found."
                 }
             }
         }
