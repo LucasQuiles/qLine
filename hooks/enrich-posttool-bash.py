@@ -10,6 +10,7 @@ Spool layout under /tmp/brick-lab/enrich-queue/:
 """
 import json
 import os
+import re
 import sys
 import tempfile
 import uuid
@@ -20,6 +21,24 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from hook_utils import read_hook_input, run_fail_open
 from brick_circuit import CircuitBreaker
+
+_TEST_PATTERNS = [
+    (re.compile(r'\b(pytest|python\s+-m\s+pytest)\b'), 'pytest'),
+    (re.compile(r'\b(vitest|npx\s+vitest)\b'), 'vitest'),
+    (re.compile(r'\b(jest|npx\s+jest)\b'), 'jest'),
+    (re.compile(r'\bcargo\s+test\b'), 'cargo_test'),
+    (re.compile(r'\b(npm\s+test|npm\s+run\s+test)\b'), 'npm_test'),
+    (re.compile(r'\b(make\s+test|make\s+check)\b'), 'make'),
+]
+
+
+def detect_command_family(command: str) -> str:
+    """Detect if a command is a known test runner. Returns family name or 'unknown'."""
+    for pattern, family in _TEST_PATTERNS:
+        if pattern.search(command):
+            return family
+    return "unknown"
+
 
 _HOOK_NAME = "enrich-posttool-bash"
 _EVENT_NAME = "PostToolUse"
@@ -51,6 +70,8 @@ def write_spool_entry(
     output: str,
     session_id: str,
     trace_id: str,
+    *,
+    extra: dict | None = None,
 ) -> None:
     """Atomically write a spool entry (pending JSON + raw output file)."""
     pending_dir = os.path.join(spool_root, "pending")
@@ -69,6 +90,8 @@ def write_spool_entry(
         "trace_id": trace_id,
         "retry_count": 0,
     }
+    if extra:
+        entry.update(extra)
     pending_path = os.path.join(pending_dir, f"{trace_id}.json")
     _atomic_write(pending_path, json.dumps(entry, indent=2))
 
@@ -121,17 +144,43 @@ def main() -> None:
     if not cb.allow_request():
         sys.exit(0)
 
-    output = _extract_output(input_data.get("tool_response"))
+    tool_response = input_data.get("tool_response")
+    output = _extract_output(tool_response)
     if not output:
         sys.exit(0)
 
-    if not should_spool_bash(output):
+    command = input_data.get("tool_input", {}).get("command", "")
+    exit_code = (
+        tool_response.get("exit_code")
+        if isinstance(tool_response, dict)
+        else None
+    )
+    command_family = detect_command_family(command)
+
+    # Spool if output is large OR a known test runner failed
+    is_failed_test = (
+        command_family != "unknown"
+        and exit_code is not None
+        and exit_code != 0
+    )
+    if not should_spool_bash(output) and not is_failed_test:
         sys.exit(0)
 
     session_id = input_data.get("session_id", "")
     trace_id = str(uuid.uuid4())
 
-    write_spool_entry(_SPOOL_ROOT, "Bash", output, session_id, trace_id)
+    write_spool_entry(
+        _SPOOL_ROOT,
+        "Bash",
+        output,
+        session_id,
+        trace_id,
+        extra={
+            "command": command,
+            "command_family": command_family,
+            "exit_code": exit_code,
+        },
+    )
     sys.exit(0)
 
 

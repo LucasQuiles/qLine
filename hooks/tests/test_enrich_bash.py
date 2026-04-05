@@ -21,6 +21,7 @@ estimate_tokens = _mod.estimate_tokens
 should_spool_bash = _mod.should_spool_bash
 should_spool_agent = _mod.should_spool_agent
 write_spool_entry = _mod.write_spool_entry
+detect_command_family = _mod.detect_command_family
 
 
 # --- estimate_tokens ---
@@ -101,3 +102,80 @@ class TestWriteSpoolEntry:
         write_spool_entry(spool_root, "Agent", "data", "s2", "t2")
         assert os.path.exists(os.path.join(spool_root, "pending", "t2.json"))
         assert os.path.exists(os.path.join(spool_root, "t2.raw"))
+
+    def test_extra_fields_included(self, tmp_path):
+        spool_root = str(tmp_path / "spool")
+        write_spool_entry(
+            spool_root, "Bash", "output", "s3", "t3",
+            extra={"command": "pytest", "command_family": "pytest", "exit_code": 1},
+        )
+        pending_path = os.path.join(spool_root, "pending", "t3.json")
+        entry = json.loads(open(pending_path).read())
+        assert entry["command"] == "pytest"
+        assert entry["command_family"] == "pytest"
+        assert entry["exit_code"] == 1
+
+
+# --- detect_command_family ---
+
+class TestDetectCommandFamily:
+    def test_pytest(self):
+        assert detect_command_family("pytest tests/ -v") == "pytest"
+
+    def test_python_m_pytest(self):
+        assert detect_command_family("python -m pytest tests/") == "pytest"
+
+    def test_npm_test(self):
+        assert detect_command_family("npm test") == "npm_test"
+
+    def test_cargo_test(self):
+        assert detect_command_family("cargo test") == "cargo_test"
+
+    def test_vitest(self):
+        assert detect_command_family("npx vitest run") == "vitest"
+
+    def test_jest(self):
+        assert detect_command_family("jest --coverage") == "jest"
+
+    def test_make_test(self):
+        assert detect_command_family("make test") == "make"
+
+    def test_unknown(self):
+        assert detect_command_family("ls -la") == "unknown"
+
+    def test_empty(self):
+        assert detect_command_family("") == "unknown"
+
+
+# --- spool trigger: failed test with small output ---
+
+class TestSpoolTriggerLogic:
+    """Test that failed tests with small output still trigger spooling."""
+
+    def test_failed_test_small_output_spools(self):
+        """A failed test runner (exit_code=1) should spool even with small output."""
+        output = "x" * 100  # small output, well under 8K tokens
+        # should_spool_bash alone would return False
+        assert should_spool_bash(output) is False
+        # But with a known test family + non-zero exit, we'd spool
+        command_family = detect_command_family("pytest tests/")
+        exit_code = 1
+        is_failed_test = (
+            command_family != "unknown"
+            and exit_code is not None
+            and exit_code != 0
+        )
+        assert is_failed_test is True
+
+    def test_successful_test_small_output_no_spool(self):
+        """A passing test with small output should NOT spool."""
+        output = "x" * 100
+        assert should_spool_bash(output) is False
+        command_family = detect_command_family("pytest tests/")
+        exit_code = 0
+        is_failed_test = (
+            command_family != "unknown"
+            and exit_code is not None
+            and exit_code != 0
+        )
+        assert is_failed_test is False
