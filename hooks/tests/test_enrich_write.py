@@ -151,15 +151,17 @@ class TestCallBrickPreprocess:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        result = call_brick_preprocess("some code", "plain_text", "test-key")
-        assert result == "No issues found."
+        summary, reason = call_brick_preprocess("some code", "plain_text", "test-key")
+        assert summary == "No issues found."
+        assert reason is None
 
     @patch("urllib.request.urlopen")
     def test_timeout(self, mock_urlopen):
         import urllib.error
         mock_urlopen.side_effect = urllib.error.URLError("timed out")
-        result = call_brick_preprocess("some code", "plain_text", "test-key")
-        assert result is None
+        summary, reason = call_brick_preprocess("some code", "plain_text", "test-key")
+        assert summary is None
+        assert reason == "timeout"
 
     @patch("urllib.request.urlopen")
     def test_http_error(self, mock_urlopen):
@@ -167,8 +169,9 @@ class TestCallBrickPreprocess:
         mock_urlopen.side_effect = urllib.error.HTTPError(
             url="http://example.com", code=500, msg="ISE", hdrs={}, fp=None
         )
-        result = call_brick_preprocess("some code", "plain_text", "test-key")
-        assert result is None
+        summary, reason = call_brick_preprocess("some code", "plain_text", "test-key")
+        assert summary is None
+        assert reason == "http_500"
 
 
 # ---------------------------------------------------------------------------

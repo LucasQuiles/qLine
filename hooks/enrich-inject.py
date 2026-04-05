@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from hook_utils import read_hook_input, run_fail_open, allow_with_context
 from brick_metrics import log_enrichment
+from brick_circuit import CircuitBreaker
 
 _HOOK_NAME = "enrich-inject"
 _EVENT_NAME = "PostToolUse"
@@ -77,6 +78,11 @@ def main() -> None:
 
     session_id = input_data.get("session_id", "")
     if not session_id:
+        sys.exit(0)
+
+    cb = CircuitBreaker()
+    if not cb.allow_request():
+        log_enrichment("inject", session_id, tool_name, action="skipped", reason="circuit_open")
         sys.exit(0)
 
     enrichments = find_ready_enrichments(_SPOOL_ROOT, session_id)

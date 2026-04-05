@@ -2,7 +2,9 @@
 """PostToolUse(Bash) enrichment spool hook.
 
 Non-blocking — writes qualifying outputs to the spool and exits immediately.
-Qualifying: Bash output > 8K tokens (~32K chars).
+
+v2 trigger: risk-based — fires on nonzero exit, error patterns, stack traces,
+large output, or build warnings in medium output.
 
 Spool layout under /tmp/brick-lab/enrich-queue/:
   pending/{trace_id}.json   — spool metadata
@@ -54,8 +56,66 @@ def estimate_tokens(text: str) -> int:
 
 
 def should_spool_bash(output: str) -> bool:
-    """Return True if Bash output exceeds the 8K-token threshold."""
+    """Return True if Bash output exceeds the 8K-token threshold.
+
+    .. deprecated:: v2
+        Use :func:`should_spool_bash_v2` which applies risk-based triggering.
+    """
     return estimate_tokens(output) > _BASH_TOKEN_THRESHOLD
+
+
+# ── v2 risk-based trigger patterns ──────────────────────────────────────────
+
+_ERROR_PATTERNS = re.compile(
+    r'\b(ERROR|FAILED|Exception|panic|FATAL|Traceback|TypeError|SyntaxError|'
+    r'AssertionError|ModuleNotFoundError|ImportError|NameError|RuntimeError)\b',
+    re.IGNORECASE,
+)
+
+_STACK_TRACE_PATTERNS = re.compile(
+    r'(File "/.+", line \d+|at Object\.<anonymous>|^\s+at\s+)',
+    re.MULTILINE,
+)
+
+_WARNING_PATTERNS = re.compile(
+    r'(?:\bwarning:|(?<!\w)WARN\b|\bdeprecated\b)',
+    re.IGNORECASE,
+)
+
+
+def should_spool_bash_v2(
+    output: str, exit_code: int | None, command: str,
+) -> tuple[bool, str]:
+    """Risk-based trigger for Bash enrichment.
+
+    Returns ``(should_spool, reason)`` where *reason* is a short tag
+    suitable for metrics (e.g. ``"nonzero_exit"``, ``"error_pattern"``).
+    """
+    tokens = estimate_tokens(output)
+
+    # Rule 1: Any nonzero exit code
+    if exit_code is not None and exit_code != 0:
+        return True, "nonzero_exit"
+
+    # Rule 2: Error patterns in output
+    if _ERROR_PATTERNS.search(output):
+        return True, "error_pattern"
+
+    # Rule 3: Stack traces
+    if _STACK_TRACE_PATTERNS.search(output):
+        return True, "stack_trace"
+
+    # Rule 4: Test runner failures — already covered by Rule 1
+
+    # Rule 5: Large output (original threshold for successful commands)
+    if tokens > _BASH_TOKEN_THRESHOLD:
+        return True, "large_output"
+
+    # Rule 6: Build warnings in medium-sized output
+    if tokens > 1000 and _WARNING_PATTERNS.search(output):
+        return True, "build_warnings"
+
+    return False, ""
 
 
 def should_spool_agent(output: str, failed: bool) -> bool:
@@ -160,18 +220,13 @@ def main() -> None:
     )
     command_family = detect_command_family(command)
 
-    # Spool if output is large OR a known test runner failed
-    is_failed_test = (
-        command_family != "unknown"
-        and exit_code is not None
-        and exit_code != 0
-    )
-    if not should_spool_bash(output) and not is_failed_test:
+    # v2: risk-based trigger
+    should_spool, reason = should_spool_bash_v2(output, exit_code, command)
+    if not should_spool:
         log_enrichment("bash", session_id, "Bash", action="skipped", reason="below_threshold", command_family=command_family)
         sys.exit(0)
 
     trace_id = str(uuid.uuid4())
-    reason = "test_failure" if is_failed_test else "large_output"
 
     write_spool_entry(
         _SPOOL_ROOT,
@@ -183,6 +238,7 @@ def main() -> None:
             "command": command,
             "command_family": command_family,
             "exit_code": exit_code,
+            "trigger_reason": reason,
         },
     )
     log_enrichment("bash", session_id, "Bash", action="spool", command_family=command_family, reason=reason)

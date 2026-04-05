@@ -30,7 +30,7 @@ _HOOK_NAME = "enrich-posttool-write"
 _EVENT_NAME = "PostToolUse"
 _ENRICHABLE_TOOLS = {"Write", "Edit", "MultiEdit"}
 _LINES_THRESHOLD = 20
-_TIMEOUT_S = 15
+_TIMEOUT_S = 18
 
 BRICK_BASE_URL = os.environ.get("BRICK_BASE_URL", "https://brick.tail64ad01.ts.net:8443")
 
@@ -104,8 +104,10 @@ def _get_api_key() -> str | None:
 def call_brick_preprocess(
     content: str, format_hint: str, api_key: str,
     task_class: str = "diff_review",
-) -> str | None:
-    """POST to Brick preprocess endpoint. Returns summary or None on failure."""
+) -> tuple[str | None, str | None]:
+    """POST to Brick preprocess endpoint. Returns (summary, None) on success or (None, reason) on failure."""
+    import socket
+
     url = f"{BRICK_BASE_URL}/enrich/v1/preprocess"
     payload = json.dumps({
         "content": content,
@@ -132,10 +134,18 @@ def call_brick_preprocess(
         ctx.verify_mode = ssl.CERT_NONE
         with urllib.request.urlopen(req, timeout=_TIMEOUT_S, context=ctx) as resp:
             resp_data = json.loads(resp.read())
-            return extract_summary(resp_data)
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError,
-            OSError, TimeoutError):
-        return None
+            summary = extract_summary(resp_data)
+            return (summary, None) if summary else (None, "empty_response")
+    except socket.timeout:
+        return (None, "timeout")
+    except urllib.error.HTTPError as e:
+        return (None, f"http_{e.code}")
+    except urllib.error.URLError as e:
+        if "timed out" in str(e.reason):
+            return (None, "timeout")
+        return (None, "url_error")
+    except (json.JSONDecodeError, OSError, TimeoutError):
+        return (None, "unknown_error")
 
 
 # ------------------------------------------------------------------
@@ -201,7 +211,7 @@ def main() -> None:
     # no longer collides across different content.
     task_class = "generic" if tool_name == "Write" else "diff_review"
     t0 = time.monotonic()
-    summary = call_brick_preprocess(content, format_hint, api_key, task_class=task_class)
+    summary, failure_reason = call_brick_preprocess(content, format_hint, api_key, task_class=task_class)
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     if summary is not None:
@@ -213,7 +223,7 @@ def main() -> None:
         allow_with_context(f"[Brick review] {summary}", event=_EVENT_NAME)
     else:
         cb.record_failure()
-        log_enrichment("write", session_id, tool_name, file_path, action="failed", latency_ms=latency_ms, lines_changed=lines_changed)
+        log_enrichment("write", session_id, tool_name, file_path, action="failed", reason=failure_reason, latency_ms=latency_ms, lines_changed=lines_changed)
         sys.exit(0)
 
 

@@ -19,6 +19,7 @@ _spec.loader.exec_module(_mod)
 
 estimate_tokens = _mod.estimate_tokens
 should_spool_bash = _mod.should_spool_bash
+should_spool_bash_v2 = _mod.should_spool_bash_v2
 should_spool_agent = _mod.should_spool_agent
 write_spool_entry = _mod.write_spool_entry
 detect_command_family = _mod.detect_command_family
@@ -179,3 +180,95 @@ class TestSpoolTriggerLogic:
             and exit_code != 0
         )
         assert is_failed_test is False
+
+
+# --- should_spool_bash_v2 (risk-based trigger) ---
+
+class TestShouldSpoolBashV2:
+    """Tests for the v2 risk-based trigger."""
+
+    def test_nonzero_exit(self):
+        ok, reason = should_spool_bash_v2("short output", exit_code=1, command="ls /bad")
+        assert ok is True
+        assert reason == "nonzero_exit"
+
+    def test_zero_exit_small_clean(self):
+        ok, reason = should_spool_bash_v2("all good", exit_code=0, command="ls")
+        assert ok is False
+        assert reason == ""
+
+    def test_none_exit_small_clean(self):
+        ok, reason = should_spool_bash_v2("all good", exit_code=None, command="ls")
+        assert ok is False
+        assert reason == ""
+
+    def test_error_pattern_in_small_output(self):
+        ok, reason = should_spool_bash_v2(
+            "TypeError: cannot read property 'x'", exit_code=0, command="node app.js",
+        )
+        assert ok is True
+        assert reason == "error_pattern"
+
+    def test_error_pattern_case_insensitive(self):
+        ok, reason = should_spool_bash_v2("error: something broke", exit_code=0, command="make")
+        assert ok is True
+        assert reason == "error_pattern"
+
+    def test_stack_trace_python(self):
+        output = 'File "/home/user/app.py", line 42, in main\n    raise ValueError("bad")'
+        ok, reason = should_spool_bash_v2(output, exit_code=0, command="python app.py")
+        assert ok is True
+        assert reason == "stack_trace"
+
+    def test_stack_trace_node(self):
+        output = "    at Object.<anonymous> (/app/index.js:10:5)"
+        ok, reason = should_spool_bash_v2(output, exit_code=0, command="node index.js")
+        assert ok is True
+        assert reason == "stack_trace"
+
+    def test_stack_trace_generic_at(self):
+        output = "    at SomeClass.method (file.js:5:3)"
+        ok, reason = should_spool_bash_v2(output, exit_code=0, command="node index.js")
+        assert ok is True
+        assert reason == "stack_trace"
+
+    def test_large_output_exit_zero(self):
+        # 8001 tokens = 32004 chars
+        ok, reason = should_spool_bash_v2("x" * 32_004, exit_code=0, command="cat bigfile")
+        assert ok is True
+        assert reason == "large_output"
+
+    def test_build_warnings_above_1k_tokens(self):
+        # Need total > 1000 tokens (> 4000 chars); filler alone exceeds threshold
+        filler = "a" * 4004
+        output = filler + "\nwarning: unused variable 'x'"
+        ok, reason = should_spool_bash_v2(output, exit_code=0, command="cargo build")
+        assert ok is True
+        assert reason == "build_warnings"
+
+    def test_build_warnings_below_1k_tokens_skipped(self):
+        output = "warning: unused variable 'x'"
+        ok, reason = should_spool_bash_v2(output, exit_code=0, command="cargo build")
+        assert ok is False
+        assert reason == ""
+
+    def test_deprecated_pattern_triggers_warnings(self):
+        filler = "a" * 4004
+        output = filler + "\nDeprecated: use new_func instead"
+        ok, reason = should_spool_bash_v2(output, exit_code=0, command="python setup.py")
+        assert ok is True
+        assert reason == "build_warnings"
+
+    def test_nonzero_exit_takes_priority(self):
+        """Nonzero exit fires first even when error patterns also present."""
+        output = 'ERROR: something failed\nFile "/app.py", line 1'
+        ok, reason = should_spool_bash_v2(output, exit_code=2, command="python app.py")
+        assert ok is True
+        assert reason == "nonzero_exit"
+
+    def test_traceback_keyword(self):
+        ok, reason = should_spool_bash_v2(
+            "Traceback (most recent call last):", exit_code=0, command="python app.py",
+        )
+        assert ok is True
+        assert reason == "error_pattern"

@@ -14,6 +14,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from hook_utils import read_hook_input, run_fail_open
 from brick_circuit import CircuitBreaker
+try:
+    from brick_metrics import log_enrichment
+except ImportError:
+    log_enrichment = None  # type: ignore
 
 # Import from hyphenated filename via importlib
 _bash_hook_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "enrich-posttool-bash.py")
@@ -50,8 +54,11 @@ def main() -> None:
     if tool_name != "Agent":
         sys.exit(0)
 
+    session_id = input_data.get("session_id", "")
     cb = CircuitBreaker()
     if not cb.allow_request():
+        if log_enrichment:
+            log_enrichment("agent", session_id, "Agent", action="skipped", reason="circuit_open")
         sys.exit(0)
 
     tool_response = input_data.get("tool_response")
@@ -62,12 +69,15 @@ def main() -> None:
         sys.exit(0)
 
     if not should_spool_agent(output or "", failed):
+        if log_enrichment:
+            log_enrichment("agent", session_id, "Agent", action="skipped", reason="below_threshold")
         sys.exit(0)
 
-    session_id = input_data.get("session_id", "")
     trace_id = str(uuid.uuid4())
 
     write_spool_entry(_SPOOL_ROOT, "Agent", output or "", session_id, trace_id)
+    if log_enrichment:
+        log_enrichment("agent", session_id, "Agent", action="spool", trace_id=trace_id)
     sys.exit(0)
 
 
