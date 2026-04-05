@@ -917,31 +917,23 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             return style(text, c, b, bg)
 
         def _flash(text, c, critical=False):
-            """Animated flash via time-based bright/dim alternation.
+            """SGR 5 blink — terminal-native animation at ~1Hz.
 
-            Uses SGR 5 (blink) as primary + time-based reverse as fallback.
-            Critical: alternates reverse-video ↔ bold (fast, 0.5s cycle).
-            Warn: alternates bold ↔ dim (slow, 1s cycle).
-            Works in all terminals since it alternates on each render.
+            This is the only animation that works between CC calls because
+            the terminal itself toggles visibility. No re-renders needed.
+            Critical: blink + bold + reverse (high visibility).
+            Warn: blink + bold (moderate visibility).
             """
             if NO_COLOR:
                 return text
-            import time as _t
-            phase = _t.time() % (0.5 if critical else 1.0)
             rgb = _parse_hex(c)
             if not rgb:
                 return text
             cc = f"38;2;{rgb[0]};{rgb[1]};{rgb[2]}"
             if critical:
-                if phase < 0.25:
-                    return f"\033[5;7;1;{cc}m {text} \033[0m"  # reverse+blink
-                else:
-                    return f"\033[5;1;{cc}m{text}\033[0m"       # bold+blink
+                return f"\033[5;7;1;{cc}m {text} \033[0m"  # blink+reverse+bold
             else:
-                if phase < 0.5:
-                    return f"\033[1;{cc}m{text}\033[0m"          # bold
-                else:
-                    return f"\033[2;{cc}m{text}\033[0m"          # dim
+                return f"\033[5;1;{cc}m{text}\033[0m"        # blink+bold
 
         # ── Dynamic alert messages ──
         # Full text shows for 5s on first appearance, then collapses
@@ -1904,73 +1896,12 @@ def _try_obs_snapshot(payload: dict, state: dict) -> None:
 
 # --- Entrypoint ---
 
-_DAEMON_PID_FILE = "/tmp/qline-daemon.pid"
-_DAEMON_PAYLOAD_FILE = "/tmp/qline-payload.json"
-_DAEMON_LIVE_FILE = "/tmp/qline-live.txt"
-
-
-def _ensure_daemon():
-    """Launch the animation daemon if not already running."""
-    try:
-        if os.path.isfile(_DAEMON_PID_FILE):
-            with open(_DAEMON_PID_FILE) as f:
-                pid = int(f.read().strip())
-            # Check if process exists
-            os.kill(pid, 0)
-            return  # daemon is running
-    except (OSError, ValueError, ProcessLookupError):
-        pass  # not running, launch it
-
-    daemon_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qline-daemon.py")
-    if os.path.isfile(daemon_script):
-        import subprocess
-        subprocess.Popen(
-            [sys.executable, daemon_script],
-            start_new_session=True,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-
-
 def main() -> None:
-    """Status-line entrypoint. Read, normalize, collect, render, emit.
-
-    Also saves payload for the animation daemon and ensures daemon is running.
-    The daemon re-renders every 200ms for smooth animations.
-    """
+    """Status-line entrypoint. Read, normalize, collect, render, emit."""
     theme = load_config()
     payload = read_stdin_bounded()
     if payload is None:
         return
-
-    # Daemon: only in production (not test mode)
-    _is_test = bool(os.environ.get("QLINE_NO_COLLECT"))
-    if not _is_test:
-        # Save payload for daemon
-        try:
-            tmp = _DAEMON_PAYLOAD_FILE + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(payload, f)
-            os.rename(tmp, _DAEMON_PAYLOAD_FILE)
-        except Exception:
-            pass
-
-        _ensure_daemon()
-
-        # Fast path: if daemon has fresh output (<1s), use it
-        try:
-            mtime = os.path.getmtime(_DAEMON_LIVE_FILE)
-            if time.time() - mtime < 1.0:
-                with open(_DAEMON_LIVE_FILE) as f:
-                    cached_line = f.read().strip()
-                if cached_line:
-                    print(cached_line)
-                    return
-        except (OSError, ValueError):
-            pass
-
-    # Full render (slow path — first call or daemon not ready)
     state = normalize(payload)
     collect_system_data(state, theme)
     _inject_obs_counters(state, payload)
