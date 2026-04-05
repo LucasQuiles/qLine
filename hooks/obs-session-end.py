@@ -215,6 +215,31 @@ def main() -> None:
         )
 
     # ------------------------------------------------------------------
+    # Step 6b: Write brick-digest spool entry (non-blocking, fail-open)
+    # ------------------------------------------------------------------
+    try:
+        spool_dir = os.path.join("/tmp", "brick-lab", "digest-queue", "pending")
+        os.makedirs(spool_dir, exist_ok=True)
+
+        session_file_path = transcript_origin or ""
+
+        if session_id and session_file_path:
+            spool_entry = json.dumps({
+                "session_id": session_id,
+                "session_path": session_file_path,
+                "date": _now_iso(),
+                "cwd": manifest.get("cwd", ""),
+                "retry_count": 0,
+            })
+            tmp_spool = os.path.join(spool_dir, f".{session_id}.tmp")
+            target_spool = os.path.join(spool_dir, f"{session_id}.json")
+            with open(tmp_spool, "w") as f:
+                f.write(spool_entry)
+            os.rename(tmp_spool, target_spool)
+    except OSError:
+        pass  # Non-critical — don't block session finalization
+
+    # ------------------------------------------------------------------
     # Step 7: Generate overhead report (best-effort, non-blocking)
     # ------------------------------------------------------------------
     try:
