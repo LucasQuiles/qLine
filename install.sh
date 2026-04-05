@@ -107,6 +107,18 @@ else
     echo "NOTE: No obs hooks found in repo — observability will be limited"
 fi
 
+# Install enrichment hooks + circuit breaker
+ENRICH_INSTALLED=0
+for hook in "$SCRIPT_DIR/hooks/enrich-"*.py "$SCRIPT_DIR/hooks/brick_circuit.py"; do
+    [ -f "$hook" ] || continue
+    cp "$hook" "$HOOKS_DIR/"
+    chmod +x "$HOOKS_DIR/$(basename "$hook")"
+    ENRICH_INSTALLED=$((ENRICH_INSTALLED + 1))
+done
+if [ "$ENRICH_INSTALLED" -gt 0 ]; then
+    echo "Installed: $ENRICH_INSTALLED enrichment hooks to $HOOKS_DIR/"
+fi
+
 # Fix shebang only if `python3` doesn't exist or is too old
 if ! command -v python3 > /dev/null 2>&1; then
     # python3 missing — use whatever we found
