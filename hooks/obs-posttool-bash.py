@@ -60,6 +60,18 @@ def main() -> None:
     if tool_name != "Bash":
         sys.exit(0)
 
+    # Log to action ledger
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from brick_action_ledger import log_action
+        _ti = input_data.get("tool_input", {})
+        _tr = input_data.get("tool_response", {})
+        _ec = _tr.get("exit_code") if isinstance(_tr, dict) else None
+        log_action(session_id, "Bash", command=_ti.get("command", ""),
+                   exit_code=_ec, cwd=input_data.get("cwd", ""))
+    except Exception:
+        pass
+
     tool_response = input_data.get("tool_response")
     if not isinstance(tool_response, dict):
         sys.exit(0)

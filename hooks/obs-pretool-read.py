@@ -48,6 +48,16 @@ def main() -> None:
     if tool_name != "Read":
         sys.exit(0)
 
+    # Log to action ledger
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from brick_action_ledger import log_action
+        _ti = input_data.get("tool_input", {})
+        log_action(session_id, "Read", file_path=_ti.get("file_path", ""),
+                   cwd=input_data.get("cwd", ""))
+    except Exception:
+        pass
+
     # Allow tests to override the observability root via env var
     obs_root_override = os.environ.get("OBS_ROOT")
     kwargs: dict = {}
