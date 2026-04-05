@@ -1904,12 +1904,73 @@ def _try_obs_snapshot(payload: dict, state: dict) -> None:
 
 # --- Entrypoint ---
 
+_DAEMON_PID_FILE = "/tmp/qline-daemon.pid"
+_DAEMON_PAYLOAD_FILE = "/tmp/qline-payload.json"
+_DAEMON_LIVE_FILE = "/tmp/qline-live.txt"
+
+
+def _ensure_daemon():
+    """Launch the animation daemon if not already running."""
+    try:
+        if os.path.isfile(_DAEMON_PID_FILE):
+            with open(_DAEMON_PID_FILE) as f:
+                pid = int(f.read().strip())
+            # Check if process exists
+            os.kill(pid, 0)
+            return  # daemon is running
+    except (OSError, ValueError, ProcessLookupError):
+        pass  # not running, launch it
+
+    daemon_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qline-daemon.py")
+    if os.path.isfile(daemon_script):
+        import subprocess
+        subprocess.Popen(
+            [sys.executable, daemon_script],
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
 def main() -> None:
-    """Status-line entrypoint. Read, normalize, collect, render, emit."""
+    """Status-line entrypoint. Read, normalize, collect, render, emit.
+
+    Also saves payload for the animation daemon and ensures daemon is running.
+    The daemon re-renders every 200ms for smooth animations.
+    """
     theme = load_config()
     payload = read_stdin_bounded()
     if payload is None:
         return
+
+    # Daemon: only in production (not test mode)
+    _is_test = bool(os.environ.get("QLINE_NO_COLLECT"))
+    if not _is_test:
+        # Save payload for daemon
+        try:
+            tmp = _DAEMON_PAYLOAD_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(payload, f)
+            os.rename(tmp, _DAEMON_PAYLOAD_FILE)
+        except Exception:
+            pass
+
+        _ensure_daemon()
+
+        # Fast path: if daemon has fresh output (<1s), use it
+        try:
+            mtime = os.path.getmtime(_DAEMON_LIVE_FILE)
+            if time.time() - mtime < 1.0:
+                with open(_DAEMON_LIVE_FILE) as f:
+                    cached_line = f.read().strip()
+                if cached_line:
+                    print(cached_line)
+                    return
+        except (OSError, ValueError):
+            pass
+
+    # Full render (slow path — first call or daemon not ready)
     state = normalize(payload)
     collect_system_data(state, theme)
     _inject_obs_counters(state, payload)
