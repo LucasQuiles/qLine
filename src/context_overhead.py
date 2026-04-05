@@ -554,6 +554,7 @@ def _try_phase2_transcript(
     if trailing:
         latest = trailing[-1]
         session_cache["last_cache_create"] = latest["cache_create"]
+        session_cache["last_cache_read"] = latest["cache_read"]
         # Compute delta vs previous turn's cache_create
         if len(trailing) >= 2:
             prev = trailing[-2]["cache_create"]
@@ -697,7 +698,7 @@ def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> No
     _FIELDS = (
         "sys_overhead_tokens", "sys_overhead_source", "cache_hit_rate",
         "cache_busting", "cache_degraded", "cache_expired",
-        "last_cache_create", "prev_cache_create", "microcompact_suspected",
+        "last_cache_create", "last_cache_read", "prev_cache_create", "microcompact_suspected",
         "calibration_accuracy", "context_growth_per_turn", "turns_until_compact",
     )
     for key in _FIELDS:

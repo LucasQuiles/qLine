@@ -154,9 +154,10 @@ DEFAULT_THEME: dict[str, Any] = {
     "layout": {
         "force_single_line": False,
         "max_width": 200,
-        "line1": ["context_bar", "sys_overhead", "cache_writes"],
-        "line2": ["model", "dir", "cost", "duration"],
-        "line3": ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
+        "line1": ["context_bar"],
+        "line2": ["model", "dir", "git", "cost", "duration"],
+        "line3": ["cpu", "memory", "disk",
+                  "obs_reads", "obs_rereads", "obs_writes", "obs_bash",
                   "obs_prompts", "obs_tasks", "obs_subagents",
                   "obs_failures", "obs_compactions", "obs_health"],
     },
@@ -977,9 +978,13 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         if has_overhead:
             oh_suffix = "\u2248" if source == "estimated" else ""
             pills.append(_mkpill(f"\U000f0cf2 {_abbreviate_count(state['sys_overhead_tokens'])}{oh_suffix} tkn", oh_color))
-        # [󰁍 writes]
+        # [󰁍 +writes]
         if last_cc and last_cc > 0:
-            pills.append(_mkpill(f"\U000f004d {_abbreviate_count(last_cc)} tkn", cw_color))
+            pills.append(_mkpill(f"\U000f004d +{_abbreviate_count(last_cc)} tkn", cw_color))
+        # [󰆏 cache size]
+        last_cr = state.get("last_cache_read")
+        if last_cr and last_cr > 0:
+            pills.append(_mkpill(f"\U000f018f {_abbreviate_count(last_cr)} tkn", "#b48ead"))  # nord15 purple
         # [󰓅 rate%]
         hit_rate = state.get("cache_hit_rate")
         if hit_rate is not None and source == "measured":
@@ -1010,7 +1015,10 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         oh_suffix = "\u2248" if source == "estimated" else ""
         parts.append(f"[\U000f0cf2 {_abbreviate_count(state['sys_overhead_tokens'])}{oh_suffix} tkn]")
     if last_cc and last_cc > 0:
-        parts.append(f"[\U000f004d {_abbreviate_count(last_cc)} tkn]")
+        parts.append(f"[\U000f004d +{_abbreviate_count(last_cc)} tkn]")
+    last_cr = state.get("last_cache_read")
+    if last_cr and last_cr > 0:
+        parts.append(f"[\U000f018f {_abbreviate_count(last_cr)} tkn]")
     hit_rate = state.get("cache_hit_rate")
     if hit_rate is not None and source == "measured":
         parts.append(f"[\U000f04c5 {int(hit_rate * 100)}%]")
@@ -1061,12 +1069,22 @@ def _render_cache_delta_UNUSED(state: dict[str, Any], theme: dict[str, Any]) -> 
 
 
 def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render cost module with threshold coloring."""
+    """Render cost module: total + $/hr rate."""
     if "cost_usd" not in state:
         return None
     c_cfg = theme.get("cost", {})
     cost_val = state["cost_usd"]
-    cost_text = f"{c_cfg.get('glyph', '')}{_format_cost(cost_val)}"
+    glyph = c_cfg.get("glyph", "$")
+
+    # Compute $/hr from total cost and duration
+    dur_ms = state.get("duration_ms", 0)
+    rate_str = ""
+    if dur_ms > 60000 and cost_val > 0:  # need at least 1 min for meaningful rate
+        hours = dur_ms / 3_600_000
+        rate = cost_val / hours
+        rate_str = f" {_format_cost(rate)}/hr"
+
+    cost_text = f"{glyph}{_format_cost(cost_val)}{rate_str}"
     warn_t = c_cfg.get("warn_threshold", 2.0)
     crit_t = c_cfg.get("critical_threshold", 5.0)
     if cost_val >= crit_t:
