@@ -169,8 +169,11 @@ def main() -> None:
 
     if summary:
         cb.record_success()
+        # Estimate token savings: ~80 avg chars/line for source, /4 chars per token
+        tokens_orig = int(line_count * 80 / 4)
+        tokens_summ = int(len(summary) / 4)
         context = f"[Brick file guide: {file_path} ({line_count} lines)] {summary}"
-        log_enrichment("read", session_id, "Read", file_path, action="enriched", latency_ms=latency_ms, findings_preview=summary, lines_changed=line_count)
+        log_enrichment("read", session_id, "Read", file_path, action="enriched", latency_ms=latency_ms, findings_preview=summary, lines_changed=line_count, tokens_original=tokens_orig, tokens_summary=tokens_summ)
         allow_with_context(context, event=_EVENT_NAME)
     else:
         cb.record_failure()

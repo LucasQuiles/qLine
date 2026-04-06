@@ -151,38 +151,45 @@ class TestFormatContext:
         }
 
     def test_empty_results_returns_empty(self):
-        assert format_context([], []) == ""
+        result, with_o, without_o = format_context([], [])
+        assert result == ""
+        assert with_o == 0
+        assert without_o == 0
 
     def test_low_score_results_filtered(self):
         """Results below 0.3 score threshold should be skipped."""
         digests = [self._make_digest(score=0.1)]
         decisions = [self._make_decision(score=0.2)]
-        assert format_context(digests, decisions) == ""
+        result, _, _ = format_context(digests, decisions)
+        assert result == ""
 
     def test_digests_only(self):
         digests = [
             self._make_digest(date="2026-04-01", goal="Build hooks"),
             self._make_digest(date="2026-04-02", goal="Add tests"),
         ]
-        result = format_context(digests, [])
+        result, with_o, without_o = format_context(digests, [])
         assert "[Brick session context]" in result
         assert "Recent sessions" in result
         assert "Build hooks" in result
         assert "Add tests" in result
         assert "Key decisions" not in result
+        assert with_o == 0
+        assert without_o == 0
 
     def test_decisions_only(self):
         decisions = [self._make_decision(topic="Architecture", decision="Use events")]
-        result = format_context([], decisions)
+        result, with_o, without_o = format_context([], decisions)
         assert "[Brick session context]" in result
         assert "Key decisions" in result
         assert "Architecture" in result
         assert "Recent sessions" not in result
+        assert without_o == 1  # no ops DB match expected
 
     def test_both_digests_and_decisions(self):
         digests = [self._make_digest()]
         decisions = [self._make_decision()]
-        result = format_context(digests, decisions)
+        result, _, _ = format_context(digests, decisions)
         assert "Recent sessions" in result
         assert "Key decisions" in result
 
@@ -198,7 +205,7 @@ class TestFormatContext:
                 },
             }
         ]
-        result = format_context(digests, [])
+        result, _, _ = format_context(digests, [])
         assert "Unresolved from previous sessions" in result
         assert "flaky test in CI" in result
         assert "memory leak in worker" in result
@@ -215,7 +222,7 @@ class TestFormatContext:
                 },
             }
         ]
-        result = format_context(digests, [])
+        result, _, _ = format_context(digests, [])
         assert "single item" in result
 
     def test_unresolved_capped_at_five(self):
@@ -226,7 +233,7 @@ class TestFormatContext:
                 "metadata": {"date": "2026-04-01", "goal": "Work", "unresolved": items},
             }
         ]
-        result = format_context(digests, [])
+        result, _, _ = format_context(digests, [])
         assert "item-4" in result
         assert "item-5" not in result
 
@@ -236,6 +243,6 @@ class TestFormatContext:
             self._make_digest(score=0.9, goal="Relevant"),
             self._make_digest(score=0.1, goal="Irrelevant"),
         ]
-        result = format_context(digests, [])
+        result, _, _ = format_context(digests, [])
         assert "Relevant" in result
         assert "Irrelevant" not in result

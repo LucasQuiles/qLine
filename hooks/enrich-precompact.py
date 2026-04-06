@@ -13,6 +13,7 @@ Skips: none — always inject when we have data
 """
 import json
 import os
+import sqlite3
 import sys
 from collections import Counter
 from pathlib import Path
@@ -26,7 +27,12 @@ _HOOK_NAME = "enrich-precompact"
 _EVENT_NAME = "PreCompact"
 _ACTION_LEDGER = Path(os.path.expanduser("~/.local/share/brick-lab/action-ledger.jsonl"))
 _METRICS_LOG = Path("/tmp/brick-lab/enrich-metrics.jsonl")
+_OPS_DB = Path(os.path.expanduser("~/.local/share/brick-lab/brick-ops.db"))
+_DIGEST_DIR = Path(os.path.expanduser("~/.local/share/brick-lab/digests"))
 _MAX_CONTEXT_TOKENS = 600  # hard cap on injected context
+_ACTION_TOKEN_CAP = 300 * 4  # chars (~300 tokens) for action summary
+_DECISIONS_TOKEN_CAP = 100 * 4  # chars (~100 tokens) for decisions
+_DIGESTS_TOKEN_CAP = 100 * 4  # chars (~100 tokens) for digest summaries
 
 
 def _read_session_actions(session_id: str) -> list[dict]:
@@ -63,6 +69,43 @@ def _read_session_enrichments(session_id: str) -> list[dict]:
     except (json.JSONDecodeError, OSError):
         pass
     return findings
+
+
+def _read_recent_decisions(limit: int = 3) -> list[tuple[str, str, str]]:
+    """Read recent decisions with outcomes from ops DB. Fail-open."""
+    if not _OPS_DB.exists():
+        return []
+    try:
+        conn = sqlite3.connect(str(_OPS_DB), timeout=2)
+        cur = conn.execute(
+            "SELECT topic, decision_text, outcome FROM decisions "
+            "WHERE outcome != '' AND outcome != 'untested' "
+            "ORDER BY rowid DESC LIMIT ?",
+            (limit,),
+        )
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+    except Exception:
+        return []
+
+
+def _read_recent_digests(limit: int = 2) -> list[str]:
+    """Read summary excerpts from most recent digest files. Fail-open."""
+    if not _DIGEST_DIR.exists():
+        return []
+    try:
+        files = sorted(_DIGEST_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        summaries = []
+        for f in files[:limit]:
+            data = json.loads(f.read_text())
+            summary = data.get("summary", "")
+            if summary:
+                words = summary.split()[:50]
+                summaries.append(" ".join(words))
+        return summaries
+    except Exception:
+        return []
 
 
 def _build_compaction_brief(session_id: str) -> str:
@@ -130,9 +173,37 @@ def _build_compaction_brief(session_id: str) -> str:
         for fb in finding_briefs:
             parts.append(f"  - {fb}")
 
-    brief = "\n".join(parts)
+    action_brief = "\n".join(parts)
+    if len(action_brief) > _ACTION_TOKEN_CAP:
+        action_brief = action_brief[:_ACTION_TOKEN_CAP] + "\n[truncated]"
 
-    # Token cap
+    sections = [action_brief]
+
+    # Key decisions with outcomes
+    decisions = _read_recent_decisions()
+    if decisions:
+        dec_lines = ["Key decisions:"]
+        for topic, decision, outcome in decisions:
+            dec_lines.append(f"  - {topic} → {decision} (outcome: {outcome})")
+        dec_section = "\n".join(dec_lines)
+        if len(dec_section) > _DECISIONS_TOKEN_CAP:
+            dec_section = dec_section[:_DECISIONS_TOKEN_CAP] + "\n[truncated]"
+        sections.append(dec_section)
+
+    # Recent digest summaries
+    digests = _read_recent_digests()
+    if digests:
+        dig_lines = ["Recent sessions:"]
+        for s in digests:
+            dig_lines.append(f"  - {s}")
+        dig_section = "\n".join(dig_lines)
+        if len(dig_section) > _DIGESTS_TOKEN_CAP:
+            dig_section = dig_section[:_DIGESTS_TOKEN_CAP] + "\n[truncated]"
+        sections.append(dig_section)
+
+    brief = "\n".join(sections)
+
+    # Final safety cap
     if len(brief) > _MAX_CONTEXT_TOKENS * 4:
         brief = brief[:_MAX_CONTEXT_TOKENS * 4] + "\n[truncated]"
 

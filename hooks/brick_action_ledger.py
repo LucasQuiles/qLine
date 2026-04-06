@@ -120,3 +120,48 @@ def log_action(
         pass  # Never fail a hook for ledger logging
 
     return action_id
+
+
+def mark_enriched(session_id: str, tool: str, trace_id: str = "") -> int:
+    """Mark matching ledger entries as enriched=true. Returns count updated.
+
+    Matches by session_id + tool where enriched is false.
+    If trace_id is provided, it's stored for correlation.
+    Never raises.
+    """
+    try:
+        if not LEDGER_PATH.exists():
+            return 0
+
+        lines = LEDGER_PATH.read_text().splitlines()
+        updated = 0
+        new_lines = []
+        for line in lines:
+            if not line.strip():
+                new_lines.append(line)
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                new_lines.append(line)
+                continue
+
+            if (
+                entry.get("session_id") == session_id
+                and entry.get("tool") == tool
+                and not entry.get("enriched", False)
+            ):
+                entry["enriched"] = True
+                if trace_id:
+                    entry["trace_id"] = trace_id
+                new_lines.append(json.dumps(entry))
+                updated += 1
+            else:
+                new_lines.append(line)
+
+        if updated:
+            LEDGER_PATH.write_text("\n".join(new_lines) + "\n")
+
+        return updated
+    except Exception:
+        return 0

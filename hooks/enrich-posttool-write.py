@@ -223,7 +223,10 @@ def main() -> None:
 
     if summary is not None:
         cb.record_success()
-        log_enrichment("write", session_id, tool_name, file_path, action="enriched", latency_ms=latency_ms, findings_preview=summary, lines_changed=lines_changed, action_id=action_id)
+        # Estimate token savings: original content chars /4, summary chars /4
+        tokens_orig = int(len(content) / 4)
+        tokens_summ = int(len(summary) / 4)
+        log_enrichment("write", session_id, tool_name, file_path, action="enriched", latency_ms=latency_ms, findings_preview=summary, lines_changed=lines_changed, action_id=action_id, tokens_original=tokens_orig, tokens_summary=tokens_summ)
         # Log to semantic artifact changelog
         if log_artifact_change is not None:
             log_artifact_change(session_id, tool_name, file_path, lines_changed, brick_findings=summary, cwd=input_data.get("cwd", ""))

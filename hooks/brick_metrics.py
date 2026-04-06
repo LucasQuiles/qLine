@@ -56,6 +56,10 @@ def log_enrichment(
     spool_stage: str = "",  # for async: pending | ready | injected
     action_id: str = "",  # link to action ledger
     trace_id: str = "",  # for spool correlation
+    decisions_with_outcomes: int = 0,  # SessionStart: decisions with ops DB outcomes
+    decisions_without_outcomes: int = 0,  # SessionStart: decisions without outcomes
+    digests_found: int = 0,  # SessionStart: digest matches above threshold
+    decisions_found: int = 0,  # SessionStart: decision matches above threshold
 ) -> None:
     """Log a single enrichment event. Never raises."""
     try:
@@ -97,6 +101,12 @@ def log_enrichment(
             entry["action_id"] = action_id
         if trace_id:
             entry["trace_id"] = trace_id
+        if decisions_with_outcomes or decisions_without_outcomes:
+            entry["decisions_with_outcomes"] = decisions_with_outcomes
+            entry["decisions_without_outcomes"] = decisions_without_outcomes
+        if digests_found or decisions_found:
+            entry["digests_found"] = digests_found
+            entry["decisions_found"] = decisions_found
 
         # Derived fields (clearly labeled as derived)
         if quality:

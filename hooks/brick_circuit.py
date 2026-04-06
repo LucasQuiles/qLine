@@ -105,6 +105,10 @@ class CircuitBreaker:
         data = self._read()
         current = CircuitState(data.get("state", CircuitState.CLOSED.value))
 
+        # OPEN + confirmed health → bypass cooldown and close immediately
+        if current == CircuitState.OPEN:
+            current = CircuitState.HALF_OPEN
+
         if current == CircuitState.HALF_OPEN:
             # Probe succeeded — close the circuit
             data["state"] = CircuitState.CLOSED.value
