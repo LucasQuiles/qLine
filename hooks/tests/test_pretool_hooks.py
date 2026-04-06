@@ -95,8 +95,11 @@ class TestGetStagedDiff:
 
 
 class TestCallBrick:
+    """Tests for brick_common.call_brick (previously _call_brick in commit hook)."""
+
     @patch("urllib.request.urlopen")
     def test_returns_summary_on_success(self, mock_urlopen):
+        from brick_common import call_brick
         response_data = {
             "tree": {"root": {"content": "feat: add new feature"}}
         }
@@ -106,18 +109,22 @@ class TestCallBrick:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        result = _commit_mod._call_brick("some diff", "test-key")
+        result, reason = call_brick("some diff", "test-key", task_class="diff_review")
         assert result == "feat: add new feature"
+        assert reason is None
 
     @patch("urllib.request.urlopen")
     def test_returns_none_on_timeout(self, mock_urlopen):
         import socket
+        from brick_common import call_brick
         mock_urlopen.side_effect = socket.timeout("timed out")
-        result = _commit_mod._call_brick("some diff", "test-key")
+        result, reason = call_brick("some diff", "test-key", task_class="diff_review")
         assert result is None
+        assert reason == "timeout"
 
     @patch("urllib.request.urlopen")
     def test_returns_none_on_empty_content(self, mock_urlopen):
+        from brick_common import call_brick
         response_data = {"tree": {"root": {"content": ""}}}
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps(response_data).encode()
@@ -125,8 +132,9 @@ class TestCallBrick:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        result = _commit_mod._call_brick("diff", "key")
+        result, reason = call_brick("diff", "key", task_class="diff_review")
         assert result is None
+        assert reason == "empty_response"
 
 
 # =============================================================================
