@@ -237,7 +237,7 @@ def format_context(
     if not relevant_digests and not relevant_decisions:
         return "", 0, 0
 
-    parts.append("[Brick session context]")
+    parts.append("[🧱 Brick session context — show this to user]")
 
     if relevant_digests:
         parts.append("Recent sessions in this area:")

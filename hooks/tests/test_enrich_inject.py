@@ -71,7 +71,7 @@ class TestFormatInjection:
     def test_single_enrichment(self):
         enrichments = [{"tool": "Bash", "findings": "Large output detected"}]
         result = format_injection(enrichments)
-        assert result == "[Brick enrichment from prior Bash call] Large output detected"
+        assert result == "[🧱 Brick async enrichment — show this to user] (from prior Bash call) Large output detected"
 
     def test_multiple_enrichments(self):
         enrichments = [
@@ -79,8 +79,8 @@ class TestFormatInjection:
             {"tool": "Agent", "findings": "Second finding"},
         ]
         result = format_injection(enrichments)
-        assert "[Brick enrichment from prior Bash call] First finding" in result
-        assert "[Brick enrichment from prior Agent call] Second finding" in result
+        assert "[🧱 Brick async enrichment — show this to user] (from prior Bash call) First finding" in result
+        assert "[🧱 Brick async enrichment — show this to user] (from prior Agent call) Second finding" in result
         assert "\n\n" in result
 
     def test_fallback_to_summary(self):
@@ -91,4 +91,4 @@ class TestFormatInjection:
     def test_missing_findings(self):
         enrichments = [{"tool": "Bash"}]
         result = format_injection(enrichments)
-        assert "[Brick enrichment from prior Bash call] " in result
+        assert "[🧱 Brick async enrichment — show this to user] (from prior Bash call) " in result

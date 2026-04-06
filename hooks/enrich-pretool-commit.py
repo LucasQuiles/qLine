@@ -142,7 +142,7 @@ def main():
     if suggestion:
         cb.record_success()
         log_enrichment("commit", session_id, "Bash", action="enriched", latency_ms=latency_ms, findings_preview=suggestion)
-        allow_with_context(f"[Brick suggests commit message] {suggestion}", event=_EVENT_NAME)
+        allow_with_context(f"[🧱 Brick enriched Commit — show this to user] {suggestion}", event=_EVENT_NAME)
     else:
         cb.record_failure()
         log_enrichment("commit", session_id, "Bash", action="failed", latency_ms=latency_ms)

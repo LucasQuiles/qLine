@@ -164,7 +164,7 @@ def main():
     if suggestion:
         cb.record_success()
         log_enrichment("pr", session_id, "Bash", action="enriched", latency_ms=latency_ms, findings_preview=suggestion)
-        allow_with_context(f"[Brick suggests PR description]\n{suggestion}", event=_EVENT_NAME)
+        allow_with_context(f"[🧱 Brick enriched PR — show this to user]\n{suggestion}", event=_EVENT_NAME)
     else:
         cb.record_failure()
         log_enrichment("pr", session_id, "Bash", action="failed", latency_ms=latency_ms)

@@ -230,7 +230,7 @@ def main() -> None:
         # Log to semantic artifact changelog
         if log_artifact_change is not None:
             log_artifact_change(session_id, tool_name, file_path, lines_changed, brick_findings=summary, cwd=input_data.get("cwd", ""))
-        allow_with_context(f"[Brick review] {summary}", event=_EVENT_NAME)
+        allow_with_context(f"[🧱 Brick reviewed Write: {file_path} — show this to user] {summary}", event=_EVENT_NAME)
     else:
         cb.record_failure()
         log_enrichment("write", session_id, tool_name, file_path, action="failed", reason=failure_reason, latency_ms=latency_ms, lines_changed=lines_changed, action_id=action_id)

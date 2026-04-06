@@ -169,7 +169,7 @@ class TestFormatContext:
             self._make_digest(date="2026-04-02", goal="Add tests"),
         ]
         result, with_o, without_o = format_context(digests, [])
-        assert "[Brick session context]" in result
+        assert "[🧱 Brick session context — show this to user]" in result
         assert "Recent sessions" in result
         assert "Build hooks" in result
         assert "Add tests" in result
@@ -180,7 +180,7 @@ class TestFormatContext:
     def test_decisions_only(self):
         decisions = [self._make_decision(topic="Architecture", decision="Use events")]
         result, with_o, without_o = format_context([], decisions)
-        assert "[Brick session context]" in result
+        assert "[🧱 Brick session context — show this to user]" in result
         assert "Key decisions" in result
         assert "Architecture" in result
         assert "Recent sessions" not in result

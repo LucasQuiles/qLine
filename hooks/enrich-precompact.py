@@ -232,7 +232,7 @@ def main() -> None:
     if not brief:
         sys.exit(0)
 
-    context = f"[Brick session context for compaction preservation]\n{brief}"
+    context = f"[🧱 Brick compaction brief — show this to user]\n{brief}"
     allow_with_context(context, event=_EVENT_NAME)
 
 

@@ -168,7 +168,7 @@ def main() -> None:
         action="intercepted",
         command_family=family,
         reason=format_hint,
-        findings_preview=f"Routing {family} command through brick-run",
+        findings_preview=f"[🧱 Brick intercepted {family} — show this to user] Routing through brick-run",
     )
 
     # Emit updatedInput to rewrite the command

@@ -51,7 +51,7 @@ def format_injection(enrichments: list[dict]) -> str:
     for e in enrichments:
         tool = e.get("tool", "unknown")
         findings = e.get("findings", e.get("summary", ""))
-        parts.append(f"[Brick enrichment from prior {tool} call] {findings}")
+        parts.append(f"[🧱 Brick async enrichment — show this to user] (from prior {tool} call) {findings}")
     return "\n\n".join(parts)
 
 
