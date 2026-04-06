@@ -7,12 +7,9 @@ Fail-open: any uncaught exception exits 0 silently.
 """
 import json
 import os
-import ssl
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
@@ -20,6 +17,7 @@ from hook_utils import read_hook_input, allow_with_context, run_fail_open
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from brick_circuit import CircuitBreaker
+from brick_common import get_brick_api_key, call_brick, generate_enrichment_id, build_enrichment_context
 from brick_metrics import log_enrichment
 try:
     from brick_changelog import log_artifact_change
@@ -74,88 +72,6 @@ def should_enrich(tool_name: str, file_path: str, lines_changed: int) -> bool:
     if lines_changed <= _LINES_THRESHOLD:
         return False
     return True
-
-
-def extract_summary(data: dict[str, Any]) -> str | None:
-    """Extract root summary from Brick preprocess response data."""
-    try:
-        return data["tree"]["root"]["content"]
-    except (KeyError, TypeError):
-        return None
-
-
-def build_write_enrichment_context(
-    file_path: str, summary: str, enrichment_id: str,
-) -> str:
-    """Build additionalContext string with machine-readable enrichment_id."""
-    return (
-        f"[🧱 Brick reviewed Write: {file_path} "
-        f"enrichment_id={enrichment_id} — show this to user] {summary}"
-    )
-
-
-def _get_api_key() -> str | None:
-    """Get Brick API key from env or keyring."""
-    key = os.environ.get("BRICK_API_KEY")
-    if key:
-        return key
-    try:
-        result = subprocess.run(
-            ["secret-tool", "lookup", "service", "brick-api-key"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
-def call_brick_preprocess(
-    content: str, format_hint: str, api_key: str,
-    task_class: str = "diff_review",
-) -> tuple[str | None, str | None]:
-    """POST to Brick preprocess endpoint. Returns (summary, None) on success or (None, reason) on failure."""
-    import socket
-
-    url = f"{BRICK_BASE_URL}/enrich/v1/preprocess"
-    payload = json.dumps({
-        "content": content,
-        "task_class": task_class,
-        "format_hint": format_hint,
-        "intent_key": "flag_risks",
-        "intent_note": "PostToolUse enrichment — flag security issues, logic errors, regressions, missing error handling",
-        "tree_depth": 1,
-    }).encode()
-
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-
-    try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_S, context=ctx) as resp:
-            resp_data = json.loads(resp.read())
-            summary = extract_summary(resp_data)
-            return (summary, None) if summary else (None, "empty_response")
-    except socket.timeout:
-        return (None, "timeout")
-    except urllib.error.HTTPError as e:
-        return (None, f"http_{e.code}")
-    except urllib.error.URLError as e:
-        if "timed out" in str(e.reason):
-            return (None, "timeout")
-        return (None, "url_error")
-    except (json.JSONDecodeError, OSError, TimeoutError):
-        return (None, "unknown_error")
 
 
 # ------------------------------------------------------------------
@@ -216,25 +132,28 @@ def main() -> None:
         log_enrichment("write", session_id, tool_name, file_path, action="degraded", reason="circuit_degraded", lines_changed=lines_changed)
         sys.exit(0)
 
-    api_key = _get_api_key()
+    api_key = get_brick_api_key()
     if not api_key:
         log_enrichment("write", session_id, tool_name, file_path, action="skipped", reason="no_api_key")
         sys.exit(0)
 
-    # Use "generic" for all tools — "diff_review" cache collisions produce
-    # Write = new file → "generic" (whole-file review)
-    # Edit/MultiEdit = changes → "diff_review" (change-focused, catches regressions)
-    # Cache fix deployed: fingerprint now includes content hash, so diff_review
-    # no longer collides across different content.
+    # Write = new file -> "generic" (whole-file review)
+    # Edit/MultiEdit = changes -> "diff_review" (change-focused, catches regressions)
     task_class = "generic" if tool_name == "Write" else "diff_review"
     t0 = time.monotonic()
-    summary, failure_reason = call_brick_preprocess(content, format_hint, api_key, task_class=task_class)
+    summary, failure_reason = call_brick(
+        content, api_key,
+        task_class=task_class,
+        format_hint=format_hint,
+        intent_key="flag_risks",
+        intent_note="PostToolUse enrichment — flag security issues, logic errors, regressions, missing error handling",
+        timeout_s=_TIMEOUT_S,
+    )
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     if summary is not None:
         cb.record_success()
-        import uuid
-        enrichment_id = str(uuid.uuid4())[:12]
+        enrichment_id = generate_enrichment_id()
         tokens_orig = int(len(content) / 4)
         tokens_summ = int(len(summary) / 4)
         log_enrichment(
@@ -246,7 +165,7 @@ def main() -> None:
         )
         if log_artifact_change is not None:
             log_artifact_change(session_id, tool_name, file_path, lines_changed, brick_findings=summary, cwd=input_data.get("cwd", ""))
-        context = build_write_enrichment_context(file_path, summary, enrichment_id)
+        context = build_enrichment_context("Write", file_path, summary, enrichment_id, verb="reviewed")
         allow_with_context(context, event=_EVENT_NAME)
     else:
         cb.record_failure()

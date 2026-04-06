@@ -116,6 +116,7 @@ def build_enrichment_context(
     enrichment_id: str,
     *,
     extra_info: str = "",
+    verb: str = "enriched",
 ) -> str:
     """Build additionalContext string with machine-readable enrichment_id.
 
@@ -129,8 +130,9 @@ def build_enrichment_context(
         summary: the enrichment findings text
         enrichment_id: machine-readable correlation key
         extra_info: optional extra metadata (e.g. line count)
+        verb: action verb (default "enriched", use "reviewed" for Write hooks)
     """
-    parts = [f"[\U0001f9f1 Brick enriched {hook_label}:"]
+    parts = [f"[\U0001f9f1 Brick {verb} {hook_label}:"]
     if file_path:
         parts.append(f" {file_path}")
     if extra_info:

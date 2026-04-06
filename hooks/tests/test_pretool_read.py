@@ -99,11 +99,11 @@ class TestExtractHeadTail:
 
 
 # =============================================================================
-# call_brick_summarize tests (mocked)
+# call_brick (via brick_common) tests — mocked at the brick_common level
 # =============================================================================
 
-class TestCallBrickSummarize:
-    @patch("urllib.request.urlopen")
+class TestCallBrick:
+    @patch("brick_common.urllib.request.urlopen")
     def test_returns_summary_on_success(self, mock_urlopen):
         response_data = {
             "tree": {"root": {"content": "This file contains 3 classes..."}}
@@ -114,17 +114,21 @@ class TestCallBrickSummarize:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        result = _mod.call_brick_summarize("content", "/path/file.py", "test-key")
-        assert result == "This file contains 3 classes..."
+        from brick_common import call_brick
+        summary, reason = call_brick("content", "test-key", intent_key="extract_structure", intent_note="test")
+        assert summary == "This file contains 3 classes..."
+        assert reason is None
 
-    @patch("urllib.request.urlopen")
+    @patch("brick_common.urllib.request.urlopen")
     def test_returns_none_on_timeout(self, mock_urlopen):
         import socket
         mock_urlopen.side_effect = socket.timeout("timed out")
-        result = _mod.call_brick_summarize("content", "/path/file.py", "key")
-        assert result is None
+        from brick_common import call_brick
+        summary, reason = call_brick("content", "key", intent_key="extract_structure", intent_note="test")
+        assert summary is None
+        assert reason == "timeout"
 
-    @patch("urllib.request.urlopen")
+    @patch("brick_common.urllib.request.urlopen")
     def test_returns_none_on_empty_content(self, mock_urlopen):
         response_data = {"tree": {"root": {"content": ""}}}
         mock_resp = MagicMock()
@@ -133,10 +137,12 @@ class TestCallBrickSummarize:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        result = _mod.call_brick_summarize("content", "/path/file.py", "key")
-        assert result is None
+        from brick_common import call_brick
+        summary, reason = call_brick("content", "key", intent_key="extract_structure", intent_note="test")
+        assert summary is None
+        assert reason == "empty_response"
 
-    @patch("urllib.request.urlopen")
+    @patch("brick_common.urllib.request.urlopen")
     def test_returns_none_on_malformed_json(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.read.return_value = b"not json"
@@ -144,5 +150,7 @@ class TestCallBrickSummarize:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        result = _mod.call_brick_summarize("content", "/path/file.py", "key")
-        assert result is None
+        from brick_common import call_brick
+        summary, reason = call_brick("content", "key", intent_key="extract_structure", intent_note="test")
+        assert summary is None
+        assert reason == "unknown_error"

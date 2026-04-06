@@ -19,8 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 @pytest.fixture(autouse=True)
 def _import_module():
     """Import the module under test, available after implementation."""
-    global is_code_file, count_lines_changed, should_enrich
-    global call_brick_preprocess, extract_summary, CODE_EXTENSIONS
+    global is_code_file, count_lines_changed, should_enrich, CODE_EXTENSIONS
     # Use importlib to avoid caching issues
     import importlib
     mod_path = os.path.join(os.path.dirname(__file__), "..", "enrich-posttool-write.py")
@@ -30,8 +29,6 @@ def _import_module():
     is_code_file = mod.is_code_file
     count_lines_changed = mod.count_lines_changed
     should_enrich = mod.should_enrich
-    call_brick_preprocess = mod.call_brick_preprocess
-    extract_summary = mod.extract_summary
     CODE_EXTENSIONS = mod.CODE_EXTENSIONS
 
 
@@ -132,11 +129,11 @@ class TestShouldEnrich:
 
 
 # ---------------------------------------------------------------------------
-# call_brick_preprocess tests (mock urllib)
+# call_brick (via brick_common) tests — mocked at the brick_common level
 # ---------------------------------------------------------------------------
 
-class TestCallBrickPreprocess:
-    @patch("urllib.request.urlopen")
+class TestCallBrick:
+    @patch("brick_common.urllib.request.urlopen")
     def test_success(self, mock_urlopen):
         response_data = {
             "tree": {
@@ -151,43 +148,27 @@ class TestCallBrickPreprocess:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        summary, reason = call_brick_preprocess("some code", "plain_text", "test-key")
+        from brick_common import call_brick
+        summary, reason = call_brick("some code", "test-key", intent_key="flag_risks", intent_note="test")
         assert summary == "No issues found."
         assert reason is None
 
-    @patch("urllib.request.urlopen")
+    @patch("brick_common.urllib.request.urlopen")
     def test_timeout(self, mock_urlopen):
         import urllib.error
         mock_urlopen.side_effect = urllib.error.URLError("timed out")
-        summary, reason = call_brick_preprocess("some code", "plain_text", "test-key")
+        from brick_common import call_brick
+        summary, reason = call_brick("some code", "test-key", intent_key="flag_risks", intent_note="test")
         assert summary is None
         assert reason == "timeout"
 
-    @patch("urllib.request.urlopen")
+    @patch("brick_common.urllib.request.urlopen")
     def test_http_error(self, mock_urlopen):
         import urllib.error
         mock_urlopen.side_effect = urllib.error.HTTPError(
             url="http://example.com", code=500, msg="ISE", hdrs={}, fp=None
         )
-        summary, reason = call_brick_preprocess("some code", "plain_text", "test-key")
+        from brick_common import call_brick
+        summary, reason = call_brick("some code", "test-key", intent_key="flag_risks", intent_note="test")
         assert summary is None
         assert reason == "http_500"
-
-
-# ---------------------------------------------------------------------------
-# extract_summary tests
-# ---------------------------------------------------------------------------
-
-class TestExtractSummary:
-    def test_valid(self):
-        data = {"tree": {"root": {"content": "All good."}}}
-        assert extract_summary(data) == "All good."
-
-    def test_missing_tree(self):
-        assert extract_summary({}) is None
-
-    def test_missing_root(self):
-        assert extract_summary({"tree": {}}) is None
-
-    def test_missing_content(self):
-        assert extract_summary({"tree": {"root": {}}}) is None
