@@ -78,6 +78,32 @@ def derive_action_id(input_data: dict) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
+def get_read_count(session_id: str, file_path: str) -> int:
+    """Count how many times a file was read in a session. Never raises."""
+    try:
+        if not LEDGER_PATH.exists():
+            return 0
+        count = 0
+        with open(LEDGER_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    entry.get("session_id") == session_id
+                    and entry.get("tool") == "Read"
+                    and entry.get("file_path") == file_path
+                ):
+                    count += 1
+        return count
+    except Exception:
+        return 0
+
+
 def log_action(
     session_id: str,
     tool: str,
@@ -107,6 +133,11 @@ def log_action(
             "cwd": cwd,
             "enriched": enriched,
         }
+
+        # Track re-read count for Read tool
+        if tool == "Read" and file_path:
+            existing = get_read_count(session_id, file_path)
+            entry["read_count"] = existing + 1
 
         # Only include optional fields when present
         if exit_code is not None:
