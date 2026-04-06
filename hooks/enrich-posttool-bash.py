@@ -228,6 +228,13 @@ def main() -> None:
 
     trace_id = str(uuid.uuid4())
 
+    # Derive deterministic action_id for precise ledger correlation
+    try:
+        from brick_action_ledger import derive_action_id
+        action_id = derive_action_id(input_data)
+    except Exception:
+        action_id = ""
+
     write_spool_entry(
         _SPOOL_ROOT,
         "Bash",
@@ -239,6 +246,7 @@ def main() -> None:
             "command_family": command_family,
             "exit_code": exit_code,
             "trigger_reason": reason,
+            "action_id": action_id,
         },
     )
     log_enrichment("bash", session_id, "Bash", action="spool", command_family=command_family, reason=reason)

@@ -122,10 +122,16 @@ def log_action(
     return action_id
 
 
-def mark_enriched(session_id: str, tool: str, trace_id: str = "") -> int:
+def mark_enriched(
+    session_id: str,
+    tool: str,
+    trace_id: str = "",
+    action_id: str = "",
+) -> int:
     """Mark matching ledger entries as enriched=true. Returns count updated.
 
-    Matches by session_id + tool where enriched is false.
+    When action_id is provided, matches the exact ledger entry (precise).
+    Falls back to session_id + tool when action_id is not available.
     If trace_id is provided, it's stored for correlation.
     Never raises.
     """
@@ -146,11 +152,22 @@ def mark_enriched(session_id: str, tool: str, trace_id: str = "") -> int:
                 new_lines.append(line)
                 continue
 
-            if (
-                entry.get("session_id") == session_id
-                and entry.get("tool") == tool
-                and not entry.get("enriched", False)
-            ):
+            if entry.get("enriched", False):
+                new_lines.append(line)
+                continue
+
+            matched = False
+            if action_id:
+                # Precise match on action_id
+                matched = entry.get("action_id") == action_id
+            else:
+                # Fallback: session_id + tool (imprecise, may match multiple)
+                matched = (
+                    entry.get("session_id") == session_id
+                    and entry.get("tool") == tool
+                )
+
+            if matched:
                 entry["enriched"] = True
                 if trace_id:
                     entry["trace_id"] = trace_id
