@@ -121,6 +121,16 @@ def call_brick_summarize(content: str, file_path: str, api_key: str) -> str | No
         return None
 
 
+def build_enrichment_context(
+    file_path: str, line_count: int, summary: str, enrichment_id: str,
+) -> str:
+    """Build additionalContext string with machine-readable enrichment_id."""
+    return (
+        f"[🧱 Brick enriched Read: {file_path} ({line_count} lines) "
+        f"enrichment_id={enrichment_id} — show this to user] {summary}"
+    )
+
+
 def main() -> None:
     input_data = read_hook_input(timeout_seconds=2)
     if not input_data:
@@ -169,11 +179,18 @@ def main() -> None:
 
     if summary:
         cb.record_success()
-        # Estimate token savings: ~80 avg chars/line for source, /4 chars per token
+        import uuid
+        enrichment_id = str(uuid.uuid4())[:12]
         tokens_orig = int(line_count * 80 / 4)
         tokens_summ = int(len(summary) / 4)
-        context = f"[🧱 Brick enriched Read: {file_path} ({line_count} lines) — show this to user] {summary}"
-        log_enrichment("read", session_id, "Read", file_path, action="enriched", latency_ms=latency_ms, findings_preview=summary, lines_changed=line_count, tokens_original=tokens_orig, tokens_summary=tokens_summ)
+        context = build_enrichment_context(file_path, line_count, summary, enrichment_id)
+        log_enrichment(
+            "read", session_id, "Read", file_path,
+            action="enriched", latency_ms=latency_ms,
+            findings_preview=summary, lines_changed=line_count,
+            tokens_original=tokens_orig, tokens_summary=tokens_summ,
+            enrichment_id=enrichment_id,
+        )
         allow_with_context(context, event=_EVENT_NAME)
     else:
         cb.record_failure()

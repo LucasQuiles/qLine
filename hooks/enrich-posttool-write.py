@@ -84,6 +84,16 @@ def extract_summary(data: dict[str, Any]) -> str | None:
         return None
 
 
+def build_write_enrichment_context(
+    file_path: str, summary: str, enrichment_id: str,
+) -> str:
+    """Build additionalContext string with machine-readable enrichment_id."""
+    return (
+        f"[🧱 Brick reviewed Write: {file_path} "
+        f"enrichment_id={enrichment_id} — show this to user] {summary}"
+    )
+
+
 def _get_api_key() -> str | None:
     """Get Brick API key from env or keyring."""
     key = os.environ.get("BRICK_API_KEY")
@@ -223,14 +233,21 @@ def main() -> None:
 
     if summary is not None:
         cb.record_success()
-        # Estimate token savings: original content chars /4, summary chars /4
+        import uuid
+        enrichment_id = str(uuid.uuid4())[:12]
         tokens_orig = int(len(content) / 4)
         tokens_summ = int(len(summary) / 4)
-        log_enrichment("write", session_id, tool_name, file_path, action="enriched", latency_ms=latency_ms, findings_preview=summary, lines_changed=lines_changed, action_id=action_id, tokens_original=tokens_orig, tokens_summary=tokens_summ)
-        # Log to semantic artifact changelog
+        log_enrichment(
+            "write", session_id, tool_name, file_path,
+            action="enriched", latency_ms=latency_ms,
+            findings_preview=summary, lines_changed=lines_changed,
+            action_id=action_id, tokens_original=tokens_orig,
+            tokens_summary=tokens_summ, enrichment_id=enrichment_id,
+        )
         if log_artifact_change is not None:
             log_artifact_change(session_id, tool_name, file_path, lines_changed, brick_findings=summary, cwd=input_data.get("cwd", ""))
-        allow_with_context(f"[🧱 Brick reviewed Write: {file_path} — show this to user] {summary}", event=_EVENT_NAME)
+        context = build_write_enrichment_context(file_path, summary, enrichment_id)
+        allow_with_context(context, event=_EVENT_NAME)
     else:
         cb.record_failure()
         log_enrichment("write", session_id, tool_name, file_path, action="failed", reason=failure_reason, latency_ms=latency_ms, lines_changed=lines_changed, action_id=action_id)

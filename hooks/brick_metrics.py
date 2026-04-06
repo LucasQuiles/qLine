@@ -60,6 +60,7 @@ def log_enrichment(
     decisions_without_outcomes: int = 0,  # SessionStart: decisions without outcomes
     digests_found: int = 0,  # SessionStart: digest matches above threshold
     decisions_found: int = 0,  # SessionStart: decision matches above threshold
+    enrichment_id: str = "",  # correlation key for verifiable utility
 ) -> None:
     """Log a single enrichment event. Never raises."""
     try:
@@ -107,6 +108,9 @@ def log_enrichment(
         if digests_found or decisions_found:
             entry["digests_found"] = digests_found
             entry["decisions_found"] = decisions_found
+
+        if enrichment_id:
+            entry["enrichment_id"] = enrichment_id
 
         # Derived fields (clearly labeled as derived)
         if quality:
