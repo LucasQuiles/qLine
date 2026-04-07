@@ -27,9 +27,9 @@ These surfaces are the current public contract. No track may propose breaking ch
 
 | Surface | Contract |
 |---------|----------|
-| stdin payload | JSON object from Claude Code. Fields used: `cwd`, `model`, `session_id`, `conversation`, `duration_ms`, `total_cost_usd`, `num_turns`. Sparse-safe: missing fields produce graceful degradation, never errors. |
+| stdin payload | JSON object from Claude Code. Fields consumed by `normalize()`: `model` (dict with `display_name`), `workspace.current_dir` (fallback `cwd`), `version`, `output_style.name`, `cost.total_cost_usd`, `cost.total_duration_ms`, `context_window.*` (`used_percentage`, `context_window_size`, `used`, `total`, `total_input_tokens`, `total_output_tokens`, `current_usage`), `added_dirs`, `worktree`, `agent_id`, `transcript_path`. Additionally `session_id` is read by `_inject_obs_counters` and `_try_obs_snapshot`. Sparse-safe: missing fields produce graceful degradation, never errors. |
 | stdout | Single ANSI-styled line (or multi-line if configured). Exit 0 always. |
-| Environment | `NO_COLOR`, `QLINE_NO_COLLECT`, `QLINE_CONFIG` respected. |
+| Environment | `NO_COLOR`, `QLINE_NO_COLLECT`, `QLINE_PROC_DIR` (default `/proc`), `QLINE_CACHE_PATH` (default `/tmp/qline-cache.json`), `OBS_ROOT` (override observability root for hooks and statusline). |
 | Config file | `~/.config/qline.toml` — TOML format, optional. All keys have defaults. |
 
 ### 1.3 Session Package Layout
@@ -39,13 +39,20 @@ These surfaces are the current public contract. No track may propose breaking ch
 | `~/.claude/observability/sessions/<YYYY-MM-DD>/<session_id>/` | Package root. Created by `obs-session-start.py`. |
 | `manifest.json` | Session metadata, health state, overhead anchors. Schema must remain backward-compatible. |
 | `source_map.json` | Lookup key for resolving package root from session_id. |
-| `metadata/hook_events.jsonl` | Append-only event ledger. Each line is a self-contained JSON object with `seq`, `ts`, `event`, `session_id`. |
+| `metadata/hook_events.jsonl` | Append-only event ledger. Each line is a self-contained JSON object with `seq`, `ts`, `event`, `session_id`, `data`, `origin_type`, `hook`. |
 | `metadata/errors.jsonl` | Fault/warning records. Same append-only contract. |
 | `metadata/artifact_index.jsonl` | Artifact/patch records. |
 | `metadata/.seq_counter` | Atomic monotonic counter file. |
 | `metadata/session_inventory.json` | Session environment snapshot (CLAUDE.md paths, MCP servers, plugins, settings). Written once at session start. Schema backward-compatible. |
-| `custom/*.jsonl` | Per-domain detail ledgers (bash_commands, cache_metrics, reads, writes). |
-| `runtime/<session_id>.json` | Quick-lookup mapping: session_id to package root. |
+| `custom/.read_state.json` | Reread detection sidecar. Per-file read count, last read/write seq. Updated by `obs-pretool-read.py`, `obs-posttool-write.py`, `obs-posttool-edit.py`. |
+| `custom/reads.jsonl` | Per-read detail records (path, bytes, mtime, reread flag). |
+| `custom/bash_commands.jsonl` | Per-bash detail records (command hash, exit code, preview). |
+| `custom/cache_metrics.jsonl` | Per-turn cache metric records (forensics sidecar written by `obs-stop-cache.py`). |
+| `custom/write_diffs/<seq>-<tool_use_id>.patch` | Unified diff patch files for each write/edit. |
+| `native/statusline/snapshots.jsonl` | Statusline state snapshots. Append-only, written by `statusline.py` with throttle/dedupe. |
+| `native/transcripts/origin-path.txt` | Original transcript path. Written once at session start. |
+
+**Note:** The runtime mapping `~/.claude/observability/runtime/<session_id>.json` is a peer to `sessions/`, NOT inside the session package. It maps session_id to package_root for fast resolution.
 
 ### 1.4 Hook Event Types
 
@@ -53,18 +60,18 @@ Current event types in `hook_events.jsonl`. New types may be added; existing typ
 
 | Event Type | Origin Hook | Payload Contract |
 |------------|-------------|-----------------|
-| `session.started` | obs-session-start | package_root, inventory snapshot |
-| `session.reentry` | obs-session-start | reentry count |
+| `session.started` | obs-session-start | cwd, source, transcript_path, package_root |
+| `session.reentry` | obs-session-start | source |
 | `session.ended` | obs-session-end | summary stats |
-| `read.pretool` | obs-pretool-read | path, bytes, mtime |
-| `write.posttool` | obs-posttool-write | path, hash, line_delta |
+| `file.read` | obs-pretool-read | path, bytes, mtime, read_count, is_reread |
+| `file.write.diff` | obs-posttool-write, obs-posttool-edit | tool, path, added, removed, patch_hash |
 | `bash.executed` | obs-posttool-bash | command_hash, exit_code, preview |
-| `edit.posttool` | obs-posttool-edit | changed_files list |
-| `failure.posttool` | obs-posttool-failure | tool_name, error |
+| `tool.failed` | obs-posttool-failure | tool_name, error, command_preview (for Bash) |
 | `prompt.observed` | obs-prompt-submit | prompt_hash, length, plan_mode |
-| `cache.observed` | obs-stop-cache | cache_create, cache_read, model |
+| `cache.observed` | obs-stop-cache | cache_read, cache_create, input_tokens, post_compaction |
+| `cache.skipped` | obs-stop-cache | reason (NO_NEW_ENTRY) |
 | `compact.started` | obs-precompact | compact_seq, trigger_reason |
-| `subagent.spawned` | obs-subagent-stop | subagent_id, source |
+| `subagent.stopped` | obs-subagent-stop | agent_id, agent_type, transcript_path, message_length |
 | `task.completed` | obs-task-completed | task_id, result_summary |
 
 ---
@@ -120,7 +127,7 @@ tests/replay/
 A replay run:
 1. Sets `QLINE_NO_COLLECT=1` (no live system metrics)
 2. Pipes a fixture JSON to `src/statusline.py` via stdin
-3. Optionally sets `QLINE_OBS_ROOT=<session-package>` to point at a curated session
+3. Optionally sets `OBS_ROOT=<session-package-parent>` to point at a curated observability root (existing env var, used by `statusline.py`, `context_overhead.py`, and all `obs-*.py` hooks)
 4. Captures stdout (rendered statusline) and stderr (diagnostics)
 5. Compares against expected output if available
 6. Records: fixture name, metric values extracted, pass/fail, delta from expected
@@ -198,7 +205,7 @@ For any qLine behavior that depends on Claude Code internals:
 
 ### Claude Code Version
 - Developed against: CC v2.1.92
-- Constants in `context_overhead.py` are version-tagged (lines 48-52)
+- Constants in `context_overhead.py` are version-tagged (lines 43-59, 807 lines total)
 - Any version-sensitive behavior must be labeled in the fragility classification
 
 ### File System
