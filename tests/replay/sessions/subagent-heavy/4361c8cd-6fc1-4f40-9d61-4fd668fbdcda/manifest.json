@@ -1,0 +1,105 @@
+{
+  "session_id": "4361c8cd-6fc1-4f40-9d61-4fd668fbdcda",
+  "cwd": "/redacted/cwd",
+  "source": "startup",
+  "transcript_path": "/redacted/transcript.jsonl",
+  "package_root": "/Users/q/.claude/observability/sessions/2026-04-07/4361c8cd-6fc1-4f40-9d61-4fd668fbdcda",
+  "status": "active",
+  "created_at": "2026-04-07T20:32:15.220825+00:00",
+  "native_links": {
+    "transcript": "native/transcripts/main.jsonl",
+    "transcript_origin": "/redacted/origin.jsonl"
+  },
+  "subagents": [
+    {
+      "agent_id": "a74a134e4d9b8ec9a",
+      "agent_type": "Explore",
+      "transcript_path": "/redacted/subagent/a74a134e4d9b8ec9a.jsonl",
+      "archived_path": "native/transcripts/subagents/a74a134e4d9b8ec9a.jsonl",
+      "message_length": 5005
+    },
+    {
+      "agent_id": "a3fcf64acf9741336",
+      "agent_type": "Explore",
+      "transcript_path": "/redacted/subagent/a3fcf64acf9741336.jsonl",
+      "archived_path": "native/transcripts/subagents/a3fcf64acf9741336.jsonl",
+      "message_length": 19264
+    },
+    {
+      "agent_id": "ad144898eb06edc98",
+      "agent_type": "feature-dev:code-reviewer",
+      "transcript_path": "/redacted/subagent/ad144898eb06edc98.jsonl",
+      "archived_path": "native/transcripts/subagents/ad144898eb06edc98.jsonl",
+      "message_length": 12271
+    },
+    {
+      "agent_id": "adbc27e72df40516d",
+      "agent_type": "general-purpose",
+      "transcript_path": "/redacted/subagent/adbc27e72df40516d.jsonl",
+      "archived_path": "native/transcripts/subagents/adbc27e72df40516d.jsonl",
+      "message_length": 2387
+    },
+    {
+      "agent_id": "a7a449fd6c86c8326",
+      "agent_type": "feature-dev:code-reviewer",
+      "transcript_path": "/redacted/subagent/a7a449fd6c86c8326.jsonl",
+      "archived_path": "native/transcripts/subagents/a7a449fd6c86c8326.jsonl",
+      "message_length": 6322
+    },
+    {
+      "agent_id": "a289d7f2ba641a2c9",
+      "agent_type": "general-purpose",
+      "transcript_path": "/redacted/subagent/a289d7f2ba641a2c9.jsonl",
+      "archived_path": "native/transcripts/subagents/a289d7f2ba641a2c9.jsonl",
+      "message_length": 2815
+    },
+    {
+      "agent_id": "a522444efa6581b9b",
+      "agent_type": "feature-dev:code-reviewer",
+      "transcript_path": "/redacted/subagent/a522444efa6581b9b.jsonl",
+      "archived_path": "native/transcripts/subagents/a522444efa6581b9b.jsonl",
+      "message_length": 3796
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "1",
+      "task_subject": "T0: Baseline & Repo Truth",
+      "completed_at": "2026-04-07T21:13:26.634412+00:00"
+    },
+    {
+      "task_id": "2",
+      "task_subject": "TX: Data Contracts refinement",
+      "completed_at": "2026-04-07T21:19:11.380978+00:00"
+    }
+  ],
+  "compactions": [],
+  "patches": {
+    "count": 0,
+    "files_touched": [],
+    "total_added": 0,
+    "total_removed": 0
+  },
+  "health": {
+    "overall": "healthy",
+    "subsystems": {
+      "core_packaging": "healthy",
+      "transcript_linkage": "healthy",
+      "transcript_archive": "unavailable",
+      "hook_ledger": "healthy",
+      "statusline_capture": "healthy",
+      "subagent_archive": "healthy",
+      "task_capture": "healthy",
+      "patch_capture": "healthy",
+      "read_audit": "healthy",
+      "derived_analysis": "unavailable",
+      "otel_correlation": "unavailable",
+      "bash_capture": "healthy"
+    },
+    "warnings": [],
+    "errors": []
+  },
+  "cache_anchor": 2406,
+  "cache_anchor_turn": 2,
+  "cache_anchor_is_post_compaction": false
+}

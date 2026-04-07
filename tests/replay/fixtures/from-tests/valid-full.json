@@ -1,0 +1,25 @@
+{
+  "hook_event_name": "Status",
+  "session_id": "abc123",
+  "transcript_path": "/tmp/transcript.json",
+  "cwd": "/home/q/LAB/qLine",
+  "model": {
+    "id": "claude-opus-4-6",
+    "display_name": "Opus"
+  },
+  "workspace": {
+    "current_dir": "/home/q/LAB/qLine",
+    "project_dir": "/home/q/LAB/qLine"
+  },
+  "version": "2.1.76",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 1.23456,
+    "total_duration_ms": 45000,
+    "total_api_duration_ms": 2300,
+    "total_lines_added": 156,
+    "total_lines_removed": 23
+  }
+}

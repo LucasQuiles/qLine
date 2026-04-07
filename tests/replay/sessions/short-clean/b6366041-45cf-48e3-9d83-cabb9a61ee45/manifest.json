@@ -1,0 +1,40 @@
+{
+  "session_id": "b6366041-45cf-48e3-9d83-cabb9a61ee45",
+  "cwd": "/redacted/cwd",
+  "source": "startup",
+  "transcript_path": "/redacted/transcript.jsonl",
+  "package_root": "/Users/q/.claude/observability/sessions/2026-04-07/b6366041-45cf-48e3-9d83-cabb9a61ee45",
+  "status": "active",
+  "created_at": "2026-04-07T21:18:07.617978+00:00",
+  "native_links": {
+    "transcript": "native/transcripts/main.jsonl",
+    "transcript_origin": "/redacted/origin.jsonl"
+  },
+  "subagents": [],
+  "tasks": [],
+  "compactions": [],
+  "patches": {
+    "count": 0,
+    "files_touched": [],
+    "total_added": 0,
+    "total_removed": 0
+  },
+  "health": {
+    "overall": "healthy",
+    "subsystems": {
+      "core_packaging": "healthy",
+      "transcript_linkage": "healthy",
+      "transcript_archive": "unavailable",
+      "hook_ledger": "healthy",
+      "statusline_capture": "healthy",
+      "subagent_archive": "healthy",
+      "task_capture": "healthy",
+      "patch_capture": "healthy",
+      "read_audit": "healthy",
+      "derived_analysis": "unavailable",
+      "otel_correlation": "unavailable"
+    },
+    "warnings": [],
+    "errors": []
+  }
+}

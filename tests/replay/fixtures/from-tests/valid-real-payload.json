@@ -1,0 +1,21 @@
+{
+  "session_id": "test-session",
+  "model": {
+    "id": "claude-opus-4-6[1m]",
+    "display_name": "Opus 4.6 (1M context)"
+  },
+  "workspace": {
+    "current_dir": "/home/q/LAB/qLine"
+  },
+  "cost": {
+    "total_cost_usd": 27.29,
+    "total_duration_ms": 21170862
+  },
+  "context_window": {
+    "total_input_tokens": 281449,
+    "total_output_tokens": 141514,
+    "context_window_size": 1000000,
+    "used_percentage": 15,
+    "remaining_percentage": 85
+  }
+}
