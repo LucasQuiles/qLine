@@ -15,8 +15,7 @@ for arg in "$@"; do
             echo "Usage: ./install.sh [--no-obs]"
             echo ""
             echo "  Default:     Install statusline + observability hooks"
-            echo "  --no-obs:  Skip observability hooks (session tracking,"
-            echo "               tool recording, compaction monitoring)"
+            echo "  --no-obs:    Skip observability hooks"
             echo ""
             exit 0
             ;;
@@ -82,19 +81,20 @@ echo "Installed: $DEST_DIR/statusline.py"
 cp "$SCRIPT_DIR/src/context_overhead.py" "$DEST_DIR/context_overhead.py"
 echo "Installed: $DEST_DIR/context_overhead.py"
 
-cp "$SCRIPT_DIR/scripts/obs_utils.py" "$DEST_DIR/obs_utils.py"
+# obs_utils is needed by statusline at runtime
+cp "$SCRIPT_DIR/hooks/obs_utils.py" "$DEST_DIR/obs_utils.py"
 echo "Installed: $DEST_DIR/obs_utils.py"
 
 # Fix shebang if needed
 if ! command -v python3 > /dev/null 2>&1; then
     REAL_PYTHON=$(command -v "$PYTHON")
-    sed -i "1s|.*|#!$REAL_PYTHON|" "$DEST_DIR/statusline.py"
+    sed -i'' -e "1s|.*|#!$REAL_PYTHON|" "$DEST_DIR/statusline.py"
     echo "Shebang updated to: #!$REAL_PYTHON"
 elif [ "$PYTHON" != "python3" ]; then
     PY3_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo 0)
     if [ "$PY3_MINOR" -lt 10 ]; then
         REAL_PYTHON=$(command -v "$PYTHON")
-        sed -i "1s|.*|#!$REAL_PYTHON|" "$DEST_DIR/statusline.py"
+        sed -i'' -e "1s|.*|#!$REAL_PYTHON|" "$DEST_DIR/statusline.py"
         echo "Shebang updated to: #!$REAL_PYTHON"
     fi
 fi
@@ -131,34 +131,85 @@ if [ "$WITH_OBS" = true ]; then
     echo ""
     echo "--- Observability hooks ---"
 
-    SCRIPTS_DIR="$DEST_DIR/scripts"
-    HOOKS_DIR="$DEST_DIR/hooks"
-    mkdir -p "$SCRIPTS_DIR" "$HOOKS_DIR"
-
-    # Shared utilities
-    cp "$SCRIPT_DIR/scripts/hook_utils.py" "$SCRIPTS_DIR/hook_utils.py"
-    echo "Installed: $SCRIPTS_DIR/hook_utils.py"
-
-    cp "$SCRIPT_DIR/scripts/obs_utils.py" "$SCRIPTS_DIR/obs_utils.py"
-    echo "Installed: $SCRIPTS_DIR/obs_utils.py"
-
-    # Obs hooks
-    HOOKS_INSTALLED=0
-    for hook in "$SCRIPT_DIR/hooks/obs-"*.py; do
-        [ -f "$hook" ] || continue
-        cp "$hook" "$HOOKS_DIR/"
-        chmod +x "$HOOKS_DIR/$(basename "$hook")"
-        HOOKS_INSTALLED=$((HOOKS_INSTALLED + 1))
-    done
-    echo "Installed: $HOOKS_INSTALLED observability hooks to $HOOKS_DIR/"
-
-    # Register hooks in settings.json
-    if [ "$JQ_AVAILABLE" = true ] && [ -f "$SETTINGS" ]; then
-        echo "Registering obs hooks in settings.json..."
-        "$PYTHON" "$SCRIPT_DIR/scripts/register_obs_hooks.py" "$SETTINGS" "$HOOKS_DIR"
+    # Check if qLine plugin is already active (manages hooks via hooks.json)
+    if [ -L "$DEST_DIR/plugins/qline" ] || [ -d "$DEST_DIR/plugins/qline" ]; then
+        echo "qLine plugin detected — hooks are managed by the plugin."
+        echo "Skipping hook copy and registration."
+        echo "To update hooks, modify hooks/hooks.json and re-sync settings.json."
     else
-        echo "WARNING: Could not register hooks (jq or settings.json missing)"
-        echo "         Hooks are installed but may not fire without manual registration"
+        HOOKS_DIR="$DEST_DIR/hooks"
+        mkdir -p "$HOOKS_DIR"
+
+        # Copy hooks + their support modules into the hooks dir
+        for f in "$SCRIPT_DIR/hooks/obs-"*.py \
+                 "$SCRIPT_DIR/hooks/precompact-preserve.py" \
+                 "$SCRIPT_DIR/hooks/session-end-summary.py" \
+                 "$SCRIPT_DIR/hooks/subagent-stop-gate.py" \
+                 "$SCRIPT_DIR/hooks/task-completed-gate.py" \
+                 "$SCRIPT_DIR/hooks/hook_utils.py" \
+                 "$SCRIPT_DIR/hooks/obs_utils.py"; do
+            [ -f "$f" ] || continue
+            cp "$f" "$HOOKS_DIR/"
+            chmod +x "$HOOKS_DIR/$(basename "$f")"
+        done
+        echo "Installed: hooks to $HOOKS_DIR/"
+
+        # Register hooks in settings.json (inline)
+        if [ "$JQ_AVAILABLE" = true ] && [ -f "$SETTINGS" ]; then
+            echo "Registering obs hooks in settings.json..."
+            "$PYTHON" -c "
+import json, sys
+
+settings_path = '$SETTINGS'
+hooks_dir = '$HOOKS_DIR'
+
+with open(settings_path) as f:
+    settings = json.load(f)
+
+hooks = settings.setdefault('hooks', {})
+
+OBS_HOOKS = [
+    ('SessionStart', '.*', 'obs-session-start.py', 5000),
+    ('PreToolUse', 'Read', 'obs-pretool-read.py', 5000),
+    ('PostToolUse', 'Write', 'obs-posttool-write.py', 5000),
+    ('PostToolUse', 'Bash', 'obs-posttool-bash.py', 5000),
+    ('PostToolUse', 'Edit|MultiEdit', 'obs-posttool-edit.py', 5000),
+    ('PostToolUseFailure', '.*', 'obs-posttool-failure.py', 5000),
+    ('UserPromptSubmit', '.*', 'obs-prompt-submit.py', 5000),
+    ('Stop', '.*', 'obs-stop-cache.py', 2000),
+    ('PreCompact', '.*', 'obs-precompact.py', 5000),
+    ('PreCompact', '.*', 'precompact-preserve.py', 5000),
+    ('SubagentStop', '.*', 'obs-subagent-stop.py', 5000),
+    ('SubagentStop', '.*', 'subagent-stop-gate.py', 5000),
+    ('SessionEnd', '.*', 'obs-session-end.py', 5000),
+    ('SessionEnd', '.*', 'session-end-summary.py', 5000),
+    ('TaskCompleted', '.*', 'obs-task-completed.py', 5000),
+    ('TaskCompleted', '.*', 'task-completed-gate.py', 5000),
+]
+
+registered = 0
+for event, matcher, filename, timeout in OBS_HOOKS:
+    command = f'{hooks_dir}/{filename}'
+    event_hooks = hooks.setdefault(event, [])
+    already = any(
+        any(h.get('command') == command for h in entry.get('hooks', []))
+        for entry in event_hooks
+    )
+    if not already:
+        entry = {'hooks': [{'type': 'command', 'command': command, 'timeout': timeout}]}
+        if matcher != '.*':
+            entry['matcher'] = matcher
+        event_hooks.append(entry)
+        registered += 1
+
+with open(settings_path, 'w') as f:
+    json.dump(settings, f, indent=2)
+
+print(f'  Registered {registered} hooks ({len(OBS_HOOKS) - registered} already present)')
+"
+        else
+            echo "WARNING: Could not register hooks (jq or settings.json missing)"
+        fi
     fi
 fi
 
