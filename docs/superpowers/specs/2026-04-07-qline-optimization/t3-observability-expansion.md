@@ -83,7 +83,7 @@ Verified against codebase on 2026-04-07. Every source below confirmed by reading
 
 3. **`cache_metrics.jsonl` is primarily read by obs-stop-cache.py itself** (for deduplication via `_read_last_sidecar_entry`), not by `context_overhead.py`. The overhead monitor reads the raw transcript JSONL directly, not the sidecar.
 
-4. **Missing from spec: 16 additional sources identified.** Sources #11-15 (static overhead estimation inputs), #22 (errors.jsonl), #25-32 (source_map, snapshots, origin-path, fault ledger, derived outputs, tasks, plans) were not in the original 17-source table.
+4. **Missing from spec: 15 additional sources identified.** Sources #11-15 (5 static overhead estimation inputs), #22 (errors.jsonl), #25-32 (8: source_map, snapshots, origin-path, fault ledger, derived outputs x2, tasks, plans) were not in the original 17-source table. Total: 17 original + 15 new = 32.
 
 5. **`session_inventory.json` is NOT "used at session start" by the statusline.** It is written at session start by `obs-session-start.py` and never read by statusline.py.
 
@@ -156,6 +156,8 @@ Schema per line:
 
 **Alternative (simpler):** Write timing to the existing fault ledger (`~/.claude/logs/lifecycle-hook-faults.jsonl`) as `level: "perf"` records. This avoids the package_root problem entirely but loses per-session structure.
 
+**Dependency classification:** Supported. Uses only qLine-owned hook infrastructure (`run_fail_open`, package dirs). No CC internals.
+
 ---
 
 #### 3.3.2 — Source Freshness Manifest Keys
@@ -190,6 +192,8 @@ New keys:
 - **Backward compatibility:** Additive manifest keys. `manifest.get("source_freshness", {})` gracefully returns empty dict on old packages. Sparse-safe.
 
 - **Concern:** Writing to manifest on every event creates additional flock contention. The manifest is already flock-protected, and multiple hooks write to it. Better to batch freshness updates at specific moments (session start, stop, periodic from statusline).
+
+**Dependency classification:** Supported. Uses only qLine manifest keys and hook infrastructure.
 
 **Implementation complexity:** Medium. The schema is simple, but the writer placement requires care to avoid adding flock overhead to the hot event path. Best approach: write freshness data to the session cache (already in `/tmp/qline-cache.json`), and optionally persist to manifest only at session end.
 
@@ -229,6 +233,8 @@ Schema per line:
 
 - **Size bounding:** The statusline runs on every CC status event (potentially many times per second during active output). At ~100 bytes per line, 1000 invocations = ~100KB. A rotation mechanism (keep last 500 lines) or write-only-on-failure approach is essential.
 
+**Dependency classification:** Supported. Self-diagnostics for qLine's own render pipeline. No CC internals.
+
 **Implementation complexity:** Medium. The timing instrumentation is trivial, but the concern is write overhead — the statusline is latency-sensitive, and adding a JSONL append to every invocation conflicts with the "never delay render for diagnostics" principle. Best approach: buffer diagnostics in the session cache and flush to the sidecar only on error/partial outcomes or every Nth invocation.
 
 ---
@@ -258,6 +264,8 @@ New key:
 - **Backward compatibility:** Old manifests without `schema_version` are treated as `1.0.0` by readers (`m.get("schema_version", "1.0.0")`). Old readers encountering a manifest with `schema_version` will ignore the field (unknown keys are already tolerated). Fully backward-compatible.
 
 - **Versioning policy:** Follows TX rules (section 2). Major = breaking layout change (would require manifest migration). Minor = additive fields (like all T3 proposals). Patch = fixes. Current schema is retroactively `1.0.0`.
+
+**Dependency classification:** Supported. Versioning is internal to qLine manifest schema.
 
 **Implementation complexity:** Trivial. One line added to `create_package()`. Reader checks are optional — the version is informational for debugging and future migration tooling.
 
@@ -297,6 +305,8 @@ New event:
 - **Backward compatibility:** New event type in existing JSONL envelope. Follows the `{ seq, ts, event, session_id, data, origin_type, hook }` contract from TX section 1.4. Old readers that don't recognize `compact.anchor_invalidated` will skip it (they only match known event types). Old obs-precompact.py will not emit it — the anchor remains stale (current behavior, acceptable degradation).
 
 - **Alternative considered:** Instead of a new event type, set a manifest flag (`"anchor_invalidated": true`). Rejected because: (a) the event ledger provides a timeline (when exactly was it invalidated), and (b) manifest flags need explicit clearing, which adds complexity.
+
+**Dependency classification:** Observed-stable. Depends on `PreCompact` hook continuing to fire before compaction. The hook event itself is documented, but the precise compaction lifecycle timing is observed-stable.
 
 **Implementation complexity:** Small. Writer is ~10 lines in obs-precompact.py. Reader requires ~15 lines in `_try_phase2_transcript()` to detect the event and clear the cached anchor. The event scan could piggyback on the existing `_count_obs_events()` call.
 
@@ -338,6 +348,8 @@ New section:
 
 - **Backward compatibility:** Additive section in existing `session_inventory.json`. Old readers that don't know about `hook_coverage` will ignore it. Old `obs-session-start.py` without this enhancement will not write the section — coverage analysis simply isn't available for old packages.
 
+**Dependency classification:** Supported. Reads hooks.json (qLine-owned), settings.json (documented CC surface), and local hook files.
+
 - **T0 findings:** T0 section 0.2 manually verified 0 orphans, 0 unregistered files across all 16 hooks. This proposal automates that check for every session.
 
 **Implementation complexity:** Small-Medium. The comparison logic is ~40 lines of Python (read hooks.json, compare against settings.json hook entries, glob hooks/*.py, compute differences). The `_scan_inventory()` function already does half the work. The only complexity is that `CLAUDE_PLUGIN_ROOT` env var may not be set — needs fallback to detect plugin root from the script's own `__file__` path.
@@ -373,6 +385,8 @@ On each _inject_obs_counters() call:
 
 **Implementation complexity:** Trivial. ~10 lines added to `_inject_obs_counters()`. No new files, no new events, no schema changes. This is the highest-ROI gap fix because it uses existing data that's already being collected but not consumed.
 
+**Dependency classification:** Fragile. Depends on `session.reentry` events continuing to be emitted by `obs-session-start.py` when called with an existing session_id. The hook fires on SessionStart (documented), but the reentry detection logic is qLine-internal, and the session_id reuse behavior on resume/continue is observed-stable (T4 classifies it as speculative).
+
 ---
 
 #### 3.3.8 — Hook Fault Surfacing (NEW)
@@ -403,6 +417,8 @@ Periodically (every 60s via cache TTL):
 - **Backward compatibility:** No new files. The fault ledger already exists. If it doesn't exist, `stat()` raises FileNotFoundError, handled by the usual try/except pattern.
 
 **Implementation complexity:** Small. ~20 lines for the checker + 5 lines for render_obs_health enhancement.
+
+**Dependency classification:** Supported. Reads qLine's own fault ledger at a documented path. No CC internals.
 
 ---
 
