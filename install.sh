@@ -7,15 +7,15 @@ DEST_DIR="$HOME/.claude"
 SETTINGS="$DEST_DIR/settings.json"
 
 # --- Parse args ---
-WITH_OBS=false
+WITH_OBS=true
 for arg in "$@"; do
     case "$arg" in
-        --with-obs) WITH_OBS=true ;;
+        --no-obs) WITH_OBS=false ;;
         --help|-h)
-            echo "Usage: ./install.sh [--with-obs]"
+            echo "Usage: ./install.sh [--no-obs]"
             echo ""
             echo "  Default:     Install statusline only (one styled bar in Claude Code)"
-            echo "  --with-obs:  Also install observability hooks (session tracking,"
+            echo "  --no-obs:  Skip observability hooks (session tracking,"
             echo "               tool recording, compaction monitoring)"
             echo ""
             exit 0
@@ -170,7 +170,7 @@ echo "  Restart Claude Code to activate."
 if [ "$WITH_OBS" = true ]; then
     echo "  Statusline + observability hooks installed."
 else
-    echo "  Statusline installed. Run with --with-obs for observability hooks."
+    echo "  Statusline only (observability skipped)."
 fi
 echo ""
 echo "  Optional: customize theme:"
