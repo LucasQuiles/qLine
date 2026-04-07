@@ -381,6 +381,16 @@ def _read_manifest(manifest_path: str, f: Any) -> dict[str, Any]:
         return {}
 
 
+def load_manifest(package_root: str) -> dict:
+    """Load and parse manifest.json from package root. Returns {} on error."""
+    manifest_path = os.path.join(package_root, "manifest.json")
+    try:
+        with open(manifest_path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def update_manifest(package_root: str, updates: dict) -> None:
     """flock-protected read-parse-merge-write of manifest.json.
 

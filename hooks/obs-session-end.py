@@ -17,6 +17,7 @@ from obs_utils import (
     register_artifact,
     record_error,
     generate_overhead_report,
+    load_manifest,
     _now_iso,
 )
 
@@ -28,16 +29,6 @@ def _count_lines(path: str) -> int:
             return f.read().count(b"\n")
     except OSError:
         return 0
-
-
-def _load_manifest(package_root: str) -> dict:
-    """Load manifest.json, returning {} on any error."""
-    manifest_path = os.path.join(package_root, "manifest.json")
-    try:
-        with open(manifest_path) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
 
 
 def validate_finalization(package_root: str) -> tuple[str, list[str]]:
@@ -52,7 +43,7 @@ def validate_finalization(package_root: str) -> tuple[str, list[str]]:
     if not os.path.exists(manifest_path):
         return ("failed", ["Manifest does not exist"])
 
-    manifest = _load_manifest(package_root)
+    manifest = load_manifest(package_root)
     errors: list[str] = []
 
     # Tier 0: session_id present
@@ -87,7 +78,7 @@ def generate_session_summary(package_root: str, session_id: str, end_reason: str
 
     Uses fast line count for event_count; reads manifest for structured fields.
     """
-    manifest = _load_manifest(package_root)
+    manifest = load_manifest(package_root)
 
     ledger_path = os.path.join(package_root, "metadata", "hook_events.jsonl")
     event_count = _count_lines(ledger_path)
@@ -126,7 +117,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Step 1: Symlink main transcript (NOT copy — too slow for 1.5s cap)
     # ------------------------------------------------------------------
-    manifest = _load_manifest(package_root)
+    manifest = load_manifest(package_root)
     transcript_origin = manifest.get("native_links", {}).get("transcript_origin") or transcript_path
 
     if transcript_origin:
