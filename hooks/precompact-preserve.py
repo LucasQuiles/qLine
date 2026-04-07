@@ -7,15 +7,10 @@ handoff summary into the post-compact context via additionalContext.
 Payload shape (verified from fixtures):
     session_id, transcript_path, cwd, hook_event_name, trigger, custom_instructions
 """
-import glob
 import json
-import os
 import sys
 
-from hook_utils import read_hook_input, sanitize_task_list_id, log_hook_diagnostic, run_fail_open
-
-TASK_DIR = os.path.expanduser("~/.claude/tasks")
-PLAN_DIR = os.path.expanduser("~/.claude/plans")
+from hook_utils import read_hook_input, iter_open_tasks, find_latest_plan, run_fail_open
 
 
 def main():
@@ -27,14 +22,14 @@ def main():
     parts = []
 
     # Collect open tasks from the session's task directory
-    task_summary = _get_open_tasks(_resolve_task_list_id(session_id))
+    task_summary = _format_open_tasks(session_id)
     if task_summary:
         parts.append(task_summary)
 
     # Check for recently active plan file
-    plan_summary = _get_active_plan()
-    if plan_summary:
-        parts.append(plan_summary)
+    plan_name = find_latest_plan()
+    if plan_name:
+        parts.append(f"Active plan: {plan_name}")
 
     if not parts:
         # Nothing to preserve
@@ -49,86 +44,25 @@ def main():
     sys.exit(0)
 
 
-def _get_open_tasks(session_id: str) -> str | None:
-    """Read non-completed tasks from the session task directory."""
-    task_path = os.path.join(TASK_DIR, session_id)
-    if not os.path.isdir(task_path):
+def _format_open_tasks(session_id: str) -> str | None:
+    """Format open tasks as a text block for compaction context."""
+    lines = []
+    for task, fname in iter_open_tasks(session_id):
+        tid = task.get("id", fname)
+        subject = task.get("subject", "(no subject)")
+        status = task.get("status", "?")
+        blocked_by = task.get("blockedBy", [])
+        entry = f"  [{status}] #{tid}: {subject}"
+        if blocked_by:
+            entry += f" (blocked by: {', '.join(str(b) for b in blocked_by)})"
+        lines.append(entry)
+
+    if not lines:
         return None
 
-    open_tasks = []
-    try:
-        entries = sorted(os.listdir(task_path))
-    except OSError as exc:
-        log_hook_diagnostic(
-            "precompact-preserve", "PreCompact",
-            "task_dir_unreadable",
-            f"OSError reading task dir {task_path}: {exc}",
-            context={"task_path": task_path},
-        )
-        return None
-    for fname in entries:
-        if not fname.endswith(".json"):
-            continue
-        fpath = os.path.join(task_path, fname)
-        try:
-            with open(fpath) as f:
-                task = json.load(f)
-            status = task.get("status", "")
-            if status in ("pending", "in_progress"):
-                tid = task.get("id", fname)
-                subject = task.get("subject", "(no subject)")
-                blocked_by = task.get("blockedBy", [])
-                entry = f"  [{status}] #{tid}: {subject}"
-                if blocked_by:
-                    entry += f" (blocked by: {', '.join(str(b) for b in blocked_by)})"
-                open_tasks.append(entry)
-        except (json.JSONDecodeError, OSError):
-            continue
+    header = f"Open tasks ({len(lines)}):"
+    return header + "\n" + "\n".join(lines[:20])  # Cap at 20 to avoid bloat
 
-    if not open_tasks:
-        return None
-
-    header = f"Open tasks ({len(open_tasks)}):"
-    return header + "\n" + "\n".join(open_tasks[:20])  # Cap at 20 to avoid bloat
-
-
-def _resolve_task_list_id(session_id: str) -> str:
-    """Resolve the local task-list directory ID for hook-side task reads.
-
-    Hooks can safely honor the documented/local env-var override but do not try to
-    mirror deeper Claude-internal fallback resolution beyond that.
-    """
-    override = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
-    if override:
-        return sanitize_task_list_id(override)
-    return session_id
-
-
-def _get_active_plan() -> str | None:
-    """Find the most recently modified plan file."""
-    if not os.path.isdir(PLAN_DIR):
-        log_hook_diagnostic(
-            "precompact-preserve", "PreCompact",
-            "plan_dir_missing",
-            f"Plan directory does not exist: {PLAN_DIR}",
-        )
-        return None
-
-    plans = glob.glob(os.path.join(PLAN_DIR, "*.md"))
-    if not plans:
-        return None
-
-    try:
-        latest = max(plans, key=os.path.getmtime)
-    except (OSError, ValueError) as exc:
-        log_hook_diagnostic(
-            "precompact-preserve", "PreCompact",
-            "plan_dir_missing",
-            f"Failed to read plan mtime: {exc}",
-        )
-        return None
-    name = os.path.basename(latest)
-    return f"Active plan: {name}"
 
 
 if __name__ == "__main__":

@@ -48,7 +48,15 @@ try:
     for _obs_path in [_script_dir, os.path.join(os.path.expanduser("~"), ".claude", "scripts")]:
         if _obs_path not in sys.path:
             sys.path.insert(0, _obs_path)
-    from obs_utils import resolve_package_root, update_health, _atomic_jsonl_append
+    try:
+        from obs_utils import resolve_package_root_env, update_health, _atomic_jsonl_append
+    except ImportError:
+        # Fallback: older obs_utils without resolve_package_root_env
+        from obs_utils import resolve_package_root, update_health, _atomic_jsonl_append
+        def resolve_package_root_env(session_id):
+            obs_root = os.environ.get("OBS_ROOT")
+            kwargs = {"obs_root": obs_root} if obs_root else {}
+            return resolve_package_root(session_id, **kwargs)
     _OBS_AVAILABLE = True
 except Exception:
     _OBS_AVAILABLE = False
@@ -1884,9 +1892,7 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
             return
         state["_has_session_id"] = True
 
-        obs_root = os.environ.get("OBS_ROOT")
-        kwargs = {"obs_root": obs_root} if obs_root else {}
-        package_root = resolve_package_root(session_id, **kwargs)
+        package_root = resolve_package_root_env(session_id)
         if package_root is None:
             return
 
@@ -1895,8 +1901,8 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         session_cache = obs_cache.get(session_id, {})
         now = time.time()
 
-        # Refresh counts if stale (>30s)
-        if now - session_cache.get("last_count_ts", 0) >= 30:
+        # Refresh counts if stale (>5s)
+        if now - session_cache.get("last_count_ts", 0) >= 5:
             event_counts = _count_obs_events(package_root)
             total_reads, reread_count = _count_rereads(package_root)
             obs_health = _read_obs_health(package_root)
@@ -1911,6 +1917,18 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
 
         # Inject into state from cache
         ec = session_cache.get("event_counts", {})
+
+        # Session resume detection: clear stale overhead/anchor caches
+        reentry_count = ec.get("session.reentry", 0)
+        if reentry_count > session_cache.get("last_known_reentry_count", 0):
+            session_cache.pop("overhead_ts", None)
+            session_cache.pop("turn_1_anchor", None)
+            session_cache["last_known_reentry_count"] = reentry_count
+            session_cache["resume_detected"] = True
+            obs_cache[session_id] = session_cache
+            cache["_obs"] = obs_cache
+            save_cache(cache)
+
         tr = session_cache.get("total_reads", 0)
         rr = session_cache.get("reread_count", 0)
         state["obs_reads"] = tr
@@ -1938,9 +1956,7 @@ def _try_obs_snapshot(payload: dict, state: dict) -> None:
         if not isinstance(session_id, str) or not session_id:
             return
 
-        obs_root = os.environ.get("OBS_ROOT")
-        kwargs = {"obs_root": obs_root} if obs_root else {}
-        package_root = resolve_package_root(session_id, **kwargs)
+        package_root = resolve_package_root_env(session_id)
         if package_root is None:
             return
 
@@ -2017,7 +2033,7 @@ def main() -> None:
         "save_cache": save_cache,
         "cache_max_age": CACHE_MAX_AGE_S,
         "obs_available": _OBS_AVAILABLE,
-        "resolve_package_root": resolve_package_root if _OBS_AVAILABLE else None,
+        "resolve_package_root_env": resolve_package_root_env if _OBS_AVAILABLE else None,
     }
     inject_context_overhead(state, payload, theme, _cache_ctx)
     line = render(state, theme)

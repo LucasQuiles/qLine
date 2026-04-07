@@ -10,14 +10,15 @@ import sys
 
 from hook_utils import read_hook_input, run_fail_open
 from obs_utils import (
-    resolve_package_root,
+    resolve_package_root_env,
     append_event,
     update_manifest,
     update_health,
     register_artifact,
     record_error,
     generate_overhead_report,
-    _now_iso,
+    load_manifest,
+    now_iso,
 )
 
 
@@ -30,17 +31,7 @@ def _count_lines(path: str) -> int:
         return 0
 
 
-def _load_manifest(package_root: str) -> dict:
-    """Load manifest.json, returning {} on any error."""
-    manifest_path = os.path.join(package_root, "manifest.json")
-    try:
-        with open(manifest_path) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def validate_finalization(package_root: str) -> tuple[str, list[str]]:
+def validate_finalization(package_root: str, manifest: dict | None = None) -> tuple[str, list[str]]:
     """Returns (final_status, warnings_or_errors_list).
 
     Tier 0 failures → 'failed' or 'incomplete'
@@ -52,7 +43,8 @@ def validate_finalization(package_root: str) -> tuple[str, list[str]]:
     if not os.path.exists(manifest_path):
         return ("failed", ["Manifest does not exist"])
 
-    manifest = _load_manifest(package_root)
+    if manifest is None:
+        manifest = load_manifest(package_root)
     errors: list[str] = []
 
     # Tier 0: session_id present
@@ -82,12 +74,13 @@ def validate_finalization(package_root: str) -> tuple[str, list[str]]:
     return ("finalized", [])
 
 
-def generate_session_summary(package_root: str, session_id: str, end_reason: str) -> dict:
+def generate_session_summary(package_root: str, session_id: str, end_reason: str, manifest: dict | None = None) -> dict:
     """Quick summary — must complete in <200ms.
 
     Uses fast line count for event_count; reads manifest for structured fields.
     """
-    manifest = _load_manifest(package_root)
+    if manifest is None:
+        manifest = load_manifest(package_root)
 
     ledger_path = os.path.join(package_root, "metadata", "hook_events.jsonl")
     event_count = _count_lines(ledger_path)
@@ -95,7 +88,7 @@ def generate_session_summary(package_root: str, session_id: str, end_reason: str
     return {
         "session_id": session_id,
         "started_at": manifest.get("created_at"),
-        "ended_at": _now_iso(),
+        "ended_at": now_iso(),
         "end_reason": end_reason,
         "cwd": manifest.get("cwd") or manifest.get("source_map", {}).get("cwd"),
         "event_count": event_count,
@@ -118,21 +111,15 @@ def main() -> None:
     transcript_path = input_data.get("transcript_path", "")
     end_reason = input_data.get("reason", "unknown")
 
-    # Allow tests to override the observability root via env var
-    obs_root_override = os.environ.get("OBS_ROOT")
-    kwargs: dict = {}
-    if obs_root_override:
-        kwargs["obs_root"] = obs_root_override
-
     # Resolve package — if None, session was never packaged; exit silently
-    package_root = resolve_package_root(session_id, **kwargs)
+    package_root = resolve_package_root_env(session_id)
     if package_root is None:
         sys.exit(0)
 
     # ------------------------------------------------------------------
     # Step 1: Symlink main transcript (NOT copy — too slow for 1.5s cap)
     # ------------------------------------------------------------------
-    manifest = _load_manifest(package_root)
+    manifest = load_manifest(package_root)
     transcript_origin = manifest.get("native_links", {}).get("transcript_origin") or transcript_path
 
     if transcript_origin:
@@ -162,13 +149,13 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Step 2: Run finalization validator
     # ------------------------------------------------------------------
-    final_status, validator_items = validate_finalization(package_root)
+    final_status, validator_items = validate_finalization(package_root, manifest=manifest)
 
     # ------------------------------------------------------------------
     # Step 3: Update manifest — ended_at, end_reason, status
     # ------------------------------------------------------------------
     manifest_updates: dict = {
-        "ended_at": _now_iso(),
+        "ended_at": now_iso(),
         "end_reason": end_reason,
         "status": final_status,
     }
@@ -203,7 +190,7 @@ def main() -> None:
     derived_dir = os.path.join(package_root, "derived")
     try:
         os.makedirs(derived_dir, exist_ok=True)
-        summary = generate_session_summary(package_root, session_id, end_reason)
+        summary = generate_session_summary(package_root, session_id, end_reason, manifest=manifest)
         summary_path = os.path.join(derived_dir, "session_summary.json")
         with open(summary_path, "w") as f:
             json.dump(summary, f, indent=2)

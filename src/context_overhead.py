@@ -252,13 +252,30 @@ def _estimate_static_overhead(
 _TRANSCRIPT_TAIL_BYTES = 50 * 1024
 
 
+_extract_usage_full = None
+try:
+    # hooks/ dir may already be on sys.path (statusline.py adds it).
+    # If not, add it so obs_utils is importable.
+    import sys as _sys
+    _hooks_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks")
+    if _hooks_dir not in _sys.path:
+        _sys.path.insert(0, _hooks_dir)
+    from obs_utils import extract_usage_full as _extract_usage_full
+except ImportError:
+    pass
+
+
 def _extract_usage(entry: dict) -> tuple[dict | None, str | None]:
     """Extract usage dict and requestId from a transcript entry.
 
-    Handles two paths: message.usage (direct turn) and toolUseResult.usage (subagent).
-    Skips streaming stubs (stop_reason=null) for the message path.
-    Returns (usage_dict, request_id) or (None, None).
+    Delegates to obs_utils.extract_usage_full, returning (usage, request_id).
+    Falls back to inline extraction if obs_utils is unavailable.
     """
+    if _extract_usage_full is not None:
+        usage, _model, request_id, _entry_id = _extract_usage_full(entry)
+        return usage, request_id
+
+    # Inline fallback (obs_utils not importable — e.g. isolated test runner)
     msg = entry.get("message")
     if isinstance(msg, dict):
         stop = msg.get("stop_reason")
@@ -267,14 +284,12 @@ def _extract_usage(entry: dict) -> tuple[dict | None, str | None]:
             if isinstance(usage, dict):
                 req_id = msg.get("requestId") or entry.get("requestId")
                 return usage, req_id
-
     tur = entry.get("toolUseResult")
     if isinstance(tur, dict):
         usage = tur.get("usage")
         if isinstance(usage, dict):
             req_id = tur.get("requestId") or entry.get("requestId")
             return usage, req_id
-
     return None, None
 
 
@@ -491,16 +506,19 @@ def _try_phase2_transcript(
     if result is None:
         return False
 
-    # Anchor priority: manifest (durable) > file start > tail window
-    if "turn_1_anchor" not in session_cache:
-        manifest_anchor = _read_manifest_anchor(package_root)
-        if manifest_anchor is not None:
-            session_cache["turn_1_anchor"] = manifest_anchor
-
+    # Anchor priority: transcript file start (accurate) > manifest (fallback) > tail window
+    # The transcript's first-turn cache_creation is the real system overhead (~37k-52k).
+    # The manifest's cache_anchor stores per-turn cache_create deltas (~973-2406),
+    # which are far too small — using them poisons overhead computation.
     if "turn_1_anchor" not in session_cache:
         file_anchor = _read_transcript_anchor(path)
         if file_anchor is not None:
             session_cache["turn_1_anchor"] = file_anchor
+
+    if "turn_1_anchor" not in session_cache:
+        manifest_anchor = _read_manifest_anchor(package_root)
+        if manifest_anchor is not None:
+            session_cache["turn_1_anchor"] = manifest_anchor
 
     if "turn_1_anchor" not in session_cache:
         if result["turn_1_anchor"] is not None and result["turn_1_anchor"] > 0:
@@ -678,7 +696,7 @@ def compute_context_thresholds(context_window: int) -> dict[str, int]:
         }
     effective = context_window - CC_OUTPUT_RESERVE
     autocompact = effective - CC_AUTOCOMPACT_BUFFER
-    warning = autocompact - CC_WARNING_OFFSET
+    warning = effective - CC_WARNING_OFFSET
     error = autocompact - CC_ERROR_OFFSET
     blocking = effective - CC_BLOCKING_BUFFER
     return {
@@ -726,7 +744,7 @@ def inject_context_overhead(
         save_cache:          callable(dict) -> None
         cache_max_age:       float (seconds)
         obs_available:       bool
-        resolve_package_root: callable or None
+        resolve_package_root_env: callable or None
     """
     try:
         cfg_source = theme.get("context_bar", {}).get("overhead_source", "auto")
@@ -741,22 +759,20 @@ def inject_context_overhead(
         save_cache = cache_ctx["save_cache"]
         cache_max_age = cache_ctx["cache_max_age"]
         obs_available = cache_ctx["obs_available"]
-        resolve_package_root = cache_ctx.get("resolve_package_root")
+        resolve_package_root_env = cache_ctx.get("resolve_package_root_env")
 
         cache = load_cache()
         obs_cache = cache.get("_obs", {})
         session_cache = obs_cache.get(session_id, {})
         now = time.time()
 
-        if now - session_cache.get("overhead_ts", 0) < 30:
+        if now - session_cache.get("overhead_ts", 0) < 5:
             _apply_overhead_from_cache(state, session_cache)
             return
 
         package_root: str | None = None
-        if obs_available and resolve_package_root is not None:
-            obs_root = os.environ.get("OBS_ROOT")
-            kwargs = {"obs_root": obs_root} if obs_root else {}
-            package_root = resolve_package_root(session_id, **kwargs)
+        if obs_available and resolve_package_root_env is not None:
+            package_root = resolve_package_root_env(session_id)
 
         # Derive transcript path if not in payload (CC's statusline payload
         # built by x05/liY does NOT include transcript_path).

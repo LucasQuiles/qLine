@@ -1,0 +1,189 @@
+{
+  "captured_at": "2026-03-30T01:23:45.218838+00:00",
+  "claude_md": {
+    "global": null,
+    "project": null,
+    "local": null
+  },
+  "agents_md": {
+    "global": null,
+    "project": null,
+    "local": null
+  },
+  "plugins": {
+    "total_enabled": 29,
+    "total_disabled": 1,
+    "list": [
+      {
+        "name": "frontend-design",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "feature-dev",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "code-review",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "code-simplifier",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "security-guidance",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "playwright",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "agent-sdk-dev",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "typescript-lsp",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "plugin-dev",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "hookify",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "pinecone",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "huggingface-skills",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "commit-commands",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "ralph-loop",
+        "marketplace": "claude-plugins-official",
+        "enabled": false
+      },
+      {
+        "name": "claude-md-management",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "sentry",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "atomic-agents",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "microsoft-docs",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "superpowers",
+        "marketplace": "superpowers-marketplace",
+        "enabled": true
+      },
+      {
+        "name": "superpowers-developing-for-claude-code",
+        "marketplace": "superpowers-marketplace",
+        "enabled": true
+      },
+      {
+        "name": "elements-of-style",
+        "marketplace": "superpowers-marketplace",
+        "enabled": true
+      },
+      {
+        "name": "episodic-memory",
+        "marketplace": "superpowers-marketplace",
+        "enabled": true
+      },
+      {
+        "name": "superpowers-chrome",
+        "marketplace": "superpowers-marketplace",
+        "enabled": true
+      },
+      {
+        "name": "superpowers-lab",
+        "marketplace": "superpowers-marketplace",
+        "enabled": true
+      },
+      {
+        "name": "ralph-loop",
+        "marketplace": "ralph-loop-dev",
+        "enabled": true
+      },
+      {
+        "name": "tmup",
+        "marketplace": "tmup-dev",
+        "enabled": true
+      },
+      {
+        "name": "microsoft_365",
+        "marketplace": "microsoft-365-dev",
+        "enabled": true
+      },
+      {
+        "name": "greptile",
+        "marketplace": "claude-plugins-official",
+        "enabled": true
+      },
+      {
+        "name": "sdlc-os",
+        "marketplace": "sdlc-os-dev",
+        "enabled": true
+      },
+      {
+        "name": "showme",
+        "marketplace": "showme-dev",
+        "enabled": true
+      }
+    ]
+  },
+  "hooks": {
+    "total": 29,
+    "by_event": {
+      "SessionStart": 2,
+      "PreToolUse": 10,
+      "PostToolUse": 4,
+      "UserPromptSubmit": 2,
+      "Stop": 2,
+      "PreCompact": 2,
+      "SubagentStop": 2,
+      "SessionEnd": 2,
+      "TaskCompleted": 2,
+      "PostToolUseFailure": 1
+    }
+  },
+  "settings_json": {
+    "path": "/Users/q/.claude/settings.json",
+    "bytes": 14743,
+    "mtime": "2026-03-27T01:32:31.390260+00:00"
+  }
+}

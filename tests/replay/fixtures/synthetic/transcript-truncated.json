@@ -1,0 +1,24 @@
+{
+  "_scenario": "transcript-truncated",
+  "_description": "Transcript file shorter than expected (tail read hits EOF early)",
+  "hook_event_name": "Status",
+  "session_id": "synth-transcript-truncated",
+  "model": {
+    "id": "claude-sonnet-4-20250514",
+    "display_name": "Sonnet 4"
+  },
+  "workspace": {
+    "current_dir": "/tmp/test-project"
+  },
+  "cost": {
+    "total_cost_usd": 0.05,
+    "total_duration_ms": 5000
+  },
+  "context_window": {
+    "total_input_tokens": 10000,
+    "total_output_tokens": 500,
+    "context_window_size": 200000,
+    "used_percentage": 5
+  },
+  "_synthetic_note": "transcript_path intentionally omitted; tests graceful degradation when transcript is missing or too short"
+}

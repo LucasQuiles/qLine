@@ -1,0 +1,13 @@
+{
+  "total_turns": 68,
+  "system_overhead_tokens": 36032,
+  "system_overhead_source": "first_turn_anchor",
+  "system_overhead_pct_of_window": 3.6,
+  "cache_hit_rate_overall": 0.9805,
+  "cache_busting_events": 0,
+  "cache_busting_turns": [],
+  "total_cache_read_tokens": 4503769,
+  "total_cache_create_tokens": 89593,
+  "total_fresh_input_tokens": 334,
+  "effective_cost_multiplier": 126.32
+}

@@ -3,6 +3,8 @@
 # hook-utils-contract v1.0 -- update all copies if Claude Code hook stdin contract changes
 Minimal shared module for qLine observability hooks.
 """
+import glob
+import hashlib
 import json
 import os
 import select
@@ -13,6 +15,11 @@ from typing import Any, Callable
 
 
 MAX_STDIN_BYTES = 1_048_576  # 1 MB
+
+
+def now_iso() -> str:
+    """UTC timestamp in ISO-8601 format."""
+    return datetime.now(timezone.utc).isoformat()
 
 _LEDGER_PATH = os.path.join(
     os.path.expanduser("~"), ".claude", "logs", "lifecycle-hook-faults.jsonl"
@@ -44,11 +51,23 @@ def read_hook_input(timeout_seconds: int = 2) -> dict[str, Any] | None:
     return parsed
 
 
+try:
+    from obs_utils import _atomic_jsonl_append
+except ImportError:
+    _atomic_jsonl_append = None
+
+
 def _write_ledger_record(record: dict) -> None:
     """Atomic JSONL append to the fault ledger. Never raises."""
     try:
-        ledger_dir = os.path.dirname(_LEDGER_PATH)
-        os.makedirs(ledger_dir, exist_ok=True)
+        if _atomic_jsonl_append is not None:
+            _atomic_jsonl_append(_LEDGER_PATH, record)
+            return
+    except Exception:
+        pass
+    # Fallback: direct write if obs_utils unavailable or append fails
+    try:
+        os.makedirs(os.path.dirname(_LEDGER_PATH), exist_ok=True)
         line = json.dumps(record, default=str) + "\n"
         fd = os.open(_LEDGER_PATH, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
         try:
@@ -68,7 +87,7 @@ def log_hook_fault(
     """Write a fault-level record with traceback extract."""
     tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
     _write_ledger_record({
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now_iso(),
         "hook": hook_name,
         "event": event_name,
         "level": "fault",
@@ -104,6 +123,66 @@ def sanitize_task_list_id(task_list_id: str) -> str:
     )
 
 
+def resolve_task_list_id(session_id: str) -> str:
+    """Resolve the local task-list directory ID for hook-side task reads.
+
+    Hooks can safely honor the documented/local env-var override but do not try to
+    mirror deeper Claude-internal fallback resolution beyond that.
+    """
+    override = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
+    if override:
+        return sanitize_task_list_id(override)
+    return session_id
+
+
+def find_latest_plan() -> str | None:
+    """Find the most recently modified plan file. Returns basename or None."""
+    plan_dir = os.path.expanduser("~/.claude/plans")
+    if not os.path.isdir(plan_dir):
+        return None
+    plans = glob.glob(os.path.join(plan_dir, "*.md"))
+    if not plans:
+        return None
+    try:
+        latest = max(plans, key=os.path.getmtime)
+        return os.path.basename(latest)
+    except (OSError, ValueError):
+        return None
+
+
+def iter_open_tasks(session_id: str):
+    """Yield (task_dict, filename) for non-completed tasks in session task dir.
+
+    session_id is the raw session ID; resolve_task_list_id is called internally.
+    Silently yields nothing on missing dirs or parse errors.
+    """
+    task_path = os.path.join(
+        os.path.expanduser("~"), ".claude", "tasks",
+        resolve_task_list_id(session_id),
+    )
+    if not os.path.isdir(task_path):
+        return
+    try:
+        entries = sorted(os.listdir(task_path))
+    except OSError:
+        return
+    for fname in entries:
+        if not fname.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(task_path, fname)) as f:
+                task = json.load(f)
+            if task.get("status") in ("pending", "in_progress"):
+                yield task, fname
+        except (json.JSONDecodeError, OSError, KeyError):
+            continue
+
+
+def hash16(s: str) -> str:
+    """SHA-256 truncated to 16 hex chars."""
+    return hashlib.sha256(s.encode()).hexdigest()[:16]
+
+
 def log_hook_diagnostic(
     hook_name: str,
     event_name: str,
@@ -114,7 +193,7 @@ def log_hook_diagnostic(
 ) -> None:
     """Write a diagnostic or warning record."""
     _write_ledger_record({
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now_iso(),
         "hook": hook_name,
         "event": event_name,
         "level": level,

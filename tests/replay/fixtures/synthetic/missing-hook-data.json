@@ -1,0 +1,24 @@
+{
+  "_scenario": "missing-hook-data",
+  "_description": "hook_events.jsonl missing or empty; statusline must degrade gracefully",
+  "hook_event_name": "Status",
+  "session_id": "synth-missing-hooks",
+  "model": {
+    "id": "claude-opus-4-6",
+    "display_name": "Opus 4.6 (1M context)"
+  },
+  "workspace": {
+    "current_dir": "/tmp/test-project"
+  },
+  "cost": {
+    "total_cost_usd": 0.5,
+    "total_duration_ms": 30000
+  },
+  "context_window": {
+    "total_input_tokens": 20000,
+    "total_output_tokens": 2000,
+    "context_window_size": 200000,
+    "used_percentage": 11
+  },
+  "_synthetic_note": "No session_id mapping in runtime dir; no package_root resolvable; obs counters should all be absent/zero"
+}

@@ -18,11 +18,12 @@ from typing import Any
 
 from hook_utils import read_hook_input, run_fail_open
 from obs_utils import (
-    resolve_package_root,
+    resolve_package_root_env,
     append_event,
     update_manifest_if_absent_batch,
     _atomic_jsonl_append,
-    _now_iso,
+    now_iso,
+    extract_usage_full,
 )
 
 _HOOK_NAME = "obs-stop-cache"
@@ -62,7 +63,7 @@ def _extract_latest_cache_metrics(
         except (json.JSONDecodeError, ValueError):
             continue
 
-        usage, model, entry_id = _extract_usage_from_entry(entry)
+        usage, model, _request_id, entry_id = extract_usage_full(entry)
         if usage is None:
             continue
 
@@ -92,32 +93,6 @@ def _extract_latest_cache_metrics(
 
     return None
 
-
-def _extract_usage_from_entry(
-    entry: dict,
-) -> tuple[dict | None, str | None, str | None]:
-    """Extract (usage, model, entry_id) from a transcript entry.
-
-    Handles message.usage (direct turn) and toolUseResult.usage (subagent).
-    Skips streaming stubs where stop_reason is null.
-    """
-    msg = entry.get("message")
-    if isinstance(msg, dict):
-        stop = msg.get("stop_reason")
-        if stop is not None:
-            usage = msg.get("usage")
-            if isinstance(usage, dict):
-                return usage, msg.get("model"), msg.get("id")
-
-    tur = entry.get("toolUseResult")
-    if isinstance(tur, dict):
-        usage = tur.get("usage")
-        if isinstance(usage, dict):
-            # Use entry uuid for dedup (falls back to timestamp-based synthetic)
-            entry_id = entry.get("uuid") or entry.get("timestamp", "")
-            return usage, None, entry_id
-
-    return None, None, None
 
 
 def _read_last_sidecar_entry(sidecar_path: str) -> dict:
@@ -169,9 +144,7 @@ def main() -> None:
     if not transcript_path:
         sys.exit(0)
 
-    obs_root = os.environ.get("OBS_ROOT")
-    kwargs = {"obs_root": obs_root} if obs_root else {}
-    package_root = resolve_package_root(session_id, **kwargs)
+    package_root = resolve_package_root_env(session_id)
     if package_root is None:
         sys.exit(0)
 
@@ -191,7 +164,7 @@ def main() -> None:
     # Extract cache metrics from transcript
     metrics = _extract_latest_cache_metrics(transcript_path, last_entry_id)
 
-    now = _now_iso()
+    now = now_iso()
     os.makedirs(os.path.join(package_root, "custom"), exist_ok=True)
 
     if metrics is None:
