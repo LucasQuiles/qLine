@@ -729,7 +729,7 @@ def inject_context_overhead(
         save_cache:          callable(dict) -> None
         cache_max_age:       float (seconds)
         obs_available:       bool
-        resolve_package_root: callable or None
+        resolve_package_root_env: callable or None
     """
     try:
         cfg_source = theme.get("context_bar", {}).get("overhead_source", "auto")
@@ -744,7 +744,7 @@ def inject_context_overhead(
         save_cache = cache_ctx["save_cache"]
         cache_max_age = cache_ctx["cache_max_age"]
         obs_available = cache_ctx["obs_available"]
-        resolve_package_root = cache_ctx.get("resolve_package_root")
+        resolve_package_root_env = cache_ctx.get("resolve_package_root_env")
 
         cache = load_cache()
         obs_cache = cache.get("_obs", {})
@@ -756,10 +756,8 @@ def inject_context_overhead(
             return
 
         package_root: str | None = None
-        if obs_available and resolve_package_root is not None:
-            obs_root = os.environ.get("OBS_ROOT")
-            kwargs = {"obs_root": obs_root} if obs_root else {}
-            package_root = resolve_package_root(session_id, **kwargs)
+        if obs_available and resolve_package_root_env is not None:
+            package_root = resolve_package_root_env(session_id)
 
         # Derive transcript path if not in payload (CC's statusline payload
         # built by x05/liY does NOT include transcript_path).

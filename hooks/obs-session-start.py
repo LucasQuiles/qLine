@@ -6,7 +6,7 @@ import sys
 from datetime import datetime, timezone
 
 from hook_utils import read_hook_input, run_fail_open, _now_iso
-from obs_utils import create_package, append_event, resolve_package_root, update_health, record_error
+from obs_utils import create_package, append_event, resolve_package_root_env, update_health, record_error
 
 
 def _file_stats(path: str) -> dict | None:
@@ -117,14 +117,8 @@ def main() -> None:
     cwd = input_data.get("cwd", "")
     source = input_data.get("source", "unknown")
 
-    # Allow tests to override the observability root via env var
-    obs_root_override = os.environ.get("OBS_ROOT")
-    kwargs: dict = {}
-    if obs_root_override:
-        kwargs["obs_root"] = obs_root_override
-
     # Handle re-entry: package already exists (any source, including repeated startup)
-    existing = resolve_package_root(session_id, **kwargs)
+    existing = resolve_package_root_env(session_id)
     if existing:
         append_event(
             existing,
@@ -138,7 +132,9 @@ def main() -> None:
 
     # Create new package (Tier 0 — raises OSError on failure)
     try:
-        package_root = create_package(session_id, cwd, transcript_path, source, **kwargs)
+        obs_root_override = os.environ.get("OBS_ROOT")
+        cp_kwargs: dict = {"obs_root": obs_root_override} if obs_root_override else {}
+        package_root = create_package(session_id, cwd, transcript_path, source, **cp_kwargs)
     except Exception as exc:
         print(f"[obs-session-start] Tier 0 failure: {exc}", file=sys.stderr)
         sys.exit(0)  # fail open for Claude

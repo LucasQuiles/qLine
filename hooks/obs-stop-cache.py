@@ -18,7 +18,7 @@ from typing import Any
 
 from hook_utils import read_hook_input, run_fail_open
 from obs_utils import (
-    resolve_package_root,
+    resolve_package_root_env,
     append_event,
     update_manifest_if_absent_batch,
     _atomic_jsonl_append,
@@ -169,9 +169,7 @@ def main() -> None:
     if not transcript_path:
         sys.exit(0)
 
-    obs_root = os.environ.get("OBS_ROOT")
-    kwargs = {"obs_root": obs_root} if obs_root else {}
-    package_root = resolve_package_root(session_id, **kwargs)
+    package_root = resolve_package_root_env(session_id)
     if package_root is None:
         sys.exit(0)
 

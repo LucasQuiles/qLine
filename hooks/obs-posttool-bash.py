@@ -25,7 +25,7 @@ from typing import Any
 
 from hook_utils import read_hook_input, run_fail_open, hash16, _now_iso
 from obs_utils import (
-    resolve_package_root,
+    resolve_package_root_env,
     append_event,
     update_health,
     record_error,
@@ -58,12 +58,7 @@ def main() -> None:
     if not isinstance(tool_response, dict):
         sys.exit(0)
 
-    obs_root_override = os.environ.get("OBS_ROOT")
-    kwargs: dict = {}
-    if obs_root_override:
-        kwargs["obs_root"] = obs_root_override
-
-    package_root = resolve_package_root(session_id, **kwargs)
+    package_root = resolve_package_root_env(session_id)
     if package_root is None:
         sys.exit(0)
 

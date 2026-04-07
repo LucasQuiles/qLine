@@ -213,6 +213,13 @@ def create_package(
 _package_root_cache: dict[str, str | None] = {}
 
 
+def resolve_package_root_env(session_id: str) -> str | None:
+    """Resolve package root, respecting OBS_ROOT env override."""
+    obs_root = os.environ.get("OBS_ROOT")
+    kwargs = {"obs_root": obs_root} if obs_root else {}
+    return resolve_package_root(session_id, **kwargs)
+
+
 def resolve_package_root(
     session_id: str,
     *,
