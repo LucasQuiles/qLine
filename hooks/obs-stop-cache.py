@@ -22,7 +22,7 @@ from obs_utils import (
     append_event,
     update_manifest_if_absent_batch,
     _atomic_jsonl_append,
-    _now_iso,
+    now_iso,
     extract_usage_full,
 )
 
@@ -164,7 +164,7 @@ def main() -> None:
     # Extract cache metrics from transcript
     metrics = _extract_latest_cache_metrics(transcript_path, last_entry_id)
 
-    now = _now_iso()
+    now = now_iso()
     os.makedirs(os.path.join(package_root, "custom"), exist_ok=True)
 
     if metrics is None:

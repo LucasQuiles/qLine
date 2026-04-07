@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from hook_utils import _now_iso  # canonical timestamp; defined in hook_utils to keep dependency direction correct
+from hook_utils import now_iso  # canonical timestamp; defined in hook_utils to keep dependency direction correct
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -163,7 +163,7 @@ def create_package(
         "transcript_path": transcript_path,
         "package_root": package_root,
         "status": "active",
-        "created_at": _now_iso(),
+        "created_at": now_iso(),
         "native_links": {
             "transcript": "native/transcripts/main.jsonl",
             "transcript_origin": transcript_path,
@@ -189,7 +189,7 @@ def create_package(
         "cwd": cwd,
         "transcript_path": transcript_path,
         "source": source,
-        "created_at": _now_iso(),
+        "created_at": now_iso(),
     }
     source_map_path = os.path.join(package_root, "source_map.json")
     with open(source_map_path, "w") as f:
@@ -201,7 +201,7 @@ def create_package(
     runtime_record: dict[str, Any] = {
         "package_root": package_root,
         "session_id": session_id,
-        "created_at": _now_iso(),
+        "created_at": now_iso(),
     }
     runtime_path = os.path.join(runtime_dir, f"{session_id}.json")
     with open(runtime_path, "w") as f:
@@ -216,8 +216,9 @@ _package_root_cache: dict[str, str | None] = {}
 def resolve_package_root_env(session_id: str) -> str | None:
     """Resolve package root, respecting OBS_ROOT env override."""
     obs_root = os.environ.get("OBS_ROOT")
-    kwargs = {"obs_root": obs_root} if obs_root else {}
-    return resolve_package_root(session_id, **kwargs)
+    if obs_root:
+        return resolve_package_root(session_id, obs_root=obs_root)
+    return resolve_package_root(session_id)
 
 
 def resolve_package_root(
@@ -295,7 +296,7 @@ def append_event(
     seq = next_seq(package_root)
     record: dict[str, Any] = {
         "seq": seq,
-        "ts": _now_iso(),
+        "ts": now_iso(),
         "event": event,
         "session_id": session_id,
         "data": data,
@@ -332,7 +333,7 @@ def record_error(
     Never raises (Tier 1 resilience contract).
     """
     record: dict[str, Any] = {
-        "ts": _now_iso(),
+        "ts": now_iso(),
         "code": code,
         "severity": severity,
         "subsystem": subsystem,
@@ -357,7 +358,7 @@ def register_artifact(
     Never raises (Tier 1 resilience contract).
     """
     record: dict[str, Any] = {
-        "ts": _now_iso(),
+        "ts": now_iso(),
         "artifact_id": artifact_id,
         "artifact_type": artifact_type,
         "path": path,
@@ -557,6 +558,7 @@ def update_manifest_if_absent_batch(
                 fcntl.flock(f, fcntl.LOCK_UN)
     except Exception:
         return False
+
 
 def extract_usage_full(
     entry: dict,

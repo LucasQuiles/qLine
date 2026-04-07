@@ -10,7 +10,7 @@ Payload shape (verified from fixtures):
 import json
 import sys
 
-from hook_utils import read_hook_input, iter_open_tasks, find_latest_plan, log_hook_diagnostic, run_fail_open
+from hook_utils import read_hook_input, iter_open_tasks, find_latest_plan, run_fail_open
 
 
 def main():

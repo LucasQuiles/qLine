@@ -5,7 +5,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
-from hook_utils import read_hook_input, run_fail_open, _now_iso
+from hook_utils import read_hook_input, run_fail_open, now_iso
 from obs_utils import create_package, append_event, resolve_package_root_env, update_health, record_error
 
 
@@ -84,7 +84,7 @@ def _scan_inventory(package_root: str, cwd: str) -> None:
 
     # --- Assemble and write ---
     inventory = {
-        "captured_at": _now_iso(),
+        "captured_at": now_iso(),
         "claude_md": claude_md,
         "agents_md": agents_md,
         "plugins": {

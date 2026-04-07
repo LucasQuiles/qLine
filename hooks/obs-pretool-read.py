@@ -25,7 +25,7 @@ from obs_utils import (
     append_event,
     record_error,
     _atomic_jsonl_append,
-    _now_iso,
+    now_iso,
     _load_read_state,
     _save_read_state,
 )
@@ -81,7 +81,7 @@ def main() -> None:
     # Step 3: Build read record for custom/reads.jsonl
     # ------------------------------------------------------------------
     read_record: dict[str, Any] = {
-        "ts": _now_iso(),
+        "ts": now_iso(),
         "session_id": session_id,
         "tool": tool_name,
         "tool_ref": tool_ref,

@@ -16,7 +16,7 @@ import json
 import os
 import sys
 from hook_utils import read_hook_input, run_fail_open
-from obs_utils import resolve_package_root_env, append_event, update_manifest_array, _now_iso
+from obs_utils import resolve_package_root_env, append_event, update_manifest_array, now_iso
 
 
 def main() -> None:
@@ -70,7 +70,7 @@ def main() -> None:
         {
             "seq": compact_seq,
             "trigger": trigger,
-            "timestamp": _now_iso(),
+            "timestamp": now_iso(),
         },
     )
 

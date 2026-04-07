@@ -3,6 +3,8 @@
 # hook-utils-contract v1.0 -- update all copies if Claude Code hook stdin contract changes
 Minimal shared module for qLine observability hooks.
 """
+import glob
+import hashlib
 import json
 import os
 import select
@@ -15,7 +17,7 @@ from typing import Any, Callable
 MAX_STDIN_BYTES = 1_048_576  # 1 MB
 
 
-def _now_iso() -> str:
+def now_iso() -> str:
     """UTC timestamp in ISO-8601 format."""
     return datetime.now(timezone.utc).isoformat()
 
@@ -49,23 +51,31 @@ def read_hook_input(timeout_seconds: int = 2) -> dict[str, Any] | None:
     return parsed
 
 
+try:
+    from obs_utils import _atomic_jsonl_append
+except ImportError:
+    _atomic_jsonl_append = None
+
+
 def _write_ledger_record(record: dict) -> None:
     """Atomic JSONL append to the fault ledger. Never raises."""
     try:
-        from obs_utils import _atomic_jsonl_append
-        _atomic_jsonl_append(_LEDGER_PATH, record)
+        if _atomic_jsonl_append is not None:
+            _atomic_jsonl_append(_LEDGER_PATH, record)
+            return
     except Exception:
-        # Fallback: direct write if obs_utils unavailable or append fails
+        pass
+    # Fallback: direct write if obs_utils unavailable or append fails
+    try:
+        os.makedirs(os.path.dirname(_LEDGER_PATH), exist_ok=True)
+        line = json.dumps(record, default=str) + "\n"
+        fd = os.open(_LEDGER_PATH, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
         try:
-            os.makedirs(os.path.dirname(_LEDGER_PATH), exist_ok=True)
-            line = json.dumps(record, default=str) + "\n"
-            fd = os.open(_LEDGER_PATH, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-            try:
-                os.write(fd, line.encode())
-            finally:
-                os.close(fd)
-        except Exception:
-            pass
+            os.write(fd, line.encode())
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
 
 
 def log_hook_fault(
@@ -77,7 +87,7 @@ def log_hook_fault(
     """Write a fault-level record with traceback extract."""
     tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
     _write_ledger_record({
-        "ts": _now_iso(),
+        "ts": now_iso(),
         "hook": hook_name,
         "event": event_name,
         "level": "fault",
@@ -127,7 +137,6 @@ def resolve_task_list_id(session_id: str) -> str:
 
 def find_latest_plan() -> str | None:
     """Find the most recently modified plan file. Returns basename or None."""
-    import glob
     plan_dir = os.path.expanduser("~/.claude/plans")
     if not os.path.isdir(plan_dir):
         return None
@@ -171,7 +180,6 @@ def iter_open_tasks(session_id: str):
 
 def hash16(s: str) -> str:
     """SHA-256 truncated to 16 hex chars."""
-    import hashlib
     return hashlib.sha256(s.encode()).hexdigest()[:16]
 
 
@@ -185,7 +193,7 @@ def log_hook_diagnostic(
 ) -> None:
     """Write a diagnostic or warning record."""
     _write_ledger_record({
-        "ts": _now_iso(),
+        "ts": now_iso(),
         "hook": hook_name,
         "event": event_name,
         "level": level,

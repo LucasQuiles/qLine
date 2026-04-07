@@ -19,7 +19,7 @@ from obs_utils import (
     update_manifest_array,
     record_error,
     update_health,
-    _now_iso,
+    now_iso,
 )
 
 
@@ -53,7 +53,7 @@ def main() -> None:
         "task_subject": task_subject,
         "task_description": task_description,
         "cwd": cwd,
-        "recorded_at": _now_iso(),
+        "recorded_at": now_iso(),
     }
     task_log_ok = _atomic_jsonl_append(task_log_path, raw_record)
     if not task_log_ok:
@@ -89,7 +89,7 @@ def main() -> None:
         {
             "task_id": task_id,
             "task_subject": task_subject,
-            "completed_at": _now_iso(),
+            "completed_at": now_iso(),
         },
     )
 
