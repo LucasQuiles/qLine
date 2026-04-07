@@ -82,31 +82,31 @@ Max possible: 15 + 10 + 3 + 6 + 3 + 5 + 2 = 44
 
 | Rank | ID | Title | Track | Impact | Risk | Lat. | Corr. | Obs | Cost | Frag. | Score | Rationale |
 |------|-----|-------|-------|--------|------|------|-------|-----|------|-------|-------|-----------|
-| 1 | OPP-01 | Fix manifest anchor priority (AG-01) | T1 | 5 | 4 | 0 | 3 | 0 | 5 | +1 | **38** | Critical accuracy bug. Demoting one priority check in `_try_phase2_transcript()` is a 3-line change. Fixes the root cause of AG-08 too. Reduces fragility by removing dependency on the wrong manifest value. |
-| 2 | OPP-11 | Session resume signal (MV-10/3.3.7) | T3 | 4 | 5 | 1 | 2 | 2 | 5 | 0 | **36** | Trivial (~10 lines), uses existing `session.reentry` events already collected but not consumed. Fixes real staleness on resume. High ROI. |
-| 3 | OPP-09 | Reduce cache TTL 30s to 5s (A-prime) | T2 | 4 | 5 | 3 | 0 | 0 | 5 | 0 | **35** | Two integer constant changes. 6x freshness improvement. T2 proved pipeline is sub-4ms even on XL sessions; 30s TTL is unnecessary. Zero architectural risk. |
-| 4 | OPP-02 | Fix warning threshold formula (AG-02) | T1 | 4 | 5 | 0 | 3 | 0 | 5 | 0 | **35** | One-line formula fix. Deterministic mathematical error where `warning_at == error_at`. Uses verified CC source constants. |
-| 5 | OPP-19 | Reduce transcript dependency via `current_usage` (UR-01/UR-05) | T4 | 5 | 3 | 0 | 2 | 0 | 2 | +2 | **33** | Highest fragility reduction. Sourcing cache metrics from documented stdin `current_usage` instead of undocumented transcript JSONL removes the #1 fragile dependency. Medium implementation cost: needs architectural change in cache metric pipeline. |
-| 6 | OPP-16 | Compaction anchor invalidation event (MV-08/3.3.5) | T3 | 4 | 4 | 0 | 2 | 2 | 4 | 0 | **32** | ~25 lines across two files. Fixes stale anchor after compaction. New event type follows TX envelope. Complements AG-01 fix. |
-| 7 | OPP-15 | Package schema version in manifest (MV-07/3.3.4) | T3 | 2 | 5 | 0 | 0 | 1 | 5 | +1 | **28** | Trivial: one line in `create_package()`. Future-proofing for all T3 additive changes. Low impact today but enables safe evolution. |
-| 8 | OPP-18 | Hook fault surfacing (MV-11/3.3.8) | T3 | 3 | 5 | 0 | 0 | 3 | 4 | 0 | **28** | ~25 lines. Surfaces crash data from existing fault ledger that is already being written but never read. High observability gain for invisible hook failures. |
-| 9 | OPP-20 | Remove `conversation` dict dependency (UR-04) | T4 | 3 | 4 | 0 | 1 | 0 | 4 | +2 | **28** | Removes undocumented field dependency. Audit `normalize()` to confirm documented alternatives exist; then delete the fragile code path. Medium risk: must verify no lost functionality. |
-| 10 | OPP-05 | Configurable context correction (AG-05) | T1 | 3 | 5 | 0 | 1 | 0 | 4 | 0 | **27** | Add `context_bar.include_output = true/false` config key. Documents the divergence from CC's display. Current behavior is arguably more useful but confusing when comparing to CC. |
-| 11 | OPP-12 | Hook performance sidecar (MV-01/3.3.1) | T3 | 3 | 4 | 0 | 0 | 3 | 3 | 0 | **25** | Instruments `run_fail_open()` with timing. Needs minor refactor to get package_root into wrapper scope. Fills a major blind spot (16 hooks with zero latency visibility). |
-| 12 | OPP-06 | MCP server fallback to 0 (AG-06) | T1 | 2 | 5 | 0 | 1 | 0 | 5 | 0 | **25** | One-line change. Fallback from 5 to 0 is more conservative. Rarely triggered but fixes wrong direction on miss. |
-| 13 | OPP-21 | Configurable CC internal constants (UR-02) | T4 | 3 | 4 | 0 | 1 | 0 | 3 | +2 | **25** | Add `qline.toml` keys for CC_OUTPUT_RESERVE, CC_AUTOCOMPACT_BUFFER, etc. Reduces speculative dependency. Medium cost: config schema change + validation. |
+| 1 | OPP-01 | Fix manifest anchor priority (AG-01) | T1 | 5 | 4 | 0 | 3 | 0 | 5 | +1 | **35** | Critical accuracy bug. Demoting one priority check in `_try_phase2_transcript()` is a 3-line change. Fixes the root cause of AG-08 too. Reduces fragility by removing dependency on the wrong manifest value. |
+| 2 | OPP-11 | Session resume signal (MV-10/3.3.7) | T3 | 4 | 5 | 1 | 2 | 2 | 5 | 0 | **34** | Trivial (~10 lines), uses existing `session.reentry` events already collected but not consumed. Fixes real staleness on resume. High ROI. |
+| 3 | OPP-09 | Reduce cache TTL 30s to 5s (A-prime) | T2 | 4 | 5 | 3 | 0 | 0 | 5 | 0 | **30** | Two integer constant changes. 6x freshness improvement. T2 proved pipeline is sub-4ms even on XL sessions; 30s TTL is unnecessary. Zero architectural risk. |
+| 4 | OPP-02 | Fix warning threshold formula (AG-02) | T1 | 4 | 5 | 0 | 3 | 0 | 5 | 0 | **33** | One-line formula fix. Deterministic mathematical error where `warning_at == error_at`. Uses verified CC source constants. |
+| 5 | OPP-19 | Reduce transcript dependency via `current_usage` (UR-01/UR-05) | T4 | 5 | 3 | 0 | 2 | 0 | 2 | +2 | **29** | Highest fragility reduction. Sourcing cache metrics from documented stdin `current_usage` instead of undocumented transcript JSONL removes the #1 fragile dependency. Medium implementation cost: needs architectural change in cache metric pipeline. |
+| 6 | OPP-16 | Compaction anchor invalidation event (MV-08/3.3.5) | T3 | 4 | 4 | 0 | 2 | 2 | 4 | 0 | **30** | ~25 lines across two files. Fixes stale anchor after compaction. New event type follows TX envelope. Complements AG-01 fix. |
+| 7 | OPP-15 | Package schema version in manifest (MV-07/3.3.4) | T3 | 2 | 5 | 0 | 0 | 1 | 5 | +1 | **23** | Trivial: one line in `create_package()`. Future-proofing for all T3 additive changes. Low impact today but enables safe evolution. |
+| 8 | OPP-18 | Hook fault surfacing (MV-11/3.3.8) | T3 | 3 | 5 | 0 | 0 | 3 | 4 | 0 | **26** | ~25 lines. Surfaces crash data from existing fault ledger that is already being written but never read. High observability gain for invisible hook failures. |
+| 9 | OPP-20 | Remove `conversation` dict dependency (UR-04) | T4 | 3 | 4 | 0 | 1 | 0 | 4 | +2 | **25** | Removes undocumented field dependency. Audit `normalize()` to confirm documented alternatives exist; then delete the fragile code path. Medium risk: must verify no lost functionality. |
+| 10 | OPP-05 | Configurable context correction (AG-05) | T1 | 3 | 5 | 0 | 1 | 0 | 4 | 0 | **25** | Add `context_bar.include_output = true/false` config key. Documents the divergence from CC's display. Current behavior is arguably more useful but confusing when comparing to CC. |
+| 11 | OPP-12 | Hook performance sidecar (MV-01/3.3.1) | T3 | 3 | 4 | 0 | 0 | 3 | 3 | 0 | **23** | Instruments `run_fail_open()` with timing. Needs minor refactor to get package_root into wrapper scope. Fills a major blind spot (16 hooks with zero latency visibility). |
+| 12 | OPP-06 | MCP server fallback to 0 (AG-06) | T1 | 2 | 5 | 0 | 1 | 0 | 5 | 0 | **23** | One-line change. Fallback from 5 to 0 is more conservative. Rarely triggered but fixes wrong direction on miss. |
+| 13 | OPP-21 | Configurable CC internal constants (UR-02) | T4 | 3 | 4 | 0 | 1 | 0 | 3 | +2 | **24** | Add `qline.toml` keys for CC_OUTPUT_RESERVE, CC_AUTOCOMPACT_BUFFER, etc. Reduces speculative dependency. Medium cost: config schema change + validation. |
 | 14 | OPP-25 | Transcript schema validation in tests (UR-01) | T4 | 3 | 5 | 0 | 0 | 1 | 4 | +1 | **25** | Add test fixtures that validate expected transcript fields against real samples. Early breakage detection on CC updates. Additive to test suite only. |
 | 15 | OPP-27 | Staleness detection when Stop hook fails (UR-05) | T4 | 3 | 4 | 0 | 1 | 2 | 3 | +1 | **25** | When statusline sees new turns (via context_window changes) without corresponding cache events, log a warning. Reduces impact of known Stop hook reliability issues. |
-| 16 | OPP-08 | Phase 2 anchor calibration (AG-08) — auto-fixed by OPP-01 | T1 | 3 | 5 | 0 | 2 | 0 | 5 | 0 | **30** | No standalone work needed if OPP-01 is fixed. Listed for traceability. The calibration ratio logic is correct; only its input (the corrupted anchor) was wrong. Score reflects standalone value if OPP-01 were deferred. |
-| 17 | OPP-04 | Compaction-aware anchor refresh (AG-04) | T1 | 3 | 3 | 0 | 2 | 0 | 3 | -1 | **22** | Partially addressed by OPP-16 (compaction invalidation event). Standalone implementation adds fragility (depends on CC compaction internals). Best done after OPP-16. |
-| 18 | OPP-22 | Defensive session_id resolution on resume (UR-03) | T4 | 3 | 4 | 0 | 1 | 0 | 3 | +1 | **22** | Add fallback scan of recent session packages when runtime map lookup fails. Medium cost: directory scan logic. Addresses speculative UR-03 risk. |
-| 19 | OPP-23 | Compaction staleness marker via hooks (UR-06) | T4 | 3 | 4 | 0 | 1 | 1 | 3 | 0 | **22** | Overlaps with OPP-16. Write a staleness flag in PreCompact hook that the next statusline invocation detects. If OPP-16 is done, this is redundant. Listed for completeness. |
+| 16 | OPP-08 | Phase 2 anchor calibration (AG-08) — auto-fixed by OPP-01 | T1 | 3 | 5 | 0 | 2 | 0 | 5 | 0 | **28** | No standalone work needed if OPP-01 is fixed. Listed for traceability. The calibration ratio logic is correct; only its input (the corrupted anchor) was wrong. Score reflects standalone value if OPP-01 were deferred. |
+| 17 | OPP-04 | Compaction-aware anchor refresh (AG-04) | T1 | 3 | 3 | 0 | 2 | 0 | 3 | -1 | **21** | Partially addressed by OPP-16 (compaction invalidation event). Standalone implementation adds fragility (depends on CC compaction internals). Best done after OPP-16. |
+| 18 | OPP-22 | Defensive session_id resolution on resume (UR-03) | T4 | 3 | 4 | 0 | 1 | 0 | 3 | +1 | **23** | Add fallback scan of recent session packages when runtime map lookup fails. Medium cost: directory scan logic. Addresses speculative UR-03 risk. |
+| 19 | OPP-23 | Compaction staleness marker via hooks (UR-06) | T4 | 3 | 4 | 0 | 1 | 1 | 3 | 0 | **23** | Overlaps with OPP-16. Write a staleness flag in PreCompact hook that the next statusline invocation detects. If OPP-16 is done, this is redundant. Listed for completeness. |
 | 20 | OPP-10 | Seq-based cache invalidation — Strategy B (T2) | T2 | 3 | 3 | 3 | 0 | 0 | 3 | 0 | **21** | ~50 LOC. Eliminates all cache staleness by checking `.seq_counter` on each invocation. More complex than OPP-09 (A-prime) with marginal gain over 5s TTL. Best as Phase 2 follow-on after A-prime is validated. |
 | 21 | OPP-14 | Parse diagnostic sidecar (MV-03/MV-04/3.3.3) | T3 | 3 | 4 | 0 | 0 | 2 | 2 | 0 | **21** | Medium complexity: timing instrumentation across multiple functions, bounded JSONL writer, error-only recording. Useful for self-diagnostics but lower ROI than simpler proposals. |
 | 22 | OPP-17 | Hook coverage report (MV-05/3.3.6) | T3 | 2 | 5 | 0 | 0 | 2 | 3 | 0 | **21** | ~40 lines in `obs-session-start.py`. Automates T0 manual verification. One-time diagnostic at session start. |
 | 23 | OPP-13 | Source freshness manifest keys (MV-02/3.3.2) | T3 | 3 | 3 | 0 | 0 | 2 | 2 | 0 | **19** | Medium complexity with flock contention concern. Best written to session cache, not manifest. Lower ROI because OPP-09 (TTL reduction) already reduces the staleness window from 30s to 5s. |
 | 24 | OPP-07 | Tune cache decay constant (AG-07) | T1 | 2 | 3 | 0 | 1 | 0 | 4 | 0 | **18** | Need to determine if test or code is wrong first. If decay is too aggressive, reduce from 0.7 to 0.5. Requires analysis before change. |
-| 25 | OPP-03 | Static overhead calibration factor (AG-03) | T1 | 2 | 4 | 0 | 1 | 0 | 4 | 0 | **22** | The 8.5% underestimate is acceptable for a lower bound. A 1.08x factor is a one-line change but may overcompensate for small projects. Phase 2 transcript anchor already provides the correction. Low urgency. |
+| 25 | OPP-03 | Static overhead calibration factor (AG-03) | T1 | 2 | 4 | 0 | 1 | 0 | 4 | 0 | **20** | The 8.5% underestimate is acceptable for a lower bound. A 1.08x factor is a one-line change but may overcompensate for small projects. Phase 2 transcript anchor already provides the correction. Low urgency. |
 | 26 | OPP-26 | Version-tagged transcript parsing (UR-01) | T4 | 3 | 3 | 0 | 0 | 0 | 1 | +2 | **18** | High effort: maintain multiple parsers gated by CC version detection. Significant complexity for a surface that has been stable in practice. Best deferred until a breakage occurs. |
 | 27 | OPP-24 | Remove undocumented `current_usage` fallback (UR-07) | T4 | 1 | 5 | 0 | 0 | 0 | 5 | +1 | **19** | Trivial deletion but risk is already Low/Low per T4. The fallback is harmless. Lowest priority. |
 
@@ -114,31 +114,31 @@ Max possible: 15 + 10 + 3 + 6 + 3 + 5 + 2 = 44
 
 | Rank | ID | Title | Score |
 |------|-----|-------|-------|
-| 1 | OPP-01 | Fix manifest anchor priority (AG-01) | **38** |
-| 2 | OPP-11 | Session resume signal (MV-10/3.3.7) | **36** |
-| 3 | OPP-09 | Reduce cache TTL 30s to 5s (A-prime) | **35** |
-| 4 | OPP-02 | Fix warning threshold formula (AG-02) | **35** |
-| 5 | OPP-19 | Reduce transcript dependency (UR-01/UR-05) | **33** |
-| 6 | OPP-16 | Compaction anchor invalidation (MV-08/3.3.5) | **32** |
-| 7 | OPP-08 | Phase 2 anchor calibration — auto-fix via OPP-01 (AG-08) | **30** |
-| 8 | OPP-15 | Package schema version (MV-07/3.3.4) | **28** |
-| 9 | OPP-18 | Hook fault surfacing (MV-11/3.3.8) | **28** |
-| 10 | OPP-20 | Remove `conversation` dict dependency (UR-04) | **28** |
-| 11 | OPP-05 | Configurable context correction (AG-05) | **27** |
-| 12 | OPP-12 | Hook performance sidecar (MV-01/3.3.1) | **25** |
-| 13 | OPP-06 | MCP server fallback to 0 (AG-06) | **25** |
-| 14 | OPP-21 | Configurable CC internal constants (UR-02) | **25** |
-| 15 | OPP-25 | Transcript schema validation in tests (UR-01) | **25** |
-| 16 | OPP-27 | Staleness detection on Stop hook miss (UR-05) | **25** |
-| 17 | OPP-03 | Static overhead calibration factor (AG-03) | **22** |
-| 18 | OPP-04 | Compaction-aware anchor refresh (AG-04) | **22** |
-| 19 | OPP-22 | Defensive session_id resolution (UR-03) | **22** |
-| 20 | OPP-23 | Compaction staleness marker (UR-06) | **22** |
-| 21 | OPP-10 | Seq-based cache invalidation — Strategy B | **21** |
-| 22 | OPP-14 | Parse diagnostic sidecar (MV-03/MV-04) | **21** |
-| 23 | OPP-17 | Hook coverage report (MV-05/3.3.6) | **21** |
-| 24 | OPP-24 | Remove `current_usage` fallback (UR-07) | **19** |
-| 25 | OPP-13 | Source freshness manifest keys (MV-02) | **19** |
+| 1 | OPP-01 | Fix manifest anchor priority (AG-01) | **35** |
+| 2 | OPP-11 | Session resume signal (MV-10/3.3.7) | **34** |
+| 3 | OPP-02 | Fix warning threshold formula (AG-02) | **33** |
+| 4 | OPP-09 | Reduce cache TTL 30s to 5s (A-prime) | **30** |
+| 5 | OPP-16 | Compaction anchor invalidation (MV-08/3.3.5) | **30** |
+| 6 | OPP-19 | Reduce transcript dependency (UR-01/UR-05) | **29** |
+| 7 | OPP-08 | Phase 2 anchor calibration — auto-fix via OPP-01 (AG-08) | **28** |
+| 8 | OPP-18 | Hook fault surfacing (MV-11/3.3.8) | **26** |
+| 9 | OPP-05 | Configurable context correction (AG-05) | **25** |
+| 10 | OPP-20 | Remove `conversation` dict dependency (UR-04) | **25** |
+| 11 | OPP-25 | Transcript schema validation in tests (UR-01) | **25** |
+| 12 | OPP-27 | Staleness detection on Stop hook miss (UR-05) | **25** |
+| 13 | OPP-21 | Configurable CC internal constants (UR-02) | **24** |
+| 14 | OPP-06 | MCP server fallback to 0 (AG-06) | **23** |
+| 15 | OPP-12 | Hook performance sidecar (MV-01/3.3.1) | **23** |
+| 16 | OPP-15 | Package schema version (MV-07/3.3.4) | **23** |
+| 17 | OPP-22 | Defensive session_id resolution (UR-03) | **23** |
+| 18 | OPP-23 | Compaction staleness marker (UR-06) | **23** |
+| 19 | OPP-04 | Compaction-aware anchor refresh (AG-04) | **21** |
+| 20 | OPP-10 | Seq-based cache invalidation — Strategy B | **21** |
+| 21 | OPP-14 | Parse diagnostic sidecar (MV-03/MV-04) | **21** |
+| 22 | OPP-17 | Hook coverage report (MV-05/3.3.6) | **21** |
+| 23 | OPP-03 | Static overhead calibration factor (AG-03) | **20** |
+| 24 | OPP-13 | Source freshness manifest keys (MV-02) | **19** |
+| 25 | OPP-24 | Remove `current_usage` fallback (UR-07) | **19** |
 | 26 | OPP-07 | Tune cache decay constant (AG-07) | **18** |
 | 27 | OPP-26 | Version-tagged transcript parsing (UR-01) | **18** |
 
@@ -413,6 +413,8 @@ Changes that modify existing behavior. Require backward compatibility path and m
 | P14 | OPP-13 | Source freshness manifest keys | 2 | OPP-09 (TTL reduction makes this less urgent) | M | Source freshness data tracked in session cache; optionally persisted to manifest at session end | MV-02, 3.3.2 |
 | P15 | OPP-24 | Remove `current_usage` fallback | 2 | OPP-20 (audit normalize first) | S | Undocumented top-level `current_usage` fallback removed; documented `context_window.current_usage` path only | UR-07 |
 
+> **Note:** OPP-08 (AG-08): Auto-resolved by OPP-01. Not listed as a separate backlog item because fixing the manifest anchor priority (OPP-01) eliminates the calibration drift that AG-08 describes.
+
 #### Tier 3: Depends on Upstream
 
 Changes that require Claude Code features, documented APIs, or upstream fixes to be fully effective.
@@ -578,7 +580,7 @@ Changes that require Claude Code features, documented APIs, or upstream fixes to
 ## Acceptance Criteria
 
 - [x] All opportunities from T1-T4 collected into flat list (no orphaned findings) — 27 opportunities from 8 AG-*, 2 T2 strategies, 8 MV-* proposals, 9 UR-* mitigations
-- [x] Experiment matrix scored and ranked with all dimensions filled — all 27 scored, max 38, min 18
+- [x] Experiment matrix scored and ranked with all dimensions filled — all 27 scored, max 35, min 18
 - [x] Top 10 opportunities have full TX-format experiment write-ups — 10 EXP-* entries
 - [x] Implementation backlog categorized into three tiers — Tier 1: 7 items, Tier 2: 15 items, Tier 3: 4 items
 - [x] Every backlog item has dependencies, effort estimate, and acceptance criteria
