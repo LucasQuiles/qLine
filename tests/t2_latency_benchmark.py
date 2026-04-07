@@ -32,7 +32,7 @@ from context_overhead import (
     _estimate_static_overhead,
     inject_context_overhead,
 )
-from obs_utils import resolve_package_root
+from obs_utils import resolve_package_root, resolve_package_root_env
 
 # ---------------------------------------------------------------------------
 # Session registry — real sessions at different scales
@@ -304,7 +304,7 @@ def bench_full_pipeline(session_id, transcript_path, package_root, theme):
         "save_cache": lambda c: None,
         "cache_max_age": 60.0,
         "obs_available": True,
-        "resolve_package_root": resolve_package_root,
+        "resolve_package_root": resolve_package_root_env,
     }
 
     def run_obs_counters():
