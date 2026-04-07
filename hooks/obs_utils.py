@@ -36,6 +36,10 @@ from typing import Any
 
 _DEFAULT_OBS_ROOT = os.path.join(os.path.expanduser("~"), ".claude", "observability")
 
+# Per-process cache; hooks are separate processes so no cross-session leakage.
+# Dict operations are GIL-protected — no additional locking needed.
+_health_cache: dict[tuple[str, str], tuple[str, dict | None]] = {}
+
 _INITIAL_HEALTH: dict[str, Any] = {
     "overall": "initializing",
     "subsystems": {
@@ -71,8 +75,19 @@ def _load_read_state(state_path: str) -> dict[str, Any]:
 
 
 def _save_read_state(state_path: str, state: dict) -> None:
-    """Write read state sidecar atomically. Never raises."""
+    """Write read state sidecar atomically. Never raises.
+
+    Evicts oldest entries (by last_read_seq) when the state dict exceeds
+    500 entries, keeping only the 500 most-recently-accessed files.
+    """
     try:
+        if len(state) > 500:
+            sorted_keys = sorted(
+                state.keys(),
+                key=lambda k: state[k].get("last_read_seq", 0) if isinstance(state[k], dict) else 0,
+            )
+            for evict_key in sorted_keys[: len(state) - 500]:
+                del state[evict_key]
         parent = os.path.dirname(state_path)
         if parent and parent not in _dirs_ensured:
             os.makedirs(parent, exist_ok=True)
@@ -542,7 +557,17 @@ def update_health(
       - 'initializing' otherwise (mix of healthy/unavailable)
 
     Never raises (Tier 1 resilience contract).
+
+    Skips all I/O when the subsystem's state and warning are unchanged
+    from the last successful write — eliminates the flock cycle for repeated
+    "healthy" reports (the common case).
     """
+    cache_key = (package_root, subsystem)
+    cached = _health_cache.get(cache_key)
+    if cached is not None and cached == (state, warning):
+        # No change — skip the flock read-modify-write entirely.
+        return
+
     manifest_path = os.path.join(package_root, "manifest.json")
     try:
         with open(manifest_path, "r+") as f:
@@ -578,5 +603,6 @@ def update_health(
                 f.truncate()
             finally:
                 fcntl.flock(f, fcntl.LOCK_UN)
+        _health_cache[cache_key] = (state, warning)
     except Exception:
         pass
