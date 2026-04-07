@@ -8,12 +8,9 @@ Payload shape (verified from fixtures):
     session_id, transcript_path, cwd, hook_event_name, trigger, custom_instructions
 """
 import json
-import os
 import sys
 
-from hook_utils import read_hook_input, sanitize_task_list_id, resolve_task_list_id, find_latest_plan, log_hook_diagnostic, run_fail_open
-
-TASK_DIR = os.path.expanduser("~/.claude/tasks")
+from hook_utils import read_hook_input, iter_open_tasks, find_latest_plan, log_hook_diagnostic, run_fail_open
 
 
 def main():
@@ -25,7 +22,7 @@ def main():
     parts = []
 
     # Collect open tasks from the session's task directory
-    task_summary = _get_open_tasks(resolve_task_list_id(session_id))
+    task_summary = _format_open_tasks(session_id)
     if task_summary:
         parts.append(task_summary)
 
@@ -47,47 +44,24 @@ def main():
     sys.exit(0)
 
 
-def _get_open_tasks(session_id: str) -> str | None:
-    """Read non-completed tasks from the session task directory."""
-    task_path = os.path.join(TASK_DIR, session_id)
-    if not os.path.isdir(task_path):
+def _format_open_tasks(session_id: str) -> str | None:
+    """Format open tasks as a text block for compaction context."""
+    lines = []
+    for task, fname in iter_open_tasks(session_id):
+        tid = task.get("id", fname)
+        subject = task.get("subject", "(no subject)")
+        status = task.get("status", "?")
+        blocked_by = task.get("blockedBy", [])
+        entry = f"  [{status}] #{tid}: {subject}"
+        if blocked_by:
+            entry += f" (blocked by: {', '.join(str(b) for b in blocked_by)})"
+        lines.append(entry)
+
+    if not lines:
         return None
 
-    open_tasks = []
-    try:
-        entries = sorted(os.listdir(task_path))
-    except OSError as exc:
-        log_hook_diagnostic(
-            "precompact-preserve", "PreCompact",
-            "task_dir_unreadable",
-            f"OSError reading task dir {task_path}: {exc}",
-            context={"task_path": task_path},
-        )
-        return None
-    for fname in entries:
-        if not fname.endswith(".json"):
-            continue
-        fpath = os.path.join(task_path, fname)
-        try:
-            with open(fpath) as f:
-                task = json.load(f)
-            status = task.get("status", "")
-            if status in ("pending", "in_progress"):
-                tid = task.get("id", fname)
-                subject = task.get("subject", "(no subject)")
-                blocked_by = task.get("blockedBy", [])
-                entry = f"  [{status}] #{tid}: {subject}"
-                if blocked_by:
-                    entry += f" (blocked by: {', '.join(str(b) for b in blocked_by)})"
-                open_tasks.append(entry)
-        except (json.JSONDecodeError, OSError):
-            continue
-
-    if not open_tasks:
-        return None
-
-    header = f"Open tasks ({len(open_tasks)}):"
-    return header + "\n" + "\n".join(open_tasks[:20])  # Cap at 20 to avoid bloat
+    header = f"Open tasks ({len(lines)}):"
+    return header + "\n" + "\n".join(lines[:20])  # Cap at 20 to avoid bloat
 
 
 

@@ -137,6 +137,34 @@ def find_latest_plan() -> str | None:
         return None
 
 
+def iter_open_tasks(session_id: str):
+    """Yield (task_dict, filename) for non-completed tasks in session task dir.
+
+    session_id is the raw session ID; resolve_task_list_id is called internally.
+    Silently yields nothing on missing dirs or parse errors.
+    """
+    task_path = os.path.join(
+        os.path.expanduser("~"), ".claude", "tasks",
+        resolve_task_list_id(session_id),
+    )
+    if not os.path.isdir(task_path):
+        return
+    try:
+        entries = sorted(os.listdir(task_path))
+    except OSError:
+        return
+    for fname in entries:
+        if not fname.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(task_path, fname)) as f:
+                task = json.load(f)
+            if task.get("status") in ("pending", "in_progress"):
+                yield task, fname
+        except (json.JSONDecodeError, OSError, KeyError):
+            continue
+
+
 def hash16(s: str) -> str:
     """SHA-256 truncated to 16 hex chars."""
     import hashlib
