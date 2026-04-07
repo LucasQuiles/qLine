@@ -47,7 +47,7 @@ Official Anthropic Claude Code documentation was consulted for every surface qLi
 | Plugin installation | .claude-plugin/plugin.json schema; hooks.json schema; symlink discovery | **Yes** | [code.claude.com/docs/en/plugins-reference](https://code.claude.com/docs/en/plugins-reference) — complete schema documentation | Full plugin.json schema documented. hooks.json wrapped in `{"hooks": {...}}` documented. Plugin directory structure documented. Plugin caching: "Claude Code copies marketplace plugins to local plugin cache (~/.claude/plugins/cache)." For `--plugin-dir` installations (which is how qLine works via symlink), files are used in-place. **Note:** Symlink behavior is supported but described briefly: "create symbolic links to external files within your plugin directory. Symlinks are honored during the copy process." |
 
 **Summary of documentation coverage:**
-- **Fully documented (7):** Statusline stdin payload, statusline refresh, hook events, hook payload schema, hook timeout, exit codes, `${CLAUDE_PLUGIN_ROOT}`, cache `current_usage` fields, plugin installation
+- **Fully documented (9):** Statusline stdin payload, statusline refresh, hook events, hook payload schema, hook timeout, exit codes, `${CLAUDE_PLUGIN_ROOT}`, cache `current_usage` fields, plugin installation
 - **Partially documented (3):** Transcript JSONL (path yes, internal schema no), session ID (field yes, lifecycle semantics no), context window budget (sizes yes, internal thresholds no)
 - **Not documented (0 complete gaps, but significant undocumented internals):** CC internal constants (output reserve, compaction buffer, warning/error offsets) used by `context_overhead.py`
 
@@ -220,7 +220,7 @@ These are the qLine source locations that consume the external surfaces being au
 
 ## Acceptance Criteria
 
-- [x] Documentation audit table filled for all 12 surfaces with yes/no/partial and source references — **12 surfaces audited, 7 fully documented, 3 partial, 0 complete gaps**
+- [x] Documentation audit table filled for all 12 surfaces with yes/no/partial and source references — **12 surfaces audited, 9 fully documented, 3 partial, 0 complete gaps**
 - [x] Public issue scan covers all 5 search areas with relevant issues documented — **18 relevant issues catalogued across all 5 areas; 2 areas had no direct hits (noted with search terms)**
 - [x] Adjacent pattern comparison limited to 3 patterns with explicit applicability judgment — **3 patterns compared: event-driven refresh, cache invalidation, telemetry sidecars**
 - [x] Supported-vs-unsupported table classifies all surfaces identified in Task 4.1 and any additional discovered during the scan — **24 surfaces classified: 17 supported, 1 observed-stable, 4 fragile, 2 speculative**
