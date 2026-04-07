@@ -29,13 +29,13 @@ docs/superpowers/specs/2026-04-07-qline-optimization/
 
 | Track | Name | Status | Gate | Deliverable |
 |-------|------|--------|------|-------------|
-| T0 | Baseline & Repo Truth | not started | — | architecture map, test failure taxonomy, must-fix list |
-| TX | Data Contracts | not started | — | public interface registry, replay harness spec, experiment template |
-| T1 | Accuracy Audit | not started | T0 + TX approved | accuracy gaps table, replay dataset, recommended fixes |
-| T2 | Real-Time Freshness | not started | T0 + TX approved | latency benchmarks, strategy comparison matrix, recommendation |
-| T3 | Observability Expansion | not started | T0 + TX approved | source inventory, missing visibility map, additive schema proposals |
-| T4 | External Scan | not started | T0 + TX approved | supported-vs-unsupported table, upstream risk register |
-| T5 | Experiment Matrix | not started | T1-T4 stable | ranked opportunity matrix, categorized implementation backlog |
+| T0 | Baseline & Repo Truth | **complete** | — | architecture map, test failure taxonomy (38 failures, 7 must-fix), must-fix list |
+| TX | Data Contracts | **complete** | — | public interface registry (verified against source), replay harness spec, experiment template |
+| T1 | Accuracy Audit | **complete** | T0 + TX approved | 8 accuracy gaps (1 critical AG-01), replay dataset (58 files), recommended fixes |
+| T2 | Real-Time Freshness | **complete** | T0 + TX approved | pipeline 4ms, 30s TTL is bottleneck, recommends A-prime (5s TTL) |
+| T3 | Observability Expansion | **complete** | T0 + TX approved | 32 sources, 15 visibility gaps, 8 schema proposals with classifications |
+| T4 | External Scan | **complete** | T0 + TX approved | 24 surfaces classified, 18 issues, 7 upstream risks |
+| T5 | Experiment Matrix | **complete** | T1-T4 stable | 27 opportunities ranked, 26 backlog items (7 Tier 1, 15 Tier 2, 4 Tier 3) |
 
 ---
 
@@ -93,26 +93,26 @@ Each track must produce:
 ## Deliverable Checklist
 
 ### Phase 0 outputs
-- [ ] `t0-baseline-repo-truth.md` — completed with all sections populated
-- [ ] Architecture map (inline in T0 or linked artifact)
-- [ ] Test failure taxonomy (table in T0)
-- [ ] Must-fix-before-experiment list (table in T0)
-- [ ] `tx-data-contracts.md` — completed with interface registry, harness spec, templates
+- [x] `t0-baseline-repo-truth.md` — completed with all sections populated
+- [x] Architecture map (inline in T0 — 24 components, 8558 lines, 10 runtime artifacts)
+- [x] Test failure taxonomy (38 failures: 14 harness, 9 fixture, 7 rendering, 6 logic, 2 path)
+- [x] Must-fix-before-experiment list (7 items: MF-01 through MF-07)
+- [x] `tx-data-contracts.md` — completed, verified against source (5 event names corrected, stdin fields validated)
 
 ### Phase 1 outputs
-- [ ] T1: accuracy gaps table with severity, metric, root cause, reproduction, fix
-- [ ] T1: replay dataset (fixtures + curated sessions + synthetic edge cases)
-- [ ] T2: end-to-end latency benchmarks for current flow
-- [ ] T2: three-strategy comparison matrix scored on 5 dimensions
-- [ ] T3: source inventory table (source, location, questions it answers)
-- [ ] T3: missing visibility table (gap, impact, proposed schema)
-- [ ] T4: supported-vs-unsupported dependency table
-- [ ] T4: upstream risk register (known regressions, missing surfaces)
+- [x] T1: accuracy gaps table (8 gaps: AG-01 critical, AG-02/07/08 major, AG-03-06 minor)
+- [x] T1: replay dataset (58 files: 12 from-tests + 5 real sessions + 3 transcripts + 6 synthetic)
+- [x] T2: end-to-end latency benchmarks (4ms pipeline, 30s cache TTL is bottleneck)
+- [x] T2: four-strategy comparison matrix scored on 5+ dimensions (A, A-prime, B, C)
+- [x] T3: source inventory table (32 sources: 10 hot-path, 5 static estimation, 17 hook-only)
+- [x] T3: missing visibility table (15 gaps: MV-01 through MV-15, 8 schema proposals)
+- [x] T4: supported-vs-unsupported dependency table (24 surfaces: 17 supported, 1 observed-stable, 4 fragile, 2 speculative)
+- [x] T4: upstream risk register (7 risks: UR-01 through UR-07)
 
 ### Phase 2 outputs
-- [ ] T5: ranked experiment matrix (top 10+ opportunities)
-- [ ] T5: categorized implementation backlog
-- [ ] T5: recommended paths for accuracy, freshness, observability
+- [x] T5: ranked experiment matrix (27 opportunities, scores recomputed and verified)
+- [x] T5: categorized implementation backlog (7 Tier 1, 15 Tier 2, 4 Tier 3)
+- [x] T5: recommended paths for accuracy (6-step), freshness (3-step), observability (7-step)
 
 ---
 
