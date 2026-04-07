@@ -1,5 +1,6 @@
 """qLine hook utilities — stdin reading and fail-open execution.
 
+# hook-utils-contract v1.0 -- update all copies if Claude Code hook stdin contract changes
 Minimal shared module for qLine observability hooks.
 """
 import json
