@@ -17,13 +17,12 @@ Per-call steps:
   11. Update custom/.read_state.json with last_write_seq for this file
   12. Exit 0 always
 """
-import hashlib
 import json
 import os
 import sys
 from typing import Any
 
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import read_hook_input, run_fail_open, hash16
 from obs_utils import (
     resolve_package_root,
     append_event,
@@ -119,7 +118,7 @@ def main() -> None:
     # Step 3: Build patch content
     # ------------------------------------------------------------------
     patch_content = _build_patch(file_path, content)
-    patch_hash = hashlib.sha256(patch_content.encode()).hexdigest()[:16]
+    patch_hash = hash16(patch_content)
 
     # ------------------------------------------------------------------
     # Step 4: Emit file.write.diff event to event ledger

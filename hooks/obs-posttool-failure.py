@@ -4,12 +4,11 @@
 Scope: All tools (matcher: .*). No tool_name filter.
 Only Bash failure shape is proved; other tools handled defensively.
 """
-import hashlib
 import os
 import sys
 from typing import Any
 
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import read_hook_input, run_fail_open, hash16
 from obs_utils import resolve_package_root, append_event
 
 _HOOK_NAME = "obs-posttool-failure"
@@ -51,7 +50,7 @@ def main() -> None:
         command = tool_input.get("command", "")
         if command:
             event_data["command_preview"] = command[:500]
-            event_data["command_hash"] = hashlib.sha256(command.encode()).hexdigest()[:16]
+            event_data["command_hash"] = hash16(command)
 
     append_event(
         package_root,

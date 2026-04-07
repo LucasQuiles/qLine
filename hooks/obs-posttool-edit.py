@@ -4,13 +4,12 @@
 Scope: Edit tool only. Exits 0 for any other tool_name including MultiEdit
 (gated until MultiEdit fixture is captured).
 """
-import hashlib
 import json
 import os
 import sys
 from typing import Any
 
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import read_hook_input, run_fail_open, hash16
 from obs_utils import (
     resolve_package_root,
     append_event,
@@ -119,7 +118,7 @@ def main() -> None:
             message=f"structuredPatch empty for {file_path}; fell back to old_string/new_string",
         )
 
-    patch_hash = hashlib.sha256(patch_content.encode()).hexdigest()[:16]
+    patch_hash = hash16(patch_content)
 
     event_data: dict[str, Any] = {
         "tool": "Edit",

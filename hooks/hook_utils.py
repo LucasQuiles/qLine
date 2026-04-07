@@ -132,6 +132,12 @@ def find_latest_plan() -> str | None:
         return None
 
 
+def hash16(s: str) -> str:
+    """SHA-256 truncated to 16 hex chars."""
+    import hashlib
+    return hashlib.sha256(s.encode()).hexdigest()[:16]
+
+
 def log_hook_diagnostic(
     hook_name: str,
     event_name: str,

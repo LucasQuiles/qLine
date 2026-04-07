@@ -18,14 +18,13 @@ Per-call steps:
   8. Update bash_capture health subsystem
   9. Exit 0 always
 """
-import hashlib
 import json
 import os
 import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import read_hook_input, run_fail_open, hash16
 from obs_utils import (
     resolve_package_root,
     append_event,
@@ -39,11 +38,6 @@ _EVENT_NAME = "PostToolUse"
 _MAX_CMD_PREVIEW = 500
 _MAX_STDOUT_PREVIEW = 500
 _MAX_STDERR_PREVIEW = 200
-
-
-def _hash16(s: str) -> str:
-    """SHA-256 truncated to 16 hex chars."""
-    return hashlib.sha256(s.encode()).hexdigest()[:16]
 
 
 def main() -> None:
@@ -85,9 +79,9 @@ def main() -> None:
     no_output_expected: bool = tool_response.get("noOutputExpected", False)
 
     # --- Compute bounded fields ---
-    command_hash = _hash16(command)
-    stdout_hash = _hash16(stdout)
-    stderr_hash = _hash16(stderr)
+    command_hash = hash16(command)
+    stdout_hash = hash16(stdout)
+    stderr_hash = hash16(stderr)
     stdout_bytes = len(stdout) if stdout else 0
     stderr_bytes = len(stderr) if stderr else 0
     command_preview = command[:_MAX_CMD_PREVIEW]

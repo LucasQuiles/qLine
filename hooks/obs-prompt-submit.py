@@ -15,11 +15,10 @@ Per-call steps:
   8. Emit prompt.observed event via append_event()
   9. Exit 0 always. Do NOT write to stdout (no hookSpecificOutput).
 """
-import hashlib
 import os
 import sys
 
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import read_hook_input, run_fail_open, hash16
 from obs_utils import resolve_package_root, append_event
 
 _HOOK_NAME = "obs-prompt-submit"
@@ -63,7 +62,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Hash + length — NEVER store the full prompt text
     # ------------------------------------------------------------------
-    prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
+    prompt_hash = hash16(prompt)
     prompt_length = len(prompt)
 
     # ------------------------------------------------------------------
