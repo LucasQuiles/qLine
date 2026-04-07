@@ -1895,8 +1895,8 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         session_cache = obs_cache.get(session_id, {})
         now = time.time()
 
-        # Refresh counts if stale (>30s)
-        if now - session_cache.get("last_count_ts", 0) >= 30:
+        # Refresh counts if stale (>5s)
+        if now - session_cache.get("last_count_ts", 0) >= 5:
             event_counts = _count_obs_events(package_root)
             total_reads, reread_count = _count_rereads(package_root)
             obs_health = _read_obs_health(package_root)

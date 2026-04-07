@@ -751,7 +751,7 @@ def inject_context_overhead(
         session_cache = obs_cache.get(session_id, {})
         now = time.time()
 
-        if now - session_cache.get("overhead_ts", 0) < 30:
+        if now - session_cache.get("overhead_ts", 0) < 5:
             _apply_overhead_from_cache(state, session_cache)
             return
 
