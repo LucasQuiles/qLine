@@ -8,7 +8,6 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
 from hook_utils import read_hook_input, run_fail_open
 from obs_utils import (
     resolve_package_root,

@@ -12,7 +12,6 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
 from hook_utils import read_hook_input, sanitize_task_list_id, log_hook_diagnostic, run_fail_open
 
 TASK_DIR = os.path.expanduser("~/.claude/tasks")

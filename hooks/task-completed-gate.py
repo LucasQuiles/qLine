@@ -12,7 +12,6 @@ import os
 import subprocess
 import sys
 
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
 from hook_utils import read_hook_input, is_strict, log_hook_diagnostic, run_fail_open
 
 # Task subjects matching these patterns are exempt from evidence checks
