@@ -130,11 +130,11 @@ def is_strict(env_var: str) -> bool:
     return val in ("1", "true", "yes")
 
 
-def block_stop(reason: str) -> None:
-    """Print a SubagentStop block decision and exit 0."""
+def block_stop(reason: str, event: str = "SubagentStop") -> None:
+    """Print a stop-block decision and exit 0."""
     print(json.dumps({
         "hookSpecificOutput": {
-            "hookEventName": "SubagentStop",
+            "hookEventName": event,
             "decision": "block",
             "reason": reason,
         }

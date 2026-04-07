@@ -88,8 +88,8 @@ def main() -> None:
     command_hash = _hash16(command)
     stdout_hash = _hash16(stdout)
     stderr_hash = _hash16(stderr)
-    stdout_bytes = len(stdout.encode()) if stdout else 0
-    stderr_bytes = len(stderr.encode()) if stderr else 0
+    stdout_bytes = len(stdout) if stdout else 0
+    stderr_bytes = len(stderr) if stderr else 0
     command_preview = command[:_MAX_CMD_PREVIEW]
     stdout_preview = stdout[:_MAX_STDOUT_PREVIEW]
     stderr_preview = stderr[:_MAX_STDERR_PREVIEW]

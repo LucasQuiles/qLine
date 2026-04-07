@@ -45,9 +45,8 @@ if [ -z "$PYTHON" ]; then
     exit 1
 fi
 
-PY_VERSION=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-PY_MAJOR=$("$PYTHON" -c 'import sys; print(sys.version_info.major)')
-PY_MINOR=$("$PYTHON" -c 'import sys; print(sys.version_info.minor)')
+read PY_MAJOR PY_MINOR <<< $("$PYTHON" -c 'import sys; v=sys.version_info; print(v.major, v.minor)')
+PY_VERSION="$PY_MAJOR.$PY_MINOR"
 
 if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
     echo "ERROR: Python 3.10+ required (found $PY_VERSION)"

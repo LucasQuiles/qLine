@@ -26,6 +26,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -73,8 +74,9 @@ def _save_read_state(state_path: str, state: dict) -> None:
     """Write read state sidecar atomically. Never raises."""
     try:
         parent = os.path.dirname(state_path)
-        if parent:
+        if parent and parent not in _dirs_ensured:
             os.makedirs(parent, exist_ok=True)
+            _dirs_ensured.add(parent)
         tmp_path = state_path + ".tmp"
         with open(tmp_path, "w") as f:
             json.dump(state, f)
@@ -83,12 +85,16 @@ def _save_read_state(state_path: str, state: dict) -> None:
         pass
 
 
+_dirs_ensured: set[str] = set()
+
+
 def _atomic_jsonl_append(path: str, record: dict) -> bool:
     """O_APPEND write. Returns True on success, False on failure. Never raises."""
     try:
         parent = os.path.dirname(path)
-        if parent:
+        if parent and parent not in _dirs_ensured:
             os.makedirs(parent, exist_ok=True)
+            _dirs_ensured.add(parent)
         line = json.dumps(record, default=str) + "\n"
         fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
         try:
@@ -191,6 +197,9 @@ def create_package(
     return package_root
 
 
+_package_root_cache: dict[str, str | None] = {}
+
+
 def resolve_package_root(
     session_id: str,
     *,
@@ -200,15 +209,20 @@ def resolve_package_root(
 
     Returns None if the session is unknown or the mapping is invalid.
     session_id is the universal lookup key across all hooks and the statusline.
+    Cached after first lookup (the runtime map never changes after session start).
     """
+    if session_id in _package_root_cache:
+        return _package_root_cache[session_id]
     runtime_path = os.path.join(obs_root, "runtime", f"{session_id}.json")
     try:
         with open(runtime_path) as f:
             data = json.load(f)
         pkg = data.get("package_root")
-        return pkg if isinstance(pkg, str) else None
+        result = pkg if isinstance(pkg, str) else None
     except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return None
+        result = None
+    _package_root_cache[session_id] = result
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +250,6 @@ def next_seq(package_root: str) -> int:
                 fcntl.flock(f, fcntl.LOCK_UN)
     except Exception:
         # Fallback: use microseconds as pseudo-seq (never raises)
-        import time
         return int(time.time() * 1_000_000)
 
 
@@ -543,9 +556,11 @@ def update_health(
                 # Update the target subsystem
                 subsystems[subsystem] = state
 
-                # Append warning if provided
+                # Append warning if provided (cap at 50 to bound manifest size)
                 if warning is not None:
                     warnings_list.append(warning)
+                    if len(warnings_list) > 50:
+                        warnings_list[:] = warnings_list[-50:]
 
                 # Recompute overall health
                 states = set(subsystems.values())

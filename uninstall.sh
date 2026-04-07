@@ -74,7 +74,7 @@ if removed:
     print(f'Removed {removed} obs hook registrations from settings.json')
 else:
     print('No obs hook registrations found in settings.json')
-" 2>/dev/null
+" 2>&1 || echo "WARNING: failed to update settings.json hook entries"
 fi
 
 # --- Remove installed files ---
