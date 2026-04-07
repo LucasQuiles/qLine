@@ -89,17 +89,18 @@ done
 # --- Remove observability hooks ---
 
 HOOKS_REMOVED=0
-for hook in "$HOOKS_DIR/obs-"*.py; do
+for hook in "$HOOKS_DIR/obs-"*.py \
+            "$HOOKS_DIR/precompact-preserve.py" \
+            "$HOOKS_DIR/session-end-summary.py" \
+            "$HOOKS_DIR/subagent-stop-gate.py" \
+            "$HOOKS_DIR/task-completed-gate.py" \
+            "$HOOKS_DIR/hook_utils.py" \
+            "$HOOKS_DIR/obs_utils.py"; do
     [ -f "$hook" ] || continue
     rm -f "$hook"
     HOOKS_REMOVED=$((HOOKS_REMOVED + 1))
 done
-[ "$HOOKS_REMOVED" -gt 0 ] && echo "Removed: $HOOKS_REMOVED observability hooks"
-
-# --- Remove shared scripts (only qLine-owned) ---
-
-rm -f "$DEST_DIR/scripts/obs_utils.py" "$DEST_DIR/scripts/hook_utils.py"
-echo "Removed: shared scripts (obs_utils.py, hook_utils.py)"
+[ "$HOOKS_REMOVED" -gt 0 ] && echo "Removed: $HOOKS_REMOVED hook files"
 
 # --- Summary ---
 
