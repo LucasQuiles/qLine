@@ -218,6 +218,8 @@ def main() -> None:
     # Step 6b: Write brick-digest spool entry (non-blocking, fail-open)
     # ------------------------------------------------------------------
     try:
+        if not os.path.isdir(os.path.join("/tmp", "brick-lab")):
+            raise OSError("brick infrastructure not present")
         spool_dir = os.path.join("/tmp", "brick-lab", "digest-queue", "pending")
         os.makedirs(spool_dir, exist_ok=True)
 
