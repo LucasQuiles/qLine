@@ -12,7 +12,7 @@ import json
 import os
 import sys
 
-from hook_utils import read_hook_input, sanitize_task_list_id, log_hook_diagnostic, run_fail_open
+from hook_utils import read_hook_input, sanitize_task_list_id, resolve_task_list_id, log_hook_diagnostic, run_fail_open
 
 TASK_DIR = os.path.expanduser("~/.claude/tasks")
 PLAN_DIR = os.path.expanduser("~/.claude/plans")
@@ -28,7 +28,7 @@ def main():
     parts = []
 
     # Count open tasks
-    open_count, in_progress = _count_open_tasks(_resolve_task_list_id(session_id))
+    open_count, in_progress = _count_open_tasks(resolve_task_list_id(session_id))
     if open_count > 0:
         parts.append(f"Open tasks: {open_count} ({in_progress} in-progress)")
 
@@ -85,17 +85,6 @@ def _count_open_tasks(session_id: str) -> tuple[int, int]:
 
     return total_open, in_progress
 
-
-def _resolve_task_list_id(session_id: str) -> str:
-    """Resolve the local task-list directory ID for hook-side task reads.
-
-    Hooks can safely honor the documented/local env-var override but do not try to
-    mirror deeper Claude-internal fallback resolution beyond that.
-    """
-    override = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
-    if override:
-        return sanitize_task_list_id(override)
-    return session_id
 
 
 def _get_active_plan() -> str | None:

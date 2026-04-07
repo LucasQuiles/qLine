@@ -104,6 +104,18 @@ def sanitize_task_list_id(task_list_id: str) -> str:
     )
 
 
+def resolve_task_list_id(session_id: str) -> str:
+    """Resolve the local task-list directory ID for hook-side task reads.
+
+    Hooks can safely honor the documented/local env-var override but do not try to
+    mirror deeper Claude-internal fallback resolution beyond that.
+    """
+    override = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
+    if override:
+        return sanitize_task_list_id(override)
+    return session_id
+
+
 def log_hook_diagnostic(
     hook_name: str,
     event_name: str,
