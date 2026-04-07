@@ -217,9 +217,9 @@ Where <package> = ~/.claude/observability/sessions/<date>/<session_id>/
 
 | Category | Count | Tests |
 |----------|-------|-------|
-| Harness portability | 16 | #1-3, 6-10, 18-19, 21-24 (bash 3.2 + macOS wc/mktemp) |
-| Fixture drift | 8 | #4-5, 11-16, 20 (glyph changes, format changes, wrong function) |
-| Rendering regression | 6 | #17, 25-27, 33-34, 36 (layout newline, cache-busting suffix, color formulas) |
+| Harness portability | 14 | #1-3, 6-10, 18-19, 21-24 (bash 3.2 + macOS wc/mktemp) |
+| Fixture drift | 9 | #4-5, 11-16, 20 (glyph changes, format changes, wrong function) |
+| Rendering regression | 7 | #17, 25-27, 33-34, 36 (layout newline, cache-busting suffix, color formulas) |
 | Logic defect | 6 | #28-32, 35 (legacy stubs, calibration drift, threshold logic) |
 | Path assumption | 2 | #37-38 (sys.path, hardcoded hook location) |
 
@@ -269,7 +269,7 @@ Only **logic defect** or **rendering regression** with severity **blocks experim
 - [x] Plugin installation map table produced — every hook accounted for (16 hooks, 2 utils, 0 orphans)
 - [x] Architecture map produced — data flow and runtime artifacts documented
 - [x] Test harness run on live repo — full output captured (197/235 pass, 38 fail)
-- [x] Every test failure classified into exactly one category (16 harness, 8 fixture, 6 rendering, 6 logic, 2 path)
+- [x] Every test failure classified into exactly one category (14 harness, 9 fixture, 7 rendering, 6 logic, 2 path)
 - [x] Must-fix list bounded — 7 items, all blocking, no open-ended items
 - [x] All deliverables use evidence format
 
