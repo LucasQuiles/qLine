@@ -116,6 +116,22 @@ def resolve_task_list_id(session_id: str) -> str:
     return session_id
 
 
+def find_latest_plan() -> str | None:
+    """Find the most recently modified plan file. Returns basename or None."""
+    import glob
+    plan_dir = os.path.expanduser("~/.claude/plans")
+    if not os.path.isdir(plan_dir):
+        return None
+    plans = glob.glob(os.path.join(plan_dir, "*.md"))
+    if not plans:
+        return None
+    try:
+        latest = max(plans, key=os.path.getmtime)
+        return os.path.basename(latest)
+    except (OSError, ValueError):
+        return None
+
+
 def log_hook_diagnostic(
     hook_name: str,
     event_name: str,

@@ -7,15 +7,13 @@ Does NOT block session exit under any circumstances.
 Payload shape (verified from fixtures):
     session_id, transcript_path, cwd, hook_event_name, reason
 """
-import glob
 import json
 import os
 import sys
 
-from hook_utils import read_hook_input, sanitize_task_list_id, resolve_task_list_id, log_hook_diagnostic, run_fail_open
+from hook_utils import read_hook_input, sanitize_task_list_id, resolve_task_list_id, find_latest_plan, log_hook_diagnostic, run_fail_open
 
 TASK_DIR = os.path.expanduser("~/.claude/tasks")
-PLAN_DIR = os.path.expanduser("~/.claude/plans")
 
 
 def main():
@@ -33,9 +31,9 @@ def main():
         parts.append(f"Open tasks: {open_count} ({in_progress} in-progress)")
 
     # Active plan
-    plan = _get_active_plan()
-    if plan:
-        parts.append(f"Active plan: {plan}")
+    plan_name = find_latest_plan()
+    if plan_name:
+        parts.append(f"Active plan: {plan_name}")
 
     if parts:
         summary = " | ".join(parts)
@@ -85,32 +83,6 @@ def _count_open_tasks(session_id: str) -> tuple[int, int]:
 
     return total_open, in_progress
 
-
-
-def _get_active_plan() -> str | None:
-    """Find the most recently modified plan file name."""
-    if not os.path.isdir(PLAN_DIR):
-        log_hook_diagnostic(
-            "session-end-summary", "SessionEnd",
-            "plan_dir_missing",
-            f"Plan directory does not exist: {PLAN_DIR}",
-        )
-        return None
-
-    plans = glob.glob(os.path.join(PLAN_DIR, "*.md"))
-    if not plans:
-        return None
-
-    try:
-        latest = max(plans, key=os.path.getmtime)
-    except (OSError, ValueError) as exc:
-        log_hook_diagnostic(
-            "session-end-summary", "SessionEnd",
-            "plan_dir_missing",
-            f"Failed to read plan mtime: {exc}",
-        )
-        return None
-    return os.path.basename(latest)
 
 
 if __name__ == "__main__":
