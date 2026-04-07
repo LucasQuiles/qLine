@@ -27,7 +27,7 @@ These surfaces are the current public contract. No track may propose breaking ch
 
 | Surface | Contract |
 |---------|----------|
-| stdin payload | JSON object from Claude Code. Fields consumed by `normalize()`: `model` (dict with `display_name`), `workspace.current_dir` (fallback `cwd`), `version`, `output_style.name`, `cost.total_cost_usd`, `cost.total_duration_ms`, `context_window.*` (`used_percentage`, `context_window_size`, `used`, `total`, `total_input_tokens`, `total_output_tokens`, `current_usage`), `added_dirs`, `worktree`, `agent_id`, `transcript_path`. Additionally `session_id` is read by `_inject_obs_counters` and `_try_obs_snapshot`. Sparse-safe: missing fields produce graceful degradation, never errors. |
+| stdin payload | JSON object from Claude Code. Fields consumed by `normalize()`: `model` (dict with `display_name`), `workspace.current_dir` (fallback `cwd`), `version`, `output_style.name`, `cost.total_cost_usd`, `cost.total_duration_ms`, `context_window.*` (`used_percentage`, `context_window_size`, `used`, `total`, `total_input_tokens`, `total_output_tokens`, `current_usage`), plus top-level `current_usage` fallback (normalize reads both locations), `added_dirs`, `worktree`, `agent_id`, `transcript_path`. Additionally `session_id` is read by `_inject_obs_counters` and `_try_obs_snapshot`. Sparse-safe: missing fields produce graceful degradation, never errors. |
 | stdout | Single ANSI-styled line (or multi-line if configured). Exit 0 always. |
 | Environment | `NO_COLOR`, `QLINE_NO_COLLECT`, `QLINE_PROC_DIR` (default `/proc`), `QLINE_CACHE_PATH` (default `/tmp/qline-cache.json`), `OBS_ROOT` (override observability root for hooks and statusline). |
 | Config file | `~/.config/qline.toml` — TOML format, optional. All keys have defaults. |
@@ -63,7 +63,7 @@ Current event types in `hook_events.jsonl`. New types may be added; existing typ
 | `session.started` | obs-session-start | cwd, source, transcript_path, package_root |
 | `session.reentry` | obs-session-start | source |
 | `session.ended` | obs-session-end | summary stats |
-| `file.read` | obs-pretool-read | path, bytes, mtime, read_count, is_reread |
+| `file.read` | obs-pretool-read | tool, tool_ref, path, offset, limit, is_reread, read_count (note: bytes/mtime are in `custom/reads.jsonl` sidecar, not in hook_events.jsonl) |
 | `file.write.diff` | obs-posttool-write, obs-posttool-edit | tool, path, added, removed, patch_hash |
 | `bash.executed` | obs-posttool-bash | command_hash, exit_code, preview |
 | `tool.failed` | obs-posttool-failure | tool_name, error, command_preview (for Bash) |
