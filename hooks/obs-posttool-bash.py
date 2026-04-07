@@ -21,10 +21,9 @@ Per-call steps:
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from typing import Any
 
-from hook_utils import read_hook_input, run_fail_open, hash16
+from hook_utils import read_hook_input, run_fail_open, hash16, _now_iso
 from obs_utils import (
     resolve_package_root,
     append_event,
@@ -114,7 +113,7 @@ def main() -> None:
 
     # --- Append detail record to side log ---
     detail_record: dict[str, Any] = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": _now_iso(),
         "session_id": session_id,
         "tool_ref": tool_ref,
         "command_hash": command_hash,

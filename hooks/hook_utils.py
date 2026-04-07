@@ -14,6 +14,11 @@ from typing import Any, Callable
 
 MAX_STDIN_BYTES = 1_048_576  # 1 MB
 
+
+def _now_iso() -> str:
+    """UTC timestamp in ISO-8601 format."""
+    return datetime.now(timezone.utc).isoformat()
+
 _LEDGER_PATH = os.path.join(
     os.path.expanduser("~"), ".claude", "logs", "lifecycle-hook-faults.jsonl"
 )
@@ -68,7 +73,7 @@ def log_hook_fault(
     """Write a fault-level record with traceback extract."""
     tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
     _write_ledger_record({
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": _now_iso(),
         "hook": hook_name,
         "event": event_name,
         "level": "fault",
@@ -148,7 +153,7 @@ def log_hook_diagnostic(
 ) -> None:
     """Write a diagnostic or warning record."""
     _write_ledger_record({
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": _now_iso(),
         "hook": hook_name,
         "event": event_name,
         "level": level,

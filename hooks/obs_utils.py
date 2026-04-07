@@ -30,6 +30,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from hook_utils import _now_iso  # canonical timestamp; defined in hook_utils to keep dependency direction correct
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -58,10 +60,6 @@ _INITIAL_HEALTH: dict[str, Any] = {
     "warnings": [],
     "errors": [],
 }
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _load_read_state(state_path: str) -> dict[str, Any]:
