@@ -1,20 +1,38 @@
 #!/bin/bash
-# Install qLine statusline.py + obs_utils.py to ~/.claude/
-# and add statusLine binding to ~/.claude/settings.json
+# Install qLine — Claude Code status line + optional observability hooks
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEST_DIR="$HOME/.claude"
-DEST="$DEST_DIR/statusline.py"
-OBS_SRC="$SCRIPT_DIR/src/obs_utils.py"
-OBS_DEST="$DEST_DIR/obs_utils.py"
 SETTINGS="$DEST_DIR/settings.json"
 
+# --- Parse args ---
+WITH_OBS=false
+for arg in "$@"; do
+    case "$arg" in
+        --with-obs) WITH_OBS=true ;;
+        --help|-h)
+            echo "Usage: ./install.sh [--with-obs]"
+            echo ""
+            echo "  Default:     Install statusline only (one styled bar in Claude Code)"
+            echo "  --with-obs:  Also install observability hooks (session tracking,"
+            echo "               tool recording, compaction monitoring)"
+            echo ""
+            exit 0
+            ;;
+        *) echo "Unknown option: $arg (try --help)"; exit 1 ;;
+    esac
+done
+
 echo "=== qLine Install ==="
+if [ "$WITH_OBS" = true ]; then
+    echo "Mode: statusline + observability hooks"
+else
+    echo "Mode: statusline only"
+fi
 
 # --- Pre-flight checks ---
 
-# Python version
 PYTHON=""
 for candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
     if command -v "$candidate" > /dev/null 2>&1; then
@@ -38,139 +56,125 @@ if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }
 fi
 
 if [ "$PY_MINOR" -lt 11 ]; then
-    echo "NOTE: Python $PY_VERSION detected — tomllib requires 3.11+."
-    echo "      TOML config (~/.config/qline.toml) will be ignored; defaults used."
-    echo "      Install 'tomli' (pip install tomli) for TOML support on 3.10."
+    echo "NOTE: Python $PY_VERSION — TOML config requires 3.11+. Defaults will be used."
 fi
 
 echo "Python: $PYTHON ($PY_VERSION)"
 
-# Ensure ~/.claude exists
 if [ ! -d "$DEST_DIR" ]; then
     echo "ERROR: $DEST_DIR does not exist. Is Claude Code installed?"
     exit 1
 fi
 
-# Check for jq (needed for settings.json patching)
-if ! command -v jq > /dev/null 2>&1; then
-    echo "WARNING: jq not found — cannot patch settings.json automatically."
-    echo "         You'll need to manually add statusLine config (see README)."
-    JQ_AVAILABLE=false
-else
+JQ_AVAILABLE=false
+if command -v jq > /dev/null 2>&1; then
     JQ_AVAILABLE=true
-fi
-
-# --- Install files ---
-
-cp "$SCRIPT_DIR/src/statusline.py" "$DEST"
-chmod +x "$DEST"
-echo "Installed: $DEST"
-
-# Install obs_utils.py (observability support)
-if [ -f "$OBS_SRC" ]; then
-    cp "$OBS_SRC" "$OBS_DEST"
-    echo "Installed: $OBS_DEST"
 else
-    echo "NOTE: obs_utils.py not found in repo — obs modules will be disabled"
+    echo "WARNING: jq not found — cannot patch settings.json automatically."
 fi
 
-# Install context_overhead.py (overhead monitor module)
-OVERHEAD_SRC="$SCRIPT_DIR/src/context_overhead.py"
-OVERHEAD_DEST="$DEST_DIR/context_overhead.py"
-if [ -f "$OVERHEAD_SRC" ]; then
-    cp "$OVERHEAD_SRC" "$OVERHEAD_DEST"
-    echo "Installed: $OVERHEAD_DEST"
-fi
+# --- Install core files ---
 
-# Install shared scripts (obs_utils.py, hook_utils.py)
-SCRIPTS_DIR="$DEST_DIR/scripts"
-mkdir -p "$SCRIPTS_DIR"
-for script in "$SCRIPT_DIR/scripts/"*.py; do
-    [ -f "$script" ] || continue
-    cp "$script" "$SCRIPTS_DIR/"
-    echo "Installed: $SCRIPTS_DIR/$(basename "$script")"
-done
+cp "$SCRIPT_DIR/src/statusline.py" "$DEST_DIR/statusline.py"
+chmod +x "$DEST_DIR/statusline.py"
+echo "Installed: $DEST_DIR/statusline.py"
 
-# Install observability hooks
-HOOKS_DIR="$DEST_DIR/hooks"
-mkdir -p "$HOOKS_DIR"
-HOOKS_INSTALLED=0
-for hook in "$SCRIPT_DIR/hooks/obs-"*.py; do
-    [ -f "$hook" ] || continue
-    cp "$hook" "$HOOKS_DIR/"
-    chmod +x "$HOOKS_DIR/$(basename "$hook")"
-    HOOKS_INSTALLED=$((HOOKS_INSTALLED + 1))
-done
-if [ "$HOOKS_INSTALLED" -gt 0 ]; then
-    echo "Installed: $HOOKS_INSTALLED observability hooks to $HOOKS_DIR/"
-else
-    echo "NOTE: No obs hooks found in repo — observability will be limited"
-fi
+cp "$SCRIPT_DIR/src/context_overhead.py" "$DEST_DIR/context_overhead.py"
+echo "Installed: $DEST_DIR/context_overhead.py"
 
-# Install enrichment hooks + circuit breaker
-ENRICH_INSTALLED=0
-for hook in "$SCRIPT_DIR/hooks/enrich-"*.py "$SCRIPT_DIR/hooks/brick_circuit.py"; do
-    [ -f "$hook" ] || continue
-    cp "$hook" "$HOOKS_DIR/"
-    chmod +x "$HOOKS_DIR/$(basename "$hook")"
-    ENRICH_INSTALLED=$((ENRICH_INSTALLED + 1))
-done
-if [ "$ENRICH_INSTALLED" -gt 0 ]; then
-    echo "Installed: $ENRICH_INSTALLED enrichment hooks to $HOOKS_DIR/"
-fi
+cp "$SCRIPT_DIR/scripts/obs_utils.py" "$DEST_DIR/obs_utils.py"
+echo "Installed: $DEST_DIR/obs_utils.py"
 
-# Fix shebang only if `python3` doesn't exist or is too old
+# Fix shebang if needed
 if ! command -v python3 > /dev/null 2>&1; then
-    # python3 missing — use whatever we found
     REAL_PYTHON=$(command -v "$PYTHON")
-    sed -i "1s|.*|#!$REAL_PYTHON|" "$DEST"
+    sed -i "1s|.*|#!$REAL_PYTHON|" "$DEST_DIR/statusline.py"
     echo "Shebang updated to: #!$REAL_PYTHON"
 elif [ "$PYTHON" != "python3" ]; then
-    # python3 exists but we picked a different one (e.g., python3.11)
-    # Check if python3 is actually too old
     PY3_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo 0)
     if [ "$PY3_MINOR" -lt 10 ]; then
         REAL_PYTHON=$(command -v "$PYTHON")
-        sed -i "1s|.*|#!$REAL_PYTHON|" "$DEST"
+        sed -i "1s|.*|#!$REAL_PYTHON|" "$DEST_DIR/statusline.py"
         echo "Shebang updated to: #!$REAL_PYTHON"
     fi
 fi
 
-# --- Patch settings.json ---
+# --- Patch statusLine binding ---
 
 if [ "$JQ_AVAILABLE" = true ] && [ -f "$SETTINGS" ]; then
     if jq -e 'has("statusLine")' "$SETTINGS" > /dev/null 2>&1; then
-        echo "statusLine binding already present in $SETTINGS"
+        echo "statusLine binding already present"
     else
-        BACKUP="$DEST_DIR/backups/statusline-install-$(date +%Y%m%d-%H%M%S)"
+        BACKUP="$DEST_DIR/backups/qline-install-$(date +%Y%m%d-%H%M%S)"
         mkdir -p "$BACKUP"
         cp "$SETTINGS" "$BACKUP/settings.json.bak"
         echo "Backup: $BACKUP/settings.json.bak"
 
         TMP=$(mktemp)
-        jq '. + {"statusLine": {"type": "command", "command": "'"$DEST"'"}}' "$SETTINGS" > "$TMP"
+        jq --arg cmd "$DEST_DIR/statusline.py" '. + {"statusLine": {"type": "command", "command": $cmd}}' "$SETTINGS" > "$TMP"
         if jq -e '.' "$TMP" > /dev/null 2>&1; then
             mv "$TMP" "$SETTINGS"
-            echo "statusLine binding added to $SETTINGS"
+            echo "statusLine binding added to settings.json"
         else
             rm -f "$TMP"
             echo "ERROR: failed to create valid JSON — settings.json unchanged"
         fi
     fi
 elif [ ! -f "$SETTINGS" ]; then
-    echo "NOTE: $SETTINGS not found — creating minimal config"
-    echo '{"statusLine":{"type":"command","command":"'"$DEST"'"}}' | jq . > "$SETTINGS" 2>/dev/null || \
-    echo '{"statusLine":{"type":"command","command":"'"$DEST"'"}}' > "$SETTINGS"
+    jq -n --arg cmd "$DEST_DIR/statusline.py" '{"statusLine": {"type": "command", "command": $cmd}}' > "$SETTINGS" 2>/dev/null || \
+    echo "{\"statusLine\":{\"type\":\"command\",\"command\":\"$DEST_DIR/statusline.py\"}}" > "$SETTINGS"
 fi
 
-# --- Post-install summary ---
+# --- Install observability (optional) ---
+
+if [ "$WITH_OBS" = true ]; then
+    echo ""
+    echo "--- Observability hooks ---"
+
+    SCRIPTS_DIR="$DEST_DIR/scripts"
+    HOOKS_DIR="$DEST_DIR/hooks"
+    mkdir -p "$SCRIPTS_DIR" "$HOOKS_DIR"
+
+    # Shared utilities
+    cp "$SCRIPT_DIR/scripts/hook_utils.py" "$SCRIPTS_DIR/hook_utils.py"
+    echo "Installed: $SCRIPTS_DIR/hook_utils.py"
+
+    cp "$SCRIPT_DIR/scripts/obs_utils.py" "$SCRIPTS_DIR/obs_utils.py"
+    echo "Installed: $SCRIPTS_DIR/obs_utils.py"
+
+    # Obs hooks
+    HOOKS_INSTALLED=0
+    for hook in "$SCRIPT_DIR/hooks/obs-"*.py; do
+        [ -f "$hook" ] || continue
+        cp "$hook" "$HOOKS_DIR/"
+        chmod +x "$HOOKS_DIR/$(basename "$hook")"
+        HOOKS_INSTALLED=$((HOOKS_INSTALLED + 1))
+    done
+    echo "Installed: $HOOKS_INSTALLED observability hooks to $HOOKS_DIR/"
+
+    # Register hooks in settings.json
+    if [ "$JQ_AVAILABLE" = true ] && [ -f "$SETTINGS" ]; then
+        echo "Registering obs hooks in settings.json..."
+        "$PYTHON" "$SCRIPT_DIR/scripts/register_obs_hooks.py" "$SETTINGS" "$HOOKS_DIR"
+    else
+        echo "WARNING: Could not register hooks (jq or settings.json missing)"
+        echo "         Hooks are installed but may not fire without manual registration"
+    fi
+fi
+
+# --- Summary ---
 
 echo ""
 echo "=== Setup Complete ==="
 echo "  Restart Claude Code to activate."
+if [ "$WITH_OBS" = true ]; then
+    echo "  Statusline + observability hooks installed."
+else
+    echo "  Statusline installed. Run with --with-obs for observability hooks."
+fi
 echo ""
-echo "  Optional: copy the example config to customize:"
-echo "    cp $(dirname "$0")/qline.example.toml ~/.config/qline.toml"
+echo "  Optional: customize theme:"
+echo "    cp $SCRIPT_DIR/qline.example.toml ~/.config/qline.toml"
 echo ""
 echo "  Nerd Font required for glyphs — install on your LOCAL terminal:"
 echo "    https://github.com/ryanoasis/nerd-fonts"
