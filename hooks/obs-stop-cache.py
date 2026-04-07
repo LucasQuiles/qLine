@@ -23,6 +23,7 @@ from obs_utils import (
     update_manifest_if_absent_batch,
     _atomic_jsonl_append,
     _now_iso,
+    extract_usage_full,
 )
 
 _HOOK_NAME = "obs-stop-cache"
@@ -62,7 +63,7 @@ def _extract_latest_cache_metrics(
         except (json.JSONDecodeError, ValueError):
             continue
 
-        usage, model, entry_id = _extract_usage_from_entry(entry)
+        usage, model, _request_id, entry_id = extract_usage_full(entry)
         if usage is None:
             continue
 
@@ -92,32 +93,6 @@ def _extract_latest_cache_metrics(
 
     return None
 
-
-def _extract_usage_from_entry(
-    entry: dict,
-) -> tuple[dict | None, str | None, str | None]:
-    """Extract (usage, model, entry_id) from a transcript entry.
-
-    Handles message.usage (direct turn) and toolUseResult.usage (subagent).
-    Skips streaming stubs where stop_reason is null.
-    """
-    msg = entry.get("message")
-    if isinstance(msg, dict):
-        stop = msg.get("stop_reason")
-        if stop is not None:
-            usage = msg.get("usage")
-            if isinstance(usage, dict):
-                return usage, msg.get("model"), msg.get("id")
-
-    tur = entry.get("toolUseResult")
-    if isinstance(tur, dict):
-        usage = tur.get("usage")
-        if isinstance(usage, dict):
-            # Use entry uuid for dedup (falls back to timestamp-based synthetic)
-            entry_id = entry.get("uuid") or entry.get("timestamp", "")
-            return usage, None, entry_id
-
-    return None, None, None
 
 
 def _read_last_sidecar_entry(sidecar_path: str) -> dict:

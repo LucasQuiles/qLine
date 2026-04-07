@@ -558,6 +558,37 @@ def update_manifest_if_absent_batch(
     except Exception:
         return False
 
+def extract_usage_full(
+    entry: dict,
+) -> tuple[dict | None, str | None, str | None, str | None]:
+    """Extract usage tuple from transcript entry.
+
+    Returns (usage_dict, model, request_id, entry_id) or (None, None, None, None).
+    Handles both message.usage (direct turn) and toolUseResult.usage (subagent).
+    Skips streaming stubs (stop_reason is None) for the message path.
+    """
+    msg = entry.get("message")
+    if isinstance(msg, dict):
+        stop = msg.get("stop_reason")
+        if stop is not None:
+            usage = msg.get("usage")
+            if isinstance(usage, dict):
+                model = msg.get("model")
+                request_id = msg.get("requestId") or entry.get("requestId")
+                entry_id = msg.get("id")
+                return usage, model, request_id, entry_id
+
+    tur = entry.get("toolUseResult")
+    if isinstance(tur, dict):
+        usage = tur.get("usage")
+        if isinstance(usage, dict):
+            request_id = tur.get("requestId") or entry.get("requestId")
+            entry_id = entry.get("uuid") or entry.get("timestamp", "")
+            return usage, None, request_id, entry_id
+
+    return None, None, None, None
+
+
 def update_health(
     package_root: str,
     subsystem: str,

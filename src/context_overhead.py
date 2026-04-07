@@ -252,13 +252,30 @@ def _estimate_static_overhead(
 _TRANSCRIPT_TAIL_BYTES = 50 * 1024
 
 
+_extract_usage_full = None
+try:
+    # hooks/ dir may already be on sys.path (statusline.py adds it).
+    # If not, add it so obs_utils is importable.
+    import sys as _sys
+    _hooks_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks")
+    if _hooks_dir not in _sys.path:
+        _sys.path.insert(0, _hooks_dir)
+    from obs_utils import extract_usage_full as _extract_usage_full
+except ImportError:
+    pass
+
+
 def _extract_usage(entry: dict) -> tuple[dict | None, str | None]:
     """Extract usage dict and requestId from a transcript entry.
 
-    Handles two paths: message.usage (direct turn) and toolUseResult.usage (subagent).
-    Skips streaming stubs (stop_reason=null) for the message path.
-    Returns (usage_dict, request_id) or (None, None).
+    Delegates to obs_utils.extract_usage_full, returning (usage, request_id).
+    Falls back to inline extraction if obs_utils is unavailable.
     """
+    if _extract_usage_full is not None:
+        usage, _model, request_id, _entry_id = _extract_usage_full(entry)
+        return usage, request_id
+
+    # Inline fallback (obs_utils not importable — e.g. isolated test runner)
     msg = entry.get("message")
     if isinstance(msg, dict):
         stop = msg.get("stop_reason")
@@ -267,14 +284,12 @@ def _extract_usage(entry: dict) -> tuple[dict | None, str | None]:
             if isinstance(usage, dict):
                 req_id = msg.get("requestId") or entry.get("requestId")
                 return usage, req_id
-
     tur = entry.get("toolUseResult")
     if isinstance(tur, dict):
         usage = tur.get("usage")
         if isinstance(usage, dict):
             req_id = tur.get("requestId") or entry.get("requestId")
             return usage, req_id
-
     return None, None
 
 
