@@ -86,16 +86,6 @@ def main() -> None:
         sys.exit(0)
 
     # Log to action ledger
-    try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from brick_action_ledger import log_action, derive_action_id
-        _ti = input_data.get("tool_input", {})
-        _lines = len(_ti.get("new_string", "").splitlines())
-        action_id = derive_action_id(input_data)
-        log_action(session_id, "Edit", file_path=_ti.get("file_path", ""),
-                   lines=_lines, cwd=input_data.get("cwd", ""), action_id=action_id)
-    except Exception:
-        pass
 
     tool_response = input_data.get("tool_response")
     if not isinstance(tool_response, dict):

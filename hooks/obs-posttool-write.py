@@ -82,16 +82,6 @@ def main() -> None:
         sys.exit(0)
 
     # Log to action ledger for decision tree tracing (no Brick call)
-    try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from brick_action_ledger import log_action, derive_action_id
-        _ti = input_data.get("tool_input", {})
-        _action_id = derive_action_id(input_data)
-        log_action(session_id, "Write", file_path=_ti.get("file_path", ""),
-                   lines=len(_ti.get("content", "").splitlines()),
-                   cwd=input_data.get("cwd", ""), action_id=_action_id)
-    except Exception:
-        pass
 
     # Guard: tool_response must be a dict to confirm successful write.
     # Missing or non-dict tool_response = malformed or failed payload — skip.
