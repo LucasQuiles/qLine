@@ -491,16 +491,19 @@ def _try_phase2_transcript(
     if result is None:
         return False
 
-    # Anchor priority: manifest (durable) > file start > tail window
-    if "turn_1_anchor" not in session_cache:
-        manifest_anchor = _read_manifest_anchor(package_root)
-        if manifest_anchor is not None:
-            session_cache["turn_1_anchor"] = manifest_anchor
-
+    # Anchor priority: transcript file start (accurate) > manifest (fallback) > tail window
+    # The transcript's first-turn cache_creation is the real system overhead (~37k-52k).
+    # The manifest's cache_anchor stores per-turn cache_create deltas (~973-2406),
+    # which are far too small — using them poisons overhead computation.
     if "turn_1_anchor" not in session_cache:
         file_anchor = _read_transcript_anchor(path)
         if file_anchor is not None:
             session_cache["turn_1_anchor"] = file_anchor
+
+    if "turn_1_anchor" not in session_cache:
+        manifest_anchor = _read_manifest_anchor(package_root)
+        if manifest_anchor is not None:
+            session_cache["turn_1_anchor"] = manifest_anchor
 
     if "turn_1_anchor" not in session_cache:
         if result["turn_1_anchor"] is not None and result["turn_1_anchor"] > 0:
