@@ -52,16 +52,20 @@ def read_hook_input(timeout_seconds: int = 2) -> dict[str, Any] | None:
 def _write_ledger_record(record: dict) -> None:
     """Atomic JSONL append to the fault ledger. Never raises."""
     try:
-        ledger_dir = os.path.dirname(_LEDGER_PATH)
-        os.makedirs(ledger_dir, exist_ok=True)
-        line = json.dumps(record, default=str) + "\n"
-        fd = os.open(_LEDGER_PATH, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-        try:
-            os.write(fd, line.encode())
-        finally:
-            os.close(fd)
+        from obs_utils import _atomic_jsonl_append
+        _atomic_jsonl_append(_LEDGER_PATH, record)
     except Exception:
-        pass
+        # Fallback: direct write if obs_utils unavailable or append fails
+        try:
+            os.makedirs(os.path.dirname(_LEDGER_PATH), exist_ok=True)
+            line = json.dumps(record, default=str) + "\n"
+            fd = os.open(_LEDGER_PATH, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+            try:
+                os.write(fd, line.encode())
+            finally:
+                os.close(fd)
+        except Exception:
+            pass
 
 
 def log_hook_fault(
