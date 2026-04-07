@@ -1911,6 +1911,18 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
 
         # Inject into state from cache
         ec = session_cache.get("event_counts", {})
+
+        # Session resume detection: clear stale overhead/anchor caches
+        reentry_count = ec.get("session.reentry", 0)
+        if reentry_count > session_cache.get("last_known_reentry_count", 0):
+            session_cache.pop("overhead_ts", None)
+            session_cache.pop("turn_1_anchor", None)
+            session_cache["last_known_reentry_count"] = reentry_count
+            session_cache["resume_detected"] = True
+            obs_cache[session_id] = session_cache
+            cache["_obs"] = obs_cache
+            save_cache(cache)
+
         tr = session_cache.get("total_reads", 0)
         rr = session_cache.get("reread_count", 0)
         state["obs_reads"] = tr
