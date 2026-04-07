@@ -681,7 +681,7 @@ def compute_context_thresholds(context_window: int) -> dict[str, int]:
         }
     effective = context_window - CC_OUTPUT_RESERVE
     autocompact = effective - CC_AUTOCOMPACT_BUFFER
-    warning = autocompact - CC_WARNING_OFFSET
+    warning = effective - CC_WARNING_OFFSET
     error = autocompact - CC_ERROR_OFFSET
     blocking = effective - CC_BLOCKING_BUFFER
     return {
