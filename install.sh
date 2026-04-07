@@ -14,7 +14,7 @@ for arg in "$@"; do
         --help|-h)
             echo "Usage: ./install.sh [--no-obs]"
             echo ""
-            echo "  Default:     Install statusline only (one styled bar in Claude Code)"
+            echo "  Default:     Install statusline + observability hooks"
             echo "  --no-obs:  Skip observability hooks (session tracking,"
             echo "               tool recording, compaction monitoring)"
             echo ""
