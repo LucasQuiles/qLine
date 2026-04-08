@@ -2350,7 +2350,8 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         return rendered_lines[0] + "\n" + banner
 
     # If line 2 overflowed, merge overflow into the last layout line.
-    # This distributes excess modules onto line 3 alongside dir/git/cpu/etc.
+    # Respect max_width so line 3 doesn't exceed the width limit.
+    term_width = layout.get("max_width") or 120
     if overflow_modules and len(rendered_lines) >= 2:
         # Render overflow modules
         show_labels = state.get("_show_labels", False)
@@ -2363,12 +2364,16 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
                 if result is not None:
                     overflow_parts.append(_apply_label(result, mod_cfg, show_labels))
         if overflow_parts:
-            overflow_str = box_sep.join(overflow_parts)
             last_line = rendered_lines[-1]
-            if last_line:
-                rendered_lines[-1] = last_line + box_sep + overflow_str
-            else:
-                rendered_lines[-1] = overflow_str
+            current_width = _visible_len(last_line)
+            sep_w = _visible_len(box_sep)
+            for part in overflow_parts:
+                needed = sep_w + _visible_len(part)
+                if current_width + needed > term_width:
+                    break  # stop — line 3 is full
+                last_line = last_line + box_sep + part
+                current_width += needed
+            rendered_lines[-1] = last_line
 
     # Enforce max output lines
     output = "\n".join(rendered_lines)
