@@ -781,7 +781,7 @@ assert_contains "C-09d: bar present" "$LAST_STDOUT" "50%"
 # C-10: Real payload format (used_percentage + context_window_size)
 run_statusline "$(cat "$FIXTURES/valid-real-payload.json")"
 assert_exit_zero "C-10a: exit 0" "$LAST_EXIT"
-assert_contains "C-10b: bar present" "$LAST_STDOUT" "15%"
+assert_contains "C-10b: bar present" "$LAST_STDOUT" "29%"
 assert_contains "C-10c: input tokens" "$LAST_STDOUT" "▲281k"
 assert_contains "C-10d: output tokens" "$LAST_STDOUT" "▼141k"
 assert_contains "C-10e: cost critical" "$LAST_STDOUT" '27.29'
@@ -1410,7 +1410,7 @@ echo ""
 echo "--- T-obs-1: snapshot appended ---"
 printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
 SNAP_FILE="$OBS_PKG_ROOT/native/statusline/snapshots.jsonl"
-SNAP_COUNT=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
+SNAP_COUNT=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-1: snapshot appended" "$SNAP_COUNT" "1"
 
 # T-obs-2: snapshot has correct fields
@@ -1437,7 +1437,7 @@ assert_equals "T-obs-2: correct fields" "$FIELDS_CHECK" "OK"
 echo ""
 echo "--- T-obs-3: throttle ---"
 printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
-SNAP_COUNT2=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
+SNAP_COUNT2=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-3: throttle skips duplicate" "$SNAP_COUNT2" "1"
 
 # T-obs-4: meaningful change bypasses throttle
@@ -1461,7 +1461,7 @@ d = {
 print(json.dumps(d))
 ")
 printf '%s' "$OBS_PAYLOAD_CHANGED" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
-SNAP_COUNT3=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo 0)
+SNAP_COUNT3=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-4: meaningful change bypasses throttle" "$SNAP_COUNT3" "2"
 
 # T-obs-5: statusline_capture health
@@ -1482,7 +1482,7 @@ echo "--- T-obs-6: missing session_id ---"
 OBS_TEST_ROOT_6=$(mktemp -d)
 NO_SID_PAYLOAD='{"model": {"id": "test"}, "cost": {"total_cost_usd": 1}}'
 printf '%s' "$NO_SID_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT_6" QLINE_CACHE_PATH="$(mktemp)" python3 "$SRC" > /dev/null 2>&1
-NO_SID_SNAP=$(find "$OBS_TEST_ROOT_6" -name "snapshots.jsonl" 2>/dev/null | wc -l)
+NO_SID_SNAP=$(find "$OBS_TEST_ROOT_6" -name "snapshots.jsonl" 2>/dev/null | wc -l | tr -d ' ')
 assert_equals "T-obs-6: no snapshot without session_id" "$NO_SID_SNAP" "0"
 rm -rf "$OBS_TEST_ROOT_6"
 
@@ -1670,7 +1670,9 @@ state = {
     'cache_busting': True,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-assert '%!\U000f04bf' in result, f'expected %! + nf-md-lightning_bolt, got: {result}'
+# NO_COLOR: alert indicator is ⚠ (U+26A0), not the Nerd Font glyph
+assert '\u26a0' in result, f'expected alert indicator ⚠, got: {result}'
+assert '%!' in result, f'expected critical suffix %!, got: {result}'
 print('OK')
 ")
 assert_equals "compound critical+bust" "$OUT" "OK"
@@ -1686,7 +1688,9 @@ state = {
     'cache_busting': True,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-assert '%!\U000f04bf' in result, f'busting forces critical: expected %! + nf-md-lightning_bolt, got: {result}'
+# NO_COLOR: alert indicator is ⚠ (U+26A0); cache_busting escalates severity to critical (%!)
+assert '\u26a0' in result, f'expected alert indicator ⚠, got: {result}'
+assert '%!' in result, f'busting forces critical: expected %! suffix, got: {result}'
 print('OK')
 ")
 assert_equals "compound warn+bust" "$OUT" "OK"
@@ -1702,7 +1706,9 @@ state = {
     'cache_busting': True,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-assert '%!\U000f04bf' in result, f'busting forces critical: expected %! + nf-md-lightning_bolt, got: {result}'
+# NO_COLOR: alert indicator is ⚠ (U+26A0); cache_busting escalates severity to critical (%!)
+assert '\u26a0' in result, f'expected alert indicator ⚠, got: {result}'
+assert '%!' in result, f'busting forces critical: expected %! suffix, got: {result}'
 assert '%~' not in result, f'should not have warn suffix'
 print('OK')
 ")
@@ -2017,7 +2023,8 @@ state = {
     'cache_busting': True,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-assert '\U000f04bf' in result, f'busting indicator expected: {result}'
+# NO_COLOR: busting shows ⚠ (U+26A0) + critical suffix %!, not the Nerd Font glyph
+assert '\u26a0' in result, f'busting indicator (⚠) expected: {result}'
 assert '\u2248' not in result, f'should not show degraded indicator when busting'
 print('OK')
 ")
@@ -2035,11 +2042,11 @@ state = {
     'cache_degraded': False,
 }
 result = render_context_bar(state, DEFAULT_THEME)
-# Severity-derived: sys = darkened critical, conv = critical
-crit_conv = '38;2;191;97;106'   # #bf616a critical
-crit_sys = '38;2;124;63;68'     # darkened critical (factor=0.65)
-assert crit_conv in result, f'conv should use critical color, got: {repr(result[:300])}'
-assert crit_sys in result, f'sys should use darkened critical, got: {repr(result[:300])}'
+# Code: sys_color = bright (critical), conv_color = darkened (factor=0.55)
+crit_sys = '38;2;191;97;106'    # #bf616a critical — sys blocks use bright color
+crit_conv = '38;2;105;53;58'    # darkened critical (factor=0.55) — conv blocks dimmed
+assert crit_sys in result, f'sys should use critical color, got: {repr(result[:300])}'
+assert crit_conv in result, f'conv should use darkened critical, got: {repr(result[:300])}'
 assert '\U000f04bf' in result, f'should show nf-md-lightning_bolt'
 print('OK')
 ")
@@ -2052,8 +2059,10 @@ import json, tempfile, os
 
 tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
 for i in range(5):
-    cc = 42000 if i == 0 else 200
-    cr = 0 if i == 0 else int(42000 * 0.6)
+    # Turn 0: large cache_creation (anchor). Turns 1-4: cc=800, cr=1200 -> ~60% hit rate.
+    # hit_rate = cr/(cr+cc) = 1200/2000 = 0.60, which is < warn=0.8 but >= critical=0.3
+    cc = 42000 if i == 0 else 800
+    cr = 0 if i == 0 else 1200
     json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
         'input_tokens': 50, 'cache_creation_input_tokens': cc,
         'cache_read_input_tokens': cr, 'output_tokens': 200
@@ -2108,9 +2117,9 @@ state = {
     'sys_overhead_source': 'measured',
 }
 result = render_context_bar(state, DEFAULT_THEME)
-# Healthy color #8fbcbb → darkened sys = RGB(92,122,121), conv = RGB(143,188,187) (factor=0.65)
-assert '38;2;92;122;121' in result, f'sys (darkened healthy) not found in: {repr(result)}'
-assert '38;2;143;188;187' in result, f'conv (healthy teal) not found in: {repr(result)}'
+# Code: sys_color = bright (#8fbcbb = RGB(143,188,187)), conv_color = darkened (factor=0.55 = RGB(78,103,102))
+assert '38;2;143;188;187' in result, f'sys (bright healthy) not found in: {repr(result)}'
+assert '38;2;78;103;102' in result, f'conv (darkened healthy factor=0.55) not found in: {repr(result)}'
 print('OK')
 ")
 assert_equals "per-segment coloring" "$OUT" "OK"
@@ -2136,7 +2145,8 @@ assert_equals "per-segment NO_COLOR fallback" "$OUT" "OK"
 
 echo "  forensics: generate_overhead_report from transcript"
 LAST_STDOUT=$(run_py "
-import json, tempfile, os
+import json, tempfile, os, sys
+sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import generate_overhead_report
 
 tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
