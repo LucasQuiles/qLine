@@ -1,6 +1,6 @@
 """qLine hook utilities — stdin reading and fail-open execution.
 
-# hook-utils-contract v1.0 -- update all copies if Claude Code hook stdin contract changes
+# hook-utils-contract v2.0 -- update all copies if Claude Code hook stdin contract changes
 Minimal shared module for qLine observability hooks.
 """
 import glob
@@ -219,3 +219,134 @@ def block_stop(reason: str, event: str = "SubagentStop") -> None:
         }
     }))
     sys.exit(0)
+
+
+# ---------------------------------------------------------------------------
+# v2.0 contract additions
+# ---------------------------------------------------------------------------
+
+
+def validate_session_id(session_id: Any) -> str | None:
+    """Validate and normalize a session_id from hook input.
+
+    Returns the stripped session_id string, or None if invalid.
+    Rejects: non-string, empty/whitespace-only, >256 chars, null bytes.
+    """
+    if not session_id or not isinstance(session_id, str):
+        return None
+    session_id = session_id.strip()
+    if not session_id or len(session_id) > 256 or "\x00" in session_id:
+        return None
+    return session_id
+
+
+def validate_payload_structure(data: dict, required_keys: set) -> bool:
+    """Lightweight schema check — reject payloads missing required keys."""
+    if not isinstance(data, dict):
+        return False
+    return required_keys.issubset(data.keys())
+
+
+SCHEMA_SESSION_START = {"session_id"}
+SCHEMA_PRETOOL_USE = {"session_id", "tool_name", "tool_input"}
+SCHEMA_POSTTOOL_USE = {"session_id", "tool_name", "tool_input", "tool_response"}
+SCHEMA_PROMPT_SUBMIT = {"session_id"}
+SCHEMA_SESSION_END = {"session_id"}
+
+
+class Deadline:
+    """Wall-clock budget that propagates through sub-calls.
+    NOT a context manager. Use remaining() and check().
+    """
+    __slots__ = ("_expires",)
+
+    def __init__(self, budget_s: float = 3.0):
+        import time
+        self._expires = time.monotonic() + budget_s
+
+    def remaining(self) -> float:
+        import time
+        return max(0.0, self._expires - time.monotonic())
+
+    def check(self, op: str = "") -> None:
+        if self.remaining() == 0:
+            raise TimeoutError(f"Latency budget exhausted{f' at: {op}' if op else ''}")
+
+
+def log_hook_event(
+    hook_name: str,
+    event_name: str,
+    outcome: str,
+    duration_ms: float,
+    extras: dict | None = None,
+) -> None:
+    """Write an info-level timing record to the fault ledger."""
+    _write_ledger_record({
+        "ts": now_iso(),
+        "hook": hook_name,
+        "event": event_name,
+        "level": "info",
+        "outcome": outcome,
+        "duration_ms": round(duration_ms, 1),
+        **(extras or {}),
+    })
+
+
+def subprocess_resource_limits() -> None:
+    """Apply resource limits to child processes. Use as preexec_fn."""
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_CPU, (5, 10))
+        resource.setrlimit(resource.RLIMIT_NOFILE, (64, 128))
+        resource.setrlimit(resource.RLIMIT_NPROC, (16, 32))
+    except Exception:
+        pass
+
+
+_CIRCUIT_PATH = os.path.join(
+    os.path.expanduser("~"), ".claude", "logs", "hook-circuit.json"
+)
+_CIRCUIT_OPEN_THRESHOLD = 3
+_CIRCUIT_RECOVERY_S = 120
+
+
+def circuit_is_open(service: str) -> bool:
+    """Check if circuit breaker is open for a service. Never raises."""
+    try:
+        with open(_CIRCUIT_PATH) as f:
+            state = json.load(f)
+        s = state.get(service, {})
+        if s.get("failures", 0) >= _CIRCUIT_OPEN_THRESHOLD:
+            import time
+            return (time.time() - s.get("opened_at", 0)) < _CIRCUIT_RECOVERY_S
+    except Exception:
+        pass
+    return False
+
+
+def record_circuit_result(service: str, success: bool) -> None:
+    """Record a success or failure for circuit breaker state. Never raises."""
+    try:
+        import time
+        try:
+            with open(_CIRCUIT_PATH) as f:
+                state = json.load(f)
+        except Exception:
+            state = {}
+
+        s = state.setdefault(service, {"failures": 0})
+        if success:
+            s["failures"] = 0
+            s.pop("opened_at", None)
+        else:
+            s["failures"] = s.get("failures", 0) + 1
+            if s["failures"] >= _CIRCUIT_OPEN_THRESHOLD:
+                s["opened_at"] = time.time()
+
+        fd = os.open(_CIRCUIT_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        try:
+            os.write(fd, json.dumps(state).encode())
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
