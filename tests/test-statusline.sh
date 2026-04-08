@@ -3767,6 +3767,125 @@ assert_equals "AL-15: tuc=0 no alert" "$AL15" "NO_ALERT"
 echo ""
 fi
 
+
+
+# ======================================================================
+# SECTION: new_metrics — tests for lines_changed, api_efficiency, daily/weekly cost, session_count
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "new_metrics" ]; then
+echo "--- New Metrics Tests ---"
+
+echo "  render_lines_changed: shows +N/-N"
+OUT=$(run_py "
+from statusline import render_lines_changed, DEFAULT_THEME
+state = {'lines_added': 2500, 'lines_removed': 800}
+result = render_lines_changed(state, DEFAULT_THEME)
+assert result is not None, 'expected output'
+assert '+2.5k' in result, f'expected +2.5k, got: {result}'
+assert '-800' in result, f'expected -800, got: {result}'
+print('OK')
+")
+assert_equals "NM-01: lines_changed renders" "$OUT" "OK"
+
+echo "  render_lines_changed: None when no data"
+OUT=$(run_py "
+from statusline import render_lines_changed, DEFAULT_THEME
+result = render_lines_changed({}, DEFAULT_THEME)
+assert result is None, f'expected None, got: {result}'
+print('OK')
+")
+assert_equals "NM-02: lines_changed None when empty" "$OUT" "OK"
+
+echo "  render_api_efficiency: shows percentage"
+OUT=$(run_py "
+from statusline import render_api_efficiency, DEFAULT_THEME
+state = {'api_duration_ms': 15000000, 'duration_ms': 28232607}
+result = render_api_efficiency(state, DEFAULT_THEME)
+assert result is not None, 'expected output'
+assert '53%' in result, f'expected 53%, got: {result}'
+print('OK')
+")
+assert_equals "NM-03: api_efficiency renders" "$OUT" "OK"
+
+echo "  render_api_efficiency: None without api_duration"
+OUT=$(run_py "
+from statusline import render_api_efficiency, DEFAULT_THEME
+result = render_api_efficiency({'duration_ms': 1000}, DEFAULT_THEME)
+assert result is None, f'expected None, got: {result}'
+print('OK')
+")
+assert_equals "NM-04: api_efficiency None without data" "$OUT" "OK"
+
+echo "  render_daily_cost: renders with threshold"
+OUT=$(run_py "
+from statusline import render_daily_cost, DEFAULT_THEME
+state = {'daily_cost': 250.0}
+result = render_daily_cost(state, DEFAULT_THEME)
+assert result is not None, 'expected output'
+assert '250' in result, f'expected 250, got: {result}'
+print('OK')
+")
+assert_equals "NM-05: daily_cost renders" "$OUT" "OK"
+
+echo "  render_weekly_cost: renders"
+OUT=$(run_py "
+from statusline import render_weekly_cost, DEFAULT_THEME
+state = {'weekly_cost': 1500.0}
+result = render_weekly_cost(state, DEFAULT_THEME)
+assert result is not None, 'expected output'
+assert '1500' in result, f'expected 1500, got: {result}'
+assert '/wk' in result, f'expected /wk, got: {result}'
+print('OK')
+")
+assert_equals "NM-06: weekly_cost renders" "$OUT" "OK"
+
+echo "  render_session_count: renders"
+OUT=$(run_py "
+from statusline import render_session_count, DEFAULT_THEME
+state = {'session_count_today': 42}
+result = render_session_count(state, DEFAULT_THEME)
+assert result is not None, 'expected output'
+assert '#42' in result, f'expected #42, got: {result}'
+print('OK')
+")
+assert_equals "NM-07: session_count renders" "$OUT" "OK"
+
+echo "  normalize: extracts lines_added/removed from cost dict"
+OUT=$(run_py "
+from statusline import normalize
+state = normalize({'cost': {'total_cost_usd': 10, 'total_lines_added': 500, 'total_lines_removed': 200}})
+assert state.get('lines_added') == 500, f'lines_added: {state.get(\"lines_added\")}'
+assert state.get('lines_removed') == 200, f'lines_removed: {state.get(\"lines_removed\")}'
+print('OK')
+")
+assert_equals "NM-08: normalize extracts lines" "$OUT" "OK"
+
+echo "  normalize: extracts api_duration_ms from cost dict"
+OUT=$(run_py "
+from statusline import normalize
+state = normalize({'cost': {'total_cost_usd': 10, 'total_api_duration_ms': 5000}})
+assert state.get('api_duration_ms') == 5000, f'api_duration_ms: {state.get(\"api_duration_ms\")}'
+print('OK')
+")
+assert_equals "NM-09: normalize extracts api_duration" "$OUT" "OK"
+
+echo "  _scan_cost_and_sessions: returns tuple"
+OUT=$(run_py "
+from statusline import _scan_cost_and_sessions
+result = _scan_cost_and_sessions()
+assert isinstance(result, tuple) and len(result) == 3, f'expected 3-tuple, got: {result}'
+daily, weekly, count = result
+assert isinstance(daily, float), f'daily not float: {type(daily)}'
+assert isinstance(weekly, float), f'weekly not float: {type(weekly)}'
+assert isinstance(count, int), f'count not int: {type(count)}'
+print('OK')
+")
+assert_equals "NM-10: _scan_cost_and_sessions returns tuple" "$OUT" "OK"
+
+echo ""
+fi
+
+
 # ======================================================================
 # Summary
 # ======================================================================
