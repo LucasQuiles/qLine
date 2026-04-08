@@ -14,7 +14,7 @@ A rich status-line renderer for [Claude Code](https://docs.anthropic.com/en/docs
 
 **Line 3** — Directory, git, CPU, memory, disk + overflow from line 2
 
-37 modules in the default layout. All metrics verified against raw data with runtime invariant checking. See [docs/modules.md](docs/modules.md) for the complete reference.
+41 modules in the default layout. All metrics verified against raw data with runtime invariant checking. See [docs/modules.md](docs/modules.md) for the complete reference.
 
 ---
 
@@ -65,7 +65,7 @@ See `qline.example.toml` for all options.
 
 **Line 1 (6):** model, input tokens, output tokens, context bar, cache rate, active duration
 
-**Line 2 (25):** sys overhead, cache read, cache delta, turns, reads, rereads, writes, bash, failures, tasks, subagents, health, compactions, hook faults, lines changed, session count, daily cost, weekly cost, API efficiency, cost/ktok, I/O ratio, tokens/turn, free context, growth rate, cost + $/hr
+**Line 2 (30):** sys overhead, cache read, cache delta, turns, reads, rereads, writes, bash, failures, tasks, subagents, health, compactions, hook faults, lines changed, session count, daily cost, weekly cost, API efficiency, cost/ktok, I/O ratio, tokens/turn, free context, growth rate, unique files, fail rate, think %, cost/turn, burn trend, cost + $/hr
 
 **Line 3 (5 + overflow):** directory, git, CPU, memory, disk
 

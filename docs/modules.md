@@ -1,6 +1,6 @@
 # qLine Module Reference
 
-Reference for the 37 modules in the default 3-line layout, plus optional modules available via config.
+Reference for the 41 modules in the default 3-line layout, plus optional modules available via config.
 
 Most modules return `None` when their data is absent or zero, hiding themselves. Exceptions: `obs_health` shows a dim placeholder when health is unknown but a session exists; `cpu`, `memory`, and `disk` render whenever their data fields are present, including at 0%.
 
@@ -66,7 +66,7 @@ When an alert condition is detected, the bar's inline glyph flashes and a full-t
 | `sys_overhead_pill` | 󰑖 | `󰑖17.1k™` | Transcript first-turn usage | Cold start: first turn's `cache_creation_input_tokens`. Warm restart (cache_creation < 5000): uses `cache_read_input_tokens` instead. Falls back to static estimate when no transcript is available. `™` suffix = token marker. `≈` suffix = estimated (no transcript yet). |
 | `cache_read` | © | `©307k™` | Transcript latest turn `cache_read_input_tokens` | Last turn's cache read — how many tokens were served from cache. |
 | `cache_delta` | 󰍻 | `󰍻 +454™` | Transcript latest turn `cache_creation_input_tokens` | Last turn's cache creation delta — new tokens added to cache. Spike coloring: >5000 red, >1000 yellow. |
-| `turns` | 󰐕 | `󰐕475` | `inject_context_overhead` → `session_turn_count` | Incremented when the transcript-based overhead path runs (Phase 2). Not updated when overhead falls back to estimate-only mode (early session, missing transcript). |
+| `turns` | 󰐕 | `󰐕48` | `obs_prompts` (fallback: `session_turn_count`) | Uses actual human prompt count from obs events. Falls back to transcript pipeline counter when obs data is unavailable. |
 
 ### Observability Counters
 
@@ -97,10 +97,22 @@ Sources vary per module. Most are from `hook_events.jsonl` but reads, health, an
 | `api_efficiency` | ⏱ | api% | `⏱53%` | `cost.total_api_duration_ms` / `cost.total_duration_ms` | Percentage of wall clock time spent on API calls. Capped at 100%. |
 | `cost_per_ktok` | — | $/kt | `$/k0.16` | `cost_usd` / (`output_tokens` / 1000) | Cost efficiency per 1k output tokens. 3 decimal places when < $0.01. |
 | `io_ratio` | — | io | `io:0.7x` | `output_tokens` / `input_tokens` | Output-to-input token ratio. >1.0x = verbose output, <1.0x = input-heavy. |
-| `tokens_per_turn` | — | t/turn | `tok/t60.5k` | `output_tokens` / `session_turn_count` | Average output tokens generated per turn. |
-| `free_context` | ▼ | free | `▼116kfree` | `context_total` - `context_used_corrected` | Remaining context budget. Hidden when ≤ 0. |
+| `tokens_per_turn` | — | t/turn | `tok/t10.8k` | `output_tokens` / `obs_prompts` (or `session_turn_count`) | Average output tokens per human prompt. |
+| `free_context` | ▼ | free | `▼150kfree` | `context_total` - `context_used` (raw, not corrected) | Remaining context budget. Uses raw CC context_used to agree with bar display. Hidden when ≤ 0. |
 | `growth_rate` | — | grow | `gro:489/t` | `inject_context_overhead` → `context_growth_per_turn` | Average context growth per turn from trailing window. Positive deltas only. |
-| `cost` | $ | cost | `$68.37\|19.47/hr` | `cost.total_cost_usd`, `cost.total_duration_ms` | Total session cost + hourly rate. Pipe separator before rate. Warn at $2, critical at $5. |
+| `cost` | $ | cost | `$68.37\|35.14/hr` | `cost.total_cost_usd`, `active_time_s` | Total session cost + active $/hr rate (excludes idle). Pipe separator before rate. Warn at $2, critical at $5. |
+
+### Session Insights
+
+Derived from hook_events.jsonl timestamps and data. Cached with 30-second TTL.
+
+| Module | Glyph | Label | Example | Source | Calculation |
+|--------|-------|-------|---------|--------|-------------|
+| `unique_files` | 󰉋 | files | `󰉋53` | `hook_events.jsonl` file_path fields | Count of distinct file paths across all tool events |
+| `fail_rate` | — | fail% | `fail:3.2%` | `tool.failed` / total tool events | Tool failure percentage. Warn at 5%, critical at 15%. |
+| `think_pct` | 󰔠 | think | `󰔠34%` | Event timestamp gaps 30s–15min | Human think time as % of active session time. Gaps > 15min excluded (idle/sleep). |
+| `cost_per_turn` | — | $/turn | `$/t3.59` | `cost_usd` / `obs_prompts` | Cost per human prompt. Uses obs_prompts (not session_turn_count). |
+| `burn_trend` | — | burn | `→` | Snapshot cost trajectory | Compares first-half vs second-half spend: ↗ accelerating, → steady, ↘ decelerating. |
 
 ---
 

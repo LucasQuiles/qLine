@@ -845,8 +845,8 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
     filled = (pct * width) // 100
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
-    warn_t = cfg.get("warn_threshold", 40.0)
-    crit_t = cfg.get("critical_threshold", 70.0)
+    warn_t = cfg.get("warn_threshold", 75.0)
+    crit_t = cfg.get("critical_threshold", 90.0)
 
     if pct >= crit_t:
         suffix = f" {pct}%!"
@@ -2147,13 +2147,15 @@ DEFAULT_LINE1 = ["model", "token_counts", "token_out_counts", "context_bar",
                  "cache_rate", "duration"]
 DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
                  "turns", "obs_reads", "obs_rereads", "obs_writes",
-                 "obs_bash", "obs_failures", "obs_prompts", "obs_tasks",
+                 "obs_bash", "obs_failures", "obs_tasks",
                  "obs_subagents", "obs_health", "obs_compactions",
                  "obs_hook_faults", "lines_changed",
                  "session_count", "daily_cost", "weekly_cost",
                  "api_efficiency", "cost_per_ktok",
                  "io_ratio", "tokens_per_turn",
-                 "free_context", "growth_rate", "cost"]
+                 "free_context", "growth_rate",
+                 "unique_files", "fail_rate", "think_pct",
+                 "cost_per_turn", "burn_trend", "cost"]
 DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk"]
 
 # PIPE separator positions on line 2 (module names after which a PIPE | is used
