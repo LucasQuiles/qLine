@@ -142,7 +142,6 @@ def _estimate_static_overhead(
     memory_dir = os.path.expanduser("~/.claude/projects")
     if os.path.isdir(memory_dir):
         # Find the project-specific memory dir for cwd
-        import hashlib as _hashlib
         cwd_hash = os.getcwd().replace("/", "-")
         mem_path = os.path.join(memory_dir, cwd_hash, "memory", "MEMORY.md")
         if not os.path.isfile(mem_path):

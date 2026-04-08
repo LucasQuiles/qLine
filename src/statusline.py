@@ -1126,7 +1126,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
     parts = []
     if alert_glyph_str:
-        parts.append(f"\u26a0")
+        parts.append("\u26a0")
     parts.append(f"{bar}{glyph}{pct_text}")
     return "".join(parts)
 
@@ -2052,44 +2052,6 @@ def _apply_label(result: str, mod_cfg: dict, show_labels: bool) -> str:
     return f"{style_dim(label + ':')}{result}"
 
 
-def render_line(state: dict[str, Any], theme: dict[str, Any],
-                modules: list[str], sep_override: str | None = None) -> str:
-    """Render a single line from a list of module names.
-
-    Iterates modules, looks up each in MODULE_RENDERERS, skips unknown
-    or disabled modules, calls each renderer, collects non-None results,
-    and joins with the theme separator.
-
-    When layout.show_labels is true, each module's "label" config key is
-    prepended as a dimmed prefix (e.g., "ovhd:17.1k™").
-    """
-    parts: list[str] = []
-    if sep_override is not None:
-        sep = sep_override
-    else:
-        sep_cfg = theme.get("separator", {})
-        sep_char = sep_cfg.get("char", "\u2502")
-        sep_dim = sep_cfg.get("dim", True)
-        sep = style_dim(sep_char) if sep_dim else sep_char
-
-    show_labels = theme.get("layout", {}).get("show_labels", False)
-    state["_show_labels"] = show_labels
-    for name in modules:
-        renderer = MODULE_RENDERERS.get(name)
-        if renderer is None:
-            continue
-        mod_cfg = theme.get(name, {})
-        if not mod_cfg.get("enabled", True):
-            continue
-        result = renderer(state, theme)
-        if result is not None:
-            parts.append(_apply_label(result, mod_cfg, show_labels))
-
-    if not parts:
-        return ""
-    return sep.join(parts)
-
-
 def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
                     modules: list[str], sep_override: str | None = None) -> str:
     """Render modules into auto-wrapped rows that fit terminal width."""
@@ -2103,8 +2065,7 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
     sep_width = _visible_len(sep)
 
     # Render all modules, keep only non-None results
-    show_labels = theme.get("layout", {}).get("show_labels", False)
-    state["_show_labels"] = show_labels
+    show_labels = state.get("_show_labels", False)
     parts: list[str] = []
     for name in modules:
         renderer = MODULE_RENDERERS.get(name)
@@ -2159,8 +2120,7 @@ def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
     those that didn't fit within max_width — the caller distributes them
     to other lines.
     """
-    show_labels = theme.get("layout", {}).get("show_labels", False)
-    state["_show_labels"] = show_labels
+    show_labels = state.get("_show_labels", False)
     rendered: list[tuple[str, str]] = []  # (module_name, rendered_text)
     for name in modules:
         renderer = MODULE_RENDERERS.get(name)
@@ -2245,6 +2205,7 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         layout_lines = [DEFAULT_LINE1, DEFAULT_LINE2, DEFAULT_LINE3]
 
     state["_compact"] = force_single
+    state["_show_labels"] = layout.get("show_labels", False)
 
     if force_single:
         # Compact: merge all into one auto-wrapped line
@@ -2283,8 +2244,7 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     # This distributes excess modules onto line 3 alongside dir/git/cpu/etc.
     if overflow_modules and len(rendered_lines) >= 2:
         # Render overflow modules
-        show_labels = theme.get("layout", {}).get("show_labels", False)
-        state["_show_labels"] = show_labels
+        show_labels = state.get("_show_labels", False)
         overflow_parts = []
         for name in overflow_modules:
             renderer = MODULE_RENDERERS.get(name)
@@ -2635,13 +2595,11 @@ def _try_obs_snapshot(payload: dict, state: dict) -> None:
         now = time.time()
         last_ts = session_cache.get("last_snapshot_ts", 0)
 
-        # Content hash (exclude ts — it always changes)
+        # Content hash for dedup — only compute within throttle window
         hash_fields = {k: v for k, v in record.items() if k != "ts"}
         content_hash = hashlib.sha256(
             json.dumps(hash_fields, sort_keys=True, default=str).encode()
         ).hexdigest()[:16]
-
-        # Skip if under throttle AND content unchanged
         if now - last_ts < 30 and content_hash == session_cache.get("last_snapshot_hash", ""):
             return
 

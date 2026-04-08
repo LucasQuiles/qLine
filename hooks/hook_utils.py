@@ -401,6 +401,8 @@ def record_circuit_result(service: str, success: bool) -> None:
 
         s = state.setdefault(service, {"failures": 0})
         if success:
+            if s.get("failures", 0) == 0:
+                return  # already healthy — skip disk write
             s["failures"] = 0
             s.pop("opened_at", None)
         else:
