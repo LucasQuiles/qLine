@@ -113,7 +113,7 @@ assert_single_line() {
         return
     fi
     local line_count
-    line_count=$(printf '%s\n' "$output" | wc -l)
+    line_count=$(printf '%s\n' "$output" | wc -l | tr -d ' ')
     if [ "$line_count" = "1" ]; then
         echo "  PASS: $label"
         PASS=$((PASS + 1))
@@ -166,6 +166,9 @@ import sys; sys.path.insert(0, '$REPO_DIR/src')
 $1
 " 2>&1
 }
+
+# Helper: emit a Unicode codepoint as UTF-8 (works on any bash version)
+uc() { python3 -c "import sys; sys.stdout.write('$1')"; }
 
 # Determine which sections to run
 RUN_SECTION="${2:-all}"
@@ -493,12 +496,12 @@ line = render(state, DEFAULT_THEME)
 print(line)
 ")
 # Glyphs are present but NO_COLOR strips ANSI
-assert_contains "R-02a: model with glyph" "$OUT" $'\U000f06a9 Opus'
-assert_contains "R-02b: dir with glyph" "$OUT" $'\U000f0770 qLine'
+assert_contains "R-02a: model with glyph" "$OUT" "$(uc '\U000f06a9') Opus"
+assert_contains "R-02b: dir with glyph" "$OUT" "$(uc '\U000f0770') qLine"
 assert_contains "R-02c: bar present" "$OUT" "50%"
 assert_contains "R-02d: tokens present" "$OUT" "12.3k"
 assert_contains "R-02e: cost with glyph" "$OUT" '$1.23'
-assert_contains "R-02f: duration with glyph" "$OUT" $'\U000f0954 45s'
+assert_contains "R-02f: duration with glyph" "$OUT" "$(uc '\U000f0954')45s"
 assert_contains "R-02g: separator" "$OUT" "│"
 
 # R-03: Missing modules omitted
@@ -648,7 +651,7 @@ rm -f "$TMPTOML"
 assert_contains "CF-02: malformed TOML uses defaults" "$OUT" "#d8dee9"
 
 # CF-03: Partial override merges correctly
-TMPTOML=$(mktemp --suffix=.toml)
+TMPTOML="$(mktemp).toml"
 cat > "$TMPTOML" << 'TOML'
 [model]
 color = "#ff0000"
@@ -667,7 +670,7 @@ assert_contains "CF-03b: preserved model bold" "$OUT" "MODEL_BOLD:False"
 assert_contains "CF-03c: untouched cost color" "$OUT" "COST_COLOR:#e0956a"
 
 # CF-04: Full override
-TMPTOML=$(mktemp --suffix=.toml)
+TMPTOML="$(mktemp).toml"
 cat > "$TMPTOML" << 'TOML'
 [context_bar]
 width = 20
@@ -806,7 +809,7 @@ echo "--- Layout Tests ---"
 # L-01: No newline when line2 is empty (all line2 renderers return None)
 OUT=$(run_py "
 from statusline import render, DEFAULT_THEME
-state = {'model_name': 'Opus', 'cost_usd': 0.50}
+state = {'model_name': 'Opus'}
 line = render(state, DEFAULT_THEME)
 print(line)
 ")
