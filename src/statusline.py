@@ -185,13 +185,13 @@ DEFAULT_THEME: dict[str, Any] = {
                   "turns", "obs_reads", "obs_rereads", "obs_writes",
                   "obs_bash", "obs_failures", "obs_tasks",
                   "obs_subagents", "obs_health", "obs_compactions",
-                  "obs_hook_faults", "lines_changed",
+                  "obs_hook_faults", "cost", "lines_changed",
                   "session_count", "daily_cost", "weekly_cost",
                   "api_efficiency", "cost_per_ktok",
                   "io_ratio", "tokens_per_turn",
                   "free_context", "growth_rate",
                   "unique_files", "fail_rate", "think_pct",
-                  "cost_per_turn", "burn_trend", "cost"],
+                  "cost_per_turn", "burn_trend"],
         "line3": ["dir", "git", "cpu", "memory", "disk"],
     },
     "git": {
@@ -2149,13 +2149,13 @@ DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
                  "turns", "obs_reads", "obs_rereads", "obs_writes",
                  "obs_bash", "obs_failures", "obs_tasks",
                  "obs_subagents", "obs_health", "obs_compactions",
-                 "obs_hook_faults", "lines_changed",
+                 "obs_hook_faults", "cost", "lines_changed",
                  "session_count", "daily_cost", "weekly_cost",
                  "api_efficiency", "cost_per_ktok",
                  "io_ratio", "tokens_per_turn",
                  "free_context", "growth_rate",
                  "unique_files", "fail_rate", "think_pct",
-                 "cost_per_turn", "burn_trend", "cost"]
+                 "cost_per_turn", "burn_trend"]
 DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk"]
 
 # PIPE separator positions on line 2 (module names after which a PIPE | is used
