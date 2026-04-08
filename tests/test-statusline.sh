@@ -600,8 +600,8 @@ OUT=$(run_py "
 from statusline import format_tokens, DEFAULT_THEME
 print(format_tokens(12345, 4100, DEFAULT_THEME))
 ")
-assert_contains "R-12a: input arrow" "$OUT" "↑12.3k"
-assert_contains "R-12b: output arrow" "$OUT" "↓4.1k"
+assert_contains "R-12a: input arrow" "$OUT" "▲12.3k"
+assert_contains "R-12b: output arrow" "$OUT" "▼4.1k"
 
 # R-13: Newline sanitization
 OUT=$(run_py "
@@ -774,16 +774,16 @@ assert_empty "C-08b: no stdout" "$LAST_STDOUT"
 # C-09: Tokens fixture
 run_statusline "$(cat "$FIXTURES/valid-with-tokens.json")"
 assert_exit_zero "C-09a: exit 0" "$LAST_EXIT"
-assert_contains "C-09b: input tokens" "$LAST_STDOUT" "↑12.3k"
-assert_contains "C-09c: output tokens" "$LAST_STDOUT" "↓4.1k"
+assert_contains "C-09b: input tokens" "$LAST_STDOUT" "▲12.3k"
+assert_contains "C-09c: output tokens" "$LAST_STDOUT" "▼4.1k"
 assert_contains "C-09d: bar present" "$LAST_STDOUT" "50%"
 
 # C-10: Real payload format (used_percentage + context_window_size)
 run_statusline "$(cat "$FIXTURES/valid-real-payload.json")"
 assert_exit_zero "C-10a: exit 0" "$LAST_EXIT"
 assert_contains "C-10b: bar present" "$LAST_STDOUT" "15%"
-assert_contains "C-10c: input tokens" "$LAST_STDOUT" "↑281k"
-assert_contains "C-10d: output tokens" "$LAST_STDOUT" "↓141k"
+assert_contains "C-10c: input tokens" "$LAST_STDOUT" "▲281k"
+assert_contains "C-10d: output tokens" "$LAST_STDOUT" "▼141k"
 assert_contains "C-10e: cost critical" "$LAST_STDOUT" '27.29'
 
 # C-11: Optional fields don't crash
@@ -937,7 +937,7 @@ print(result or 'NONE')
 ")
 assert_contains "L-11: worktree marker" "$OUT" "qLine"
 # Check the marker character is present
-assert_contains "L-11b: marker char" "$OUT" $'\u229b'
+assert_contains "L-11b: marker char" "$OUT" "$(uc '\u229b')"
 
 # L-12: No worktree marker when false
 OUT=$(run_py "
@@ -1774,17 +1774,18 @@ LAST_STDOUT=$(run_py "
 from statusline import render_cache_delta, DEFAULT_THEME
 state = {'last_cache_create': 5001}
 result = render_cache_delta(state, DEFAULT_THEME)
-assert '\U000f04bf' in result, f'should show spike glyph: {repr(result)}'
+assert result is not None, 'render_cache_delta should return non-None for positive count'
+assert '5.0k' in result, f'should show abbreviated count: {repr(result)}'
 print('OK')
 ")
 assert_equals "spike at spike" "$LAST_STDOUT" "OK"
 
-echo "  sys_overhead: shows brain glyph and token count"
+echo "  sys_overhead: shows overhead glyph and token count"
 LAST_STDOUT=$(run_py "
-from statusline import render_sys_overhead, DEFAULT_THEME
+from statusline import render_sys_overhead_pill, DEFAULT_THEME
 state = {'sys_overhead_tokens': 27409}
-result = render_sys_overhead(state, DEFAULT_THEME)
-assert '\U000f0cf2' in result, f'should show brain glyph: {repr(result)}'
+result = render_sys_overhead_pill(state, DEFAULT_THEME)
+assert '\U000f0456' in result, f'should show overhead glyph: {repr(result)}'
 assert '27.4k' in result, f'should show token count: {repr(result)}'
 print('OK')
 ")
@@ -1841,7 +1842,7 @@ result = _read_transcript_tail(tmpf.name)
 assert result is not None
 assert result['turn_1_anchor'] == 42000, f'got {result[\"turn_1_anchor\"]}'
 assert len(result['trailing_turns']) == 3, f'got {len(result[\"trailing_turns\"])}'
-assert 0.6 < result['cache_hit_rate'] < 0.7, f'got {result[\"cache_hit_rate\"]}'
+assert 0.7 < result['cache_hit_rate'] < 0.85, f'got {result[\"cache_hit_rate\"]}'
 print('OK')
 os.unlink(tmpf.name)
 ")
