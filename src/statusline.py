@@ -707,7 +707,8 @@ def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
         marker = d_cfg.get("worktree_marker", "\u229b")
         text += marker
     glyph = d_cfg.get("glyph", "")
-    return _pill(f"{glyph}{text}", d_cfg, theme=theme)
+    is_stale = state.get("git_stale", False)
+    return _pill(f"{glyph}{text}", d_cfg, theme=theme, dim=is_stale)
 
 
 # ── Overhead Monitor: see src/context_overhead.py ───────────────────

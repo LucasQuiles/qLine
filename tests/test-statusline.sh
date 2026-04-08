@@ -143,7 +143,7 @@ run_statusline_color() {
     local tmpout tmpderr
     tmpout=$(mktemp)
     tmpderr=$(mktemp)
-    printf '%s' "$input" | QLINE_NO_COLLECT=1 python3 "$SRC" >"$tmpout" 2>"$tmpderr"
+    printf '%s' "$input" | env -u NO_COLOR QLINE_NO_COLLECT=1 python3 "$SRC" >"$tmpout" 2>"$tmpderr"
     local exit_code=$?
     LAST_STDOUT=$(cat "$tmpout")
     LAST_STDERR=$(cat "$tmpderr")
@@ -161,7 +161,7 @@ $1
 
 # Helper: run a Python snippet with ANSI colors enabled (NO_COLOR not set)
 run_py_color() {
-    python3 -c "
+    env -u NO_COLOR python3 -c "
 import sys; sys.path.insert(0, '$REPO_DIR/src')
 $1
 " 2>&1
@@ -1306,9 +1306,8 @@ fi
 if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "stale" ]; then
 echo "--- Stale Data Tests ---"
 
-# STALE-01: Stale CPU rendered dimmed (need color output)
-OUT=$(python3 -c "
-import sys; sys.path.insert(0, '$REPO_DIR/src')
+# STALE-01: Stale CPU rendered dimmed (need color output, must unset NO_COLOR)
+OUT=$(run_py_color "
 from statusline import render_cpu, DEFAULT_THEME
 state = {'cpu_percent': 42, 'cpu_stale': True}
 result = render_cpu(state, DEFAULT_THEME)
@@ -1316,9 +1315,8 @@ print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
 ")
 assert_equals "STALE-01: stale has dim" "$OUT" "HAS_DIM"
 
-# STALE-02: Non-stale CPU not dimmed
-OUT=$(python3 -c "
-import sys; sys.path.insert(0, '$REPO_DIR/src')
+# STALE-02: Non-stale CPU not dimmed (must unset NO_COLOR so absence of dim is meaningful)
+OUT=$(run_py_color "
 from statusline import render_cpu, DEFAULT_THEME
 state = {'cpu_percent': 42, 'cpu_stale': False}
 result = render_cpu(state, DEFAULT_THEME)
@@ -1327,8 +1325,7 @@ print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
 assert_equals "STALE-02: non-stale no dim" "$OUT" "NO_DIM"
 
 # STALE-03: Stale git in dir pill rendered dimmed
-OUT=$(python3 -c "
-import sys; sys.path.insert(0, '$REPO_DIR/src')
+OUT=$(run_py_color "
 from statusline import render_dir, DEFAULT_THEME
 state = {'dir_basename': 'proj', 'git_branch': 'main', 'git_sha': 'abc1234', 'git_stale': True}
 result = render_dir(state, DEFAULT_THEME)
@@ -1337,8 +1334,7 @@ print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
 assert_equals "STALE-03: stale git has dim" "$OUT" "HAS_DIM"
 
 # STALE-04: Stale tmux rendered dimmed
-OUT=$(python3 -c "
-import sys; sys.path.insert(0, '$REPO_DIR/src')
+OUT=$(run_py_color "
 from statusline import render_tmux, DEFAULT_THEME
 state = {'tmux_sessions': 2, 'tmux_panes': 8, 'tmux_stale': True}
 result = render_tmux(state, DEFAULT_THEME)
@@ -1347,8 +1343,7 @@ print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
 assert_equals "STALE-04: stale tmux has dim" "$OUT" "HAS_DIM"
 
 # STALE-05: Stale agents rendered dimmed
-OUT=$(python3 -c "
-import sys; sys.path.insert(0, '$REPO_DIR/src')
+OUT=$(run_py_color "
 from statusline import render_agents, DEFAULT_THEME
 state = {'agent_count': 3, 'agents_stale': True}
 result = render_agents(state, DEFAULT_THEME)
@@ -1357,8 +1352,7 @@ print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
 assert_equals "STALE-05: stale agents has dim" "$OUT" "HAS_DIM"
 
 # STALE-06: Stale memory rendered dimmed
-OUT=$(python3 -c "
-import sys; sys.path.insert(0, '$REPO_DIR/src')
+OUT=$(run_py_color "
 from statusline import render_memory, DEFAULT_THEME
 state = {'memory_percent': 65, 'memory_stale': True}
 result = render_memory(state, DEFAULT_THEME)
