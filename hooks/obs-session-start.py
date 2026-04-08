@@ -82,6 +82,55 @@ def _scan_inventory(package_root: str, cwd: str) -> None:
             by_event[event] = count
     total_hooks = sum(by_event.values())
 
+    # --- Hook coverage (OPP-17) ---
+    hook_coverage: dict = {}
+    try:
+        hooks_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # Build expected set: all obs-*.py files in the hooks directory
+        expected_set: set[str] = set()
+        try:
+            for name in os.listdir(hooks_dir):
+                if name.startswith("obs-") and name.endswith(".py"):
+                    expected_set.add(os.path.join(hooks_dir, name))
+        except OSError:
+            pass
+
+        # Build registered set: hook script paths from settings that point into hooks_dir
+        registered_set: set[str] = set()
+        for event, entries in hooks_cfg.items():
+            if not isinstance(entries, list):
+                continue
+            for matcher_block in entries:
+                if not isinstance(matcher_block, dict):
+                    continue
+                for hook_entry in matcher_block.get("hooks", []):
+                    if not isinstance(hook_entry, dict):
+                        continue
+                    cmd = hook_entry.get("command", "")
+                    if not isinstance(cmd, str):
+                        continue
+                    # Extract the script path — command may be "python3 /path/to/script.py"
+                    # or just "/path/to/script.py". Find the first .py path in the command.
+                    for token in cmd.split():
+                        if token.endswith(".py"):
+                            abs_token = os.path.abspath(token)
+                            if abs_token.startswith(hooks_dir):
+                                registered_set.add(abs_token)
+                            break
+
+        # Normalize to basenames for readability, but keep full paths in lists
+        missing = sorted(expected_set - registered_set)
+        extra = sorted(registered_set - expected_set)
+        hook_coverage = {
+            "registered": sorted(registered_set),
+            "expected": sorted(expected_set),
+            "missing": missing,
+            "extra": extra,
+        }
+    except Exception:
+        pass  # Fail-open: skip coverage if anything goes wrong
+
     # --- Assemble and write ---
     inventory = {
         "captured_at": now_iso(),
@@ -98,6 +147,8 @@ def _scan_inventory(package_root: str, cwd: str) -> None:
         },
         "settings_json": settings_info,
     }
+    if hook_coverage:
+        inventory["hook_coverage"] = hook_coverage
 
     inventory_path = os.path.join(package_root, "metadata", "session_inventory.json")
     with open(inventory_path, "w") as f:

@@ -2062,6 +2062,23 @@ def _count_recent_faults(max_age_s: float = 3600) -> int:
         return 0
 
 
+def _count_parse_errors(package_root: str) -> int:
+    """Count entries in the parse diagnostic sidecar. Returns 0 if file absent or unreadable."""
+    try:
+        diag_path = os.path.join(package_root, "native", "statusline", "diagnostics.jsonl")
+        if not os.path.exists(diag_path):
+            return 0
+        count = 0
+        with open(diag_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    count += 1
+        return count
+    except Exception:
+        return 0
+
+
 def _inject_obs_counters(state: dict, payload: dict) -> None:
     """Inject obs event counters into state for module renderers. Never raises."""
     if not _OBS_AVAILABLE:
@@ -2144,6 +2161,9 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         hook_faults = session_cache.get("hook_fault_count", 0)
         if hook_faults > 0:
             state["obs_hook_faults"] = hook_faults
+        parse_errors = _count_parse_errors(package_root)
+        if parse_errors > 0:
+            state["obs_parse_errors"] = parse_errors
     except Exception:
         pass
 

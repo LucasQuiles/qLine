@@ -2920,6 +2920,324 @@ assert_equals "T-opp12-4: timing still writes on main_fn exception" "$OPP12_RESU
 fi
 
 # ======================================================================
+# Section: opp14 — Parse Diagnostic Sidecar
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "opp14" ]; then
+echo ""
+echo "=== Section: opp14 (OPP-14 parse diagnostic sidecar) ==="
+
+# T-opp14-1: _write_parse_diag writes a record to diagnostics.jsonl
+echo ""
+echo "--- T-opp14-1: _write_parse_diag writes record ---"
+OPP14_RESULT1=$(python3 -c "
+import sys, os, json, tempfile
+sys.path.insert(0, '$REPO_DIR/src')
+import context_overhead
+
+pkg_dir = tempfile.mkdtemp()
+try:
+    context_overhead._diag_write_count = 0
+    context_overhead._write_parse_diag(pkg_dir, 'transcript_tail', 'JSONDecodeError: test', 'bad json line')
+    diag_path = os.path.join(pkg_dir, 'native', 'statusline', 'diagnostics.jsonl')
+    if not os.path.exists(diag_path):
+        print('FAIL: diagnostics.jsonl not created')
+        sys.exit(0)
+    with open(diag_path) as f:
+        records = [json.loads(l) for l in f if l.strip()]
+    if len(records) != 1:
+        print(f'FAIL: expected 1 record, got {len(records)}')
+        sys.exit(0)
+    rec = records[0]
+    ok = (
+        rec.get('source') == 'transcript_tail' and
+        'JSONDecodeError' in rec.get('error', '') and
+        rec.get('line_preview') == 'bad json line' and
+        'ts' in rec
+    )
+    print('OK' if ok else f'FAIL: bad record {rec!r}')
+finally:
+    import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp14-1: _write_parse_diag writes record" "$OPP14_RESULT1" "OK"
+
+# T-opp14-2: cap at _DIAG_MAX_PER_INVOCATION (10)
+echo ""
+echo "--- T-opp14-2: diagnostic write cap at 10 ---"
+OPP14_RESULT2=$(python3 -c "
+import sys, os, json, tempfile
+sys.path.insert(0, '$REPO_DIR/src')
+import context_overhead
+
+pkg_dir = tempfile.mkdtemp()
+try:
+    context_overhead._diag_write_count = 0
+    for i in range(15):
+        context_overhead._write_parse_diag(pkg_dir, 'transcript_tail', f'err {i}', f'line {i}')
+    diag_path = os.path.join(pkg_dir, 'native', 'statusline', 'diagnostics.jsonl')
+    with open(diag_path) as f:
+        count = sum(1 for l in f if l.strip())
+    print('OK' if count == 10 else f'FAIL: expected 10 records, got {count}')
+finally:
+    import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp14-2: diagnostic write cap at 10" "$OPP14_RESULT2" "OK"
+
+# T-opp14-3: line_preview is capped at 100 chars
+echo ""
+echo "--- T-opp14-3: line_preview capped at 100 chars ---"
+OPP14_RESULT3=$(python3 -c "
+import sys, os, json, tempfile
+sys.path.insert(0, '$REPO_DIR/src')
+import context_overhead
+
+pkg_dir = tempfile.mkdtemp()
+try:
+    context_overhead._diag_write_count = 0
+    long_line = 'x' * 200
+    context_overhead._write_parse_diag(pkg_dir, 'transcript_tail', 'err', long_line)
+    diag_path = os.path.join(pkg_dir, 'native', 'statusline', 'diagnostics.jsonl')
+    with open(diag_path) as f:
+        rec = json.loads(f.readline())
+    preview_len = len(rec.get('line_preview', ''))
+    print('OK' if preview_len == 100 else f'FAIL: expected 100, got {preview_len}')
+finally:
+    import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp14-3: line_preview capped at 100 chars" "$OPP14_RESULT3" "OK"
+
+# T-opp14-4: fail-open when diag_root is invalid path
+echo ""
+echo "--- T-opp14-4: fail-open on invalid diag_root ---"
+OPP14_RESULT4=$(python3 -c "
+import sys, os
+sys.path.insert(0, '$REPO_DIR/src')
+import context_overhead
+
+context_overhead._diag_write_count = 0
+# Should not raise even with a non-writable or impossible path
+try:
+    context_overhead._write_parse_diag('/nonexistent/path/that/does/not/exist', 'src', 'err', 'line')
+    print('OK')
+except Exception as e:
+    print(f'FAIL: raised {e}')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp14-4: fail-open on invalid diag_root" "$OPP14_RESULT4" "OK"
+
+# T-opp14-5: _read_transcript_tail logs parse failures when diag_root given
+echo ""
+echo "--- T-opp14-5: _read_transcript_tail logs parse failures ---"
+OPP14_RESULT5=$(python3 -c "
+import sys, os, json, tempfile
+sys.path.insert(0, '$REPO_DIR/src')
+import context_overhead
+
+pkg_dir = tempfile.mkdtemp()
+tmp_transcript = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+try:
+    # Write one valid line and one invalid line
+    tmp_transcript.write('{bad json here\n')
+    tmp_transcript.write(json.dumps({'type': 'assistant', 'message': {'usage': {'cache_creation_input_tokens': 1000, 'cache_read_input_tokens': 500, 'input_tokens': 200}}}) + '\n')
+    tmp_transcript.close()
+
+    context_overhead._diag_write_count = 0
+    context_overhead._read_transcript_tail(tmp_transcript.name, diag_root=pkg_dir)
+
+    diag_path = os.path.join(pkg_dir, 'native', 'statusline', 'diagnostics.jsonl')
+    exists = os.path.exists(diag_path)
+    count = 0
+    if exists:
+        with open(diag_path) as f:
+            count = sum(1 for l in f if l.strip())
+    print('OK' if exists and count >= 1 else f'FAIL: exists={exists} count={count}')
+finally:
+    os.unlink(tmp_transcript.name)
+    import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp14-5: _read_transcript_tail logs parse failures" "$OPP14_RESULT5" "OK"
+
+# T-opp14-6: _count_parse_errors returns 0 for missing file
+echo ""
+echo "--- T-opp14-6: _count_parse_errors returns 0 for missing file ---"
+OPP14_RESULT6=$(python3 -c "
+import sys, os, tempfile
+sys.path.insert(0, '$REPO_DIR/src')
+import statusline
+
+pkg_dir = tempfile.mkdtemp()
+try:
+    count = statusline._count_parse_errors(pkg_dir)
+    print('OK' if count == 0 else f'FAIL: got {count}')
+finally:
+    import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp14-6: _count_parse_errors returns 0 for missing file" "$OPP14_RESULT6" "OK"
+
+# T-opp14-7: _count_parse_errors counts non-empty lines
+echo ""
+echo "--- T-opp14-7: _count_parse_errors counts entries ---"
+OPP14_RESULT7=$(python3 -c "
+import sys, os, json, tempfile
+sys.path.insert(0, '$REPO_DIR/src')
+import statusline
+
+pkg_dir = tempfile.mkdtemp()
+try:
+    diag_dir = os.path.join(pkg_dir, 'native', 'statusline')
+    os.makedirs(diag_dir)
+    diag_path = os.path.join(diag_dir, 'diagnostics.jsonl')
+    with open(diag_path, 'w') as f:
+        for i in range(3):
+            f.write(json.dumps({'ts': 'now', 'source': 'test', 'error': f'err {i}', 'line_preview': ''}) + '\n')
+    count = statusline._count_parse_errors(pkg_dir)
+    print('OK' if count == 3 else f'FAIL: got {count}')
+finally:
+    import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp14-7: _count_parse_errors counts entries" "$OPP14_RESULT7" "OK"
+
+fi
+
+# ======================================================================
+# Section: opp17 — Hook Coverage Report
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "opp17" ]; then
+echo ""
+echo "=== Section: opp17 (OPP-17 hook coverage report) ==="
+
+# T-opp17-1: hook_coverage written to session_inventory.json
+echo ""
+echo "--- T-opp17-1: hook_coverage written to inventory ---"
+OPP17_RESULT1=$(python3 -c "
+import sys, os, json, tempfile
+sys.path.insert(0, '$REPO_DIR/hooks')
+from obs_utils import create_package
+
+pkg_dir = tempfile.mkdtemp()
+try:
+    session_id = 'test-opp17-coverage'
+    package_root = create_package(session_id, '/tmp', '/tmp/t.jsonl', 'test', obs_root=pkg_dir)
+
+    # Create a fake settings.json with one hook pointing to hooks dir
+    hooks_dir = os.path.join('$REPO_DIR', 'hooks')
+    fake_hook = os.path.join(hooks_dir, 'obs-session-start.py')
+    settings = {
+        'enabledPlugins': {},
+        'hooks': {
+            'PreToolUse': [
+                {'matcher': '*', 'hooks': [{'type': 'command', 'command': f'python3 {fake_hook}'}]}
+            ]
+        }
+    }
+    settings_path = os.path.join(pkg_dir, 'test-settings.json')
+    with open(settings_path, 'w') as f:
+        json.dump(settings, f)
+
+    # Patch env so obs-session-start reads our settings
+    os.environ['OBS_INVENTORY_SETTINGS_PATH'] = settings_path
+
+    # Import and call _scan_inventory directly
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('obs_session_start', os.path.join('$REPO_DIR', 'hooks', 'obs-session-start.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod._scan_inventory(package_root, '/tmp')
+
+    inventory_path = os.path.join(package_root, 'metadata', 'session_inventory.json')
+    with open(inventory_path) as f:
+        inv = json.load(f)
+
+    coverage = inv.get('hook_coverage')
+    if coverage is None:
+        print('FAIL: hook_coverage missing from inventory')
+        sys.exit(0)
+    has_keys = all(k in coverage for k in ('registered', 'expected', 'missing', 'extra'))
+    print('OK' if has_keys else f'FAIL: missing keys in hook_coverage: {list(coverage.keys())}')
+finally:
+    import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
+    os.environ.pop('OBS_INVENTORY_SETTINGS_PATH', None)
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp17-1: hook_coverage written to inventory" "$OPP17_RESULT1" "OK"
+
+# T-opp17-2: missing hooks detected correctly
+echo ""
+echo "--- T-opp17-2: missing hooks detected ---"
+OPP17_RESULT2=$(python3 -c "
+import sys, os, json, tempfile
+sys.path.insert(0, '$REPO_DIR/hooks')
+from obs_utils import create_package
+
+pkg_dir = tempfile.mkdtemp()
+try:
+    session_id = 'test-opp17-missing'
+    package_root = create_package(session_id, '/tmp', '/tmp/t.jsonl', 'test', obs_root=pkg_dir)
+
+    # Settings with NO qLine hooks registered
+    settings = {'enabledPlugins': {}, 'hooks': {}}
+    settings_path = os.path.join(pkg_dir, 'test-settings.json')
+    with open(settings_path, 'w') as f:
+        json.dump(settings, f)
+    os.environ['OBS_INVENTORY_SETTINGS_PATH'] = settings_path
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('obs_session_start', os.path.join('$REPO_DIR', 'hooks', 'obs-session-start.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod._scan_inventory(package_root, '/tmp')
+
+    inventory_path = os.path.join(package_root, 'metadata', 'session_inventory.json')
+    with open(inventory_path) as f:
+        inv = json.load(f)
+
+    coverage = inv.get('hook_coverage', {})
+    # With no hooks registered, missing should be non-empty (all expected are missing)
+    missing = coverage.get('missing', [])
+    registered = coverage.get('registered', [])
+    expected = coverage.get('expected', [])
+    # expected should list actual obs-*.py files
+    ok = len(expected) > 0 and len(registered) == 0 and len(missing) == len(expected)
+    print('OK' if ok else f'FAIL: expected={len(expected)} registered={len(registered)} missing={len(missing)}')
+finally:
+    import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
+    os.environ.pop('OBS_INVENTORY_SETTINGS_PATH', None)
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp17-2: missing hooks detected" "$OPP17_RESULT2" "OK"
+
+# T-opp17-3: fail-open when settings.json unreadable
+echo ""
+echo "--- T-opp17-3: fail-open when settings unreadable ---"
+OPP17_RESULT3=$(python3 -c "
+import sys, os, json, tempfile
+sys.path.insert(0, '$REPO_DIR/hooks')
+from obs_utils import create_package
+
+pkg_dir = tempfile.mkdtemp()
+try:
+    session_id = 'test-opp17-failopen'
+    package_root = create_package(session_id, '/tmp', '/tmp/t.jsonl', 'test', obs_root=pkg_dir)
+
+    # Point settings path to non-existent file
+    os.environ['OBS_INVENTORY_SETTINGS_PATH'] = '/tmp/nonexistent-settings-opp17.json'
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('obs_session_start', os.path.join('$REPO_DIR', 'hooks', 'obs-session-start.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    try:
+        mod._scan_inventory(package_root, '/tmp')
+        print('FAIL: expected exception from missing settings.json')
+    except Exception:
+        # _scan_inventory raises on missing settings — the caller wraps it in try/except
+        # This is expected behavior: the outer run_fail_open handles it
+        print('OK')
+finally:
+    import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
+    os.environ.pop('OBS_INVENTORY_SETTINGS_PATH', None)
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp17-3: fail-open (exception propagates to outer wrapper)" "$OPP17_RESULT3" "OK"
+
+fi
+
+# ======================================================================
 # Summary
 # ======================================================================
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="

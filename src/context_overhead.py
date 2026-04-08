@@ -13,7 +13,47 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any
+
+# ── Parse Diagnostic Sidecar (OPP-14) ───────────────────────────────
+#
+# When transcript JSONL lines fail JSON parsing, write a diagnostic record
+# to {package_root}/native/statusline/diagnostics.jsonl for post-mortem.
+# Max 10 writes per invocation to prevent unbounded growth.
+
+_DIAG_MAX_PER_INVOCATION = 10
+_diag_write_count = 0  # module-level counter, reset per process lifetime
+
+
+def _write_parse_diag(diag_root: str, source: str, error: str, line_preview: str) -> None:
+    """Atomically append one parse-failure record to diagnostics.jsonl.
+
+    Fail-open: any OS/IO error is silently swallowed.
+    Hard cap: at most _DIAG_MAX_PER_INVOCATION writes per process.
+    """
+    global _diag_write_count
+    if _diag_write_count >= _DIAG_MAX_PER_INVOCATION:
+        return
+    try:
+        diag_dir = os.path.join(diag_root, "native", "statusline")
+        os.makedirs(diag_dir, exist_ok=True)
+        diag_path = os.path.join(diag_dir, "diagnostics.jsonl")
+        ts = datetime.now(tz=timezone.utc).isoformat()
+        record = json.dumps({
+            "ts": ts,
+            "source": source,
+            "error": error,
+            "line_preview": line_preview[:100],
+        })
+        fd = os.open(diag_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            os.write(fd, (record + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
+        _diag_write_count += 1
+    except Exception:
+        pass  # Strictly fail-open
 
 # ── Overhead Monitor: Static Estimation (Phase 1) ───────────────────
 #
@@ -300,7 +340,7 @@ def _extract_usage(entry: dict) -> tuple[dict | None, str | None]:
 _CACHE_DECAY = 0.7
 
 
-def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
+def _read_transcript_tail(path: str, window_size: int = 5, diag_root: str | None = None) -> dict | None:
     """Read trailing turns from a session transcript JSONL.
 
     Returns dict with turn_1_anchor, trailing_turns, cache_hit_rate.
@@ -310,6 +350,7 @@ def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
         path: Path to transcript JSONL file.
         window_size: Number of trailing turns for cache hit rate (default 5).
             Adaptive callers scale this with session length.
+        diag_root: Optional package root for parse diagnostic sidecar (OPP-14).
 
     Deduplicates PRELIM entries from extended thinking by requestId —
     multiple entries from the same API call (identical requestId) are
@@ -340,7 +381,9 @@ def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
             continue
         try:
             entry = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError) as exc:
+            if diag_root:
+                _write_parse_diag(diag_root, "transcript_tail", f"JSONDecodeError: {exc}", line)
             continue
 
         # Skip sidechain entries (subagent forks have separate cache state)
@@ -406,7 +449,7 @@ def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
     }
 
 
-def _read_transcript_anchor(path: str) -> int | None:
+def _read_transcript_anchor(path: str, diag_root: str | None = None) -> int | None:
     """Read the first-turn cache_creation from the start of a transcript.
 
     Reads first 128KB — transcripts start with metadata entries
@@ -414,6 +457,10 @@ def _read_transcript_anchor(path: str) -> int | None:
     before the first assistant message with usage data appears.
     Attachments alone can be 35KB+, pushing first API response past 64KB.
     Returns cache_creation_input_tokens or None.
+
+    Args:
+        path: Path to transcript JSONL file.
+        diag_root: Optional package root for parse diagnostic sidecar (OPP-14).
     """
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -427,7 +474,9 @@ def _read_transcript_anchor(path: str) -> int | None:
             continue
         try:
             entry = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError) as exc:
+            if diag_root:
+                _write_parse_diag(diag_root, "transcript_anchor", f"JSONDecodeError: {exc}", line)
             continue
         usage, _rid = _extract_usage(entry)
         if usage is None:
@@ -438,13 +487,17 @@ def _read_transcript_anchor(path: str) -> int | None:
     return None
 
 
-def _read_transcript_anchor_with_read(path: str) -> int | None:
+def _read_transcript_anchor_with_read(path: str, diag_root: str | None = None) -> int | None:
     """Read the first-turn system overhead from cache_read on warm restarts.
 
     When a session starts with a warm cache (cache_creation < 5000),
     the real system overhead is in cache_read_input_tokens — that's what
     the API read from the existing cache. Reads first 128KB to find it
     (transcript starts with metadata entries + attachments before first API response).
+
+    Args:
+        path: Path to transcript JSONL file.
+        diag_root: Optional package root for parse diagnostic sidecar (OPP-14).
     """
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -458,7 +511,9 @@ def _read_transcript_anchor_with_read(path: str) -> int | None:
             continue
         try:
             entry = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError) as exc:
+            if diag_root:
+                _write_parse_diag(diag_root, "transcript_anchor_with_read", f"JSONDecodeError: {exc}", line)
             continue
         usage, _rid = _extract_usage(entry)
         if usage is None:
@@ -502,7 +557,7 @@ def _try_phase2_transcript(
     # Middle ground: grow linearly (session_turns // 3).
     prev_turns = session_cache.get("session_turn_count", 0)
     window = min(max(3, prev_turns // 3), 8)
-    result = _read_transcript_tail(path, window_size=window)
+    result = _read_transcript_tail(path, window_size=window, diag_root=package_root)
     if result is None:
         return False
 
@@ -511,7 +566,7 @@ def _try_phase2_transcript(
     # The manifest's cache_anchor stores per-turn cache_create deltas (~973-2406),
     # which are far too small — using them poisons overhead computation.
     if "turn_1_anchor" not in session_cache:
-        file_anchor = _read_transcript_anchor(path)
+        file_anchor = _read_transcript_anchor(path, diag_root=package_root)
         if file_anchor is not None:
             session_cache["turn_1_anchor"] = file_anchor
 
@@ -536,7 +591,7 @@ def _try_phase2_transcript(
         # On a warm restart, turn 1's cache_read IS the system overhead.
         path = state.get("transcript_path") or payload.get("transcript_path")
         if path:
-            first_anchor = _read_transcript_anchor_with_read(path)
+            first_anchor = _read_transcript_anchor_with_read(path, diag_root=package_root)
             if first_anchor and first_anchor > _WARM_CACHE_THRESHOLD:
                 anchor = first_anchor
                 session_cache["turn_1_anchor"] = anchor
