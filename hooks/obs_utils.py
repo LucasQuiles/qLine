@@ -31,6 +31,10 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+# Version checked by statusline.py to detect stale copies.
+# Bump this when adding/changing public API.
+__version__ = "2.1.0"
+
 from hook_utils import now_iso  # canonical timestamp; defined in hook_utils to keep dependency direction correct
 
 # ---------------------------------------------------------------------------

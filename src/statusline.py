@@ -43,12 +43,25 @@ from context_overhead import inject_context_overhead
 
 # --- Observability integration (guarded import) ---
 try:
-    # Look for obs_utils next to this script first, then ~/.claude/scripts/
     _script_dir = os.path.dirname(os.path.abspath(__file__))
-    for _obs_path in [_script_dir, os.path.join(os.path.expanduser("~"), ".claude", "scripts")]:
-        if _obs_path not in sys.path:
+    _claude_dir = os.path.expanduser("~/.claude")
+    # Priority: plugin hooks dir (canonical, symlinked) > script dir > scripts/
+    # The plugin dir contains the repo-managed version; ~/.claude/ may have stale copies.
+    _plugin_hooks = os.path.join(_claude_dir, "plugins", "qline", "hooks")
+    for _obs_path in [_plugin_hooks, _script_dir, os.path.join(_claude_dir, "scripts")]:
+        if os.path.isdir(_obs_path) and _obs_path not in sys.path:
             sys.path.insert(0, _obs_path)
     from obs_utils import resolve_package_root_env, update_health, _atomic_jsonl_append
+    # Detect stale copies: obs_utils.__version__ was added in 2.1.0.
+    # If it's missing, the import resolved to a pre-2.1.0 copy.
+    import obs_utils as _obs_mod
+    if not hasattr(_obs_mod, "__version__"):
+        import warnings
+        warnings.warn(
+            f"qLine: stale obs_utils.py at {_obs_mod.__file__} — "
+            f"expected version 2.1.0+. Run: cp hooks/obs_utils.py ~/.claude/obs_utils.py",
+            stacklevel=1,
+        )
     _OBS_AVAILABLE = True
 except Exception:
     _OBS_AVAILABLE = False

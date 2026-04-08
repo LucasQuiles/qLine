@@ -80,9 +80,25 @@ echo "Installed: $DEST_DIR/statusline.py"
 cp "$SCRIPT_DIR/src/context_overhead.py" "$DEST_DIR/context_overhead.py"
 echo "Installed: $DEST_DIR/context_overhead.py"
 
-# obs_utils is needed by statusline at runtime
-cp "$SCRIPT_DIR/hooks/obs_utils.py" "$DEST_DIR/obs_utils.py"
-echo "Installed: $DEST_DIR/obs_utils.py"
+# obs_utils + hook_utils: statusline needs these at runtime.
+# When the plugin symlink exists, statusline.py imports from the plugin dir
+# (canonical, repo-managed). Copy to ~/.claude/ as fallback for non-plugin installs.
+if [ -L "$DEST_DIR/plugins/qline" ] || [ -d "$DEST_DIR/plugins/qline" ]; then
+    # Plugin active — clean up stale copies that would shadow the plugin version
+    for stale in "$DEST_DIR/obs_utils.py" "$DEST_DIR/hook_utils.py" \
+                 "$DEST_DIR/scripts/obs_utils.py" "$DEST_DIR/scripts/hook_utils.py"; do
+        if [ -f "$stale" ] && [ ! -L "$stale" ]; then
+            rm -f "$stale"
+            echo "Removed stale: $stale"
+        fi
+    done
+    echo "Plugin active — obs_utils imported from plugin dir"
+else
+    # No plugin — copy modules as fallback
+    cp "$SCRIPT_DIR/hooks/obs_utils.py" "$DEST_DIR/obs_utils.py"
+    cp "$SCRIPT_DIR/hooks/hook_utils.py" "$DEST_DIR/hook_utils.py"
+    echo "Installed: $DEST_DIR/obs_utils.py, hook_utils.py"
+fi
 
 # Fix shebang if needed
 if ! command -v python3 > /dev/null 2>&1; then
