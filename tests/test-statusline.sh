@@ -2321,7 +2321,7 @@ assert_equals "hook extraction" "$LAST_STDOUT" "OK"
 echo "  obs-stop-cache: full hook flow writes sidecar + ledger + manifest"
 LAST_STDOUT=$(run_py "
 import json, os, sys, tempfile
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts'))
+sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package
 
 # Create a real session package
@@ -2350,12 +2350,12 @@ transcript.close()
 # Create package
 package_root = create_package(session_id, '/tmp', transcript.name, 'test', obs_root=pkg_dir)
 
-sys.path.insert(0, os.path.expanduser('~/.claude/hooks'))
+sys.path.insert(0, '$REPO_DIR/hooks')
 
 # Import hook module; exec_module triggers run_fail_open(main) which calls sys.exit(0)
 # when stdin has no hook input -- catch SystemExit to continue using module functions
 from importlib.util import spec_from_file_location, module_from_spec
-hook_path = os.path.expanduser('~/.claude/hooks/obs-stop-cache.py')
+hook_path = '$REPO_DIR/hooks/obs-stop-cache.py'
 spec = spec_from_file_location('obs_stop_cache', hook_path)
 mod = module_from_spec(spec)
 try:
