@@ -2613,9 +2613,8 @@ def _compute_session_insights(package_root: str) -> dict:
                         event = line[ev_start:ev_end]
                         if event == "tool.failed":
                             tool_failures += 1
-                        if event.startswith("file.") or event == "bash.executed":
                             total_tool_uses += 1
-                        if event == "tool.failed":
+                        elif event.startswith("file.") or event == "bash.executed":
                             total_tool_uses += 1
 
                 # Extract file paths from data
@@ -2647,16 +2646,13 @@ def _compute_session_insights(package_root: str) -> dict:
         _THINK_MAX = 900  # 15 minutes
         if len(timestamps) >= 2:
             timestamps.sort()
-            think_s = sum(
-                min(gap, _THINK_MAX)
-                for gap in (timestamps[i + 1] - timestamps[i] for i in range(len(timestamps) - 1))
-                if _THINK_MIN < gap <= _THINK_MAX
-            )
-            # Active time = session duration minus idle gaps (> 15min)
-            idle_s = sum(
-                gap for gap in (timestamps[i + 1] - timestamps[i] for i in range(len(timestamps) - 1))
-                if gap > _THINK_MAX
-            )
+            think_s = idle_s = 0.0
+            for j in range(len(timestamps) - 1):
+                gap = timestamps[j + 1] - timestamps[j]
+                if gap > _THINK_MAX:
+                    idle_s += gap
+                elif gap > _THINK_MIN:
+                    think_s += gap
             total_s = timestamps[-1] - timestamps[0]
             active_s = total_s - idle_s
             result["think_time_s"] = round(think_s)
@@ -2675,7 +2671,6 @@ def _scan_cost_and_sessions() -> tuple[float, float, int]:
     Returns (daily_cost, weekly_cost, session_count_today). Never raises.
     """
     try:
-        import glob
         from datetime import date, timedelta
 
         obs_root = os.path.join(os.path.expanduser("~"), ".claude", "observability")
@@ -2862,36 +2857,45 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         if s_count and s_count > 0:
             state["session_count_today"] = s_count
 
-        # Burn trend from snapshot history
-        try:
-            snap_path = os.path.join(
-                package_root, "native", "statusline", "snapshots.jsonl"
-            )
-            if os.path.isfile(snap_path):
-                with open(snap_path, "rb") as f:
-                    fsize = os.path.getsize(snap_path)
-                    f.seek(max(0, fsize - 4096))
-                    tail = f.read().decode("utf-8", errors="replace")
-                snap_lines = [l for l in tail.strip().splitlines() if l.strip()]
-                if len(snap_lines) >= 4:
-                    first = json.loads(snap_lines[0])
-                    mid = json.loads(snap_lines[len(snap_lines) // 2])
-                    last = json.loads(snap_lines[-1])
-                    c0 = first.get("cost_usd", 0)
-                    cm = mid.get("cost_usd", 0)
-                    cl = last.get("cost_usd", 0)
-                    first_half = cm - c0
-                    second_half = cl - cm
-                    if first_half > 0.1:
-                        ratio = second_half / first_half
-                        if ratio > 1.2:
-                            state["burn_trend"] = "accelerating"
-                        elif ratio < 0.8:
-                            state["burn_trend"] = "decelerating"
-                        else:
-                            state["burn_trend"] = "steady"
-        except Exception:
-            pass
+        # Burn trend from snapshot history (30s TTL — same as insights)
+        if now - session_cache.get("last_burn_ts", 0) >= 30:
+            try:
+                snap_path = os.path.join(
+                    package_root, "native", "statusline", "snapshots.jsonl"
+                )
+                if os.path.isfile(snap_path):
+                    with open(snap_path, "rb") as f:
+                        f.seek(0, 2)
+                        fsize = f.tell()
+                        f.seek(max(0, fsize - 4096))
+                        tail = f.read().decode("utf-8", errors="replace")
+                    snap_lines = [l for l in tail.strip().splitlines() if l.strip()]
+                    if len(snap_lines) >= 4:
+                        first = json.loads(snap_lines[0])
+                        mid = json.loads(snap_lines[len(snap_lines) // 2])
+                        last = json.loads(snap_lines[-1])
+                        c0 = first.get("cost_usd", 0)
+                        cm = mid.get("cost_usd", 0)
+                        cl = last.get("cost_usd", 0)
+                        first_half = cm - c0
+                        second_half = cl - cm
+                        if first_half > 0.1:
+                            ratio = second_half / first_half
+                            if ratio > 1.2:
+                                session_cache["burn_trend"] = "accelerating"
+                            elif ratio < 0.8:
+                                session_cache["burn_trend"] = "decelerating"
+                            else:
+                                session_cache["burn_trend"] = "steady"
+                session_cache["last_burn_ts"] = now
+                obs_cache[session_id] = session_cache
+                cache["_obs"] = obs_cache
+                save_cache(cache)
+            except Exception:
+                pass
+        bt = session_cache.get("burn_trend")
+        if bt:
+            state["burn_trend"] = bt
         parse_errors = session_cache.get("parse_error_count", 0)
         if parse_errors > 0:
             state["obs_parse_errors"] = parse_errors
