@@ -161,7 +161,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "line1": ["model", "token_counts", "token_out_counts", "context_bar",
                   "cache_rate", "duration"],
         "line2": ["sys_overhead_pill", "cache_read", "cache_delta",
-                  "obs_reads", "obs_rereads", "obs_writes",
+                  "turns", "obs_reads", "obs_rereads", "obs_writes",
                   "obs_bash", "obs_failures", "obs_prompts", "obs_tasks",
                   "obs_subagents", "obs_health", "obs_compactions",
                   "obs_hook_faults", "cost"],
@@ -1726,7 +1726,7 @@ MODULE_RENDERERS: dict[str, Any] = {
 DEFAULT_LINE1 = ["model", "token_counts", "token_out_counts", "context_bar",
                  "cache_rate", "duration"]
 DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
-                 "obs_reads", "obs_rereads", "obs_writes",
+                 "turns", "obs_reads", "obs_rereads", "obs_writes",
                  "obs_bash", "obs_failures", "obs_prompts", "obs_tasks",
                  "obs_subagents", "obs_health", "obs_compactions",
                  "obs_hook_faults", "cost"]
