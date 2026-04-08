@@ -844,12 +844,13 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     glyph = cfg.get("glyph", "\U000f02d1").rstrip()  # 󰋑 heart (strip trailing space)
 
     # Percentage suffix
+    # Show CC's raw percentage (not the corrected+capped one)
     if sev == 2:
-        pct_text = f"{display_pct}%!"
+        pct_text = f"{raw_used_pct}%!"
     elif sev == 1:
-        pct_text = f"{display_pct}%~"
+        pct_text = f"{raw_used_pct}%~"
     else:
-        pct_text = f"{display_pct}%"
+        pct_text = f"{raw_used_pct}%"
 
     # ── Render as separate pills ──
 

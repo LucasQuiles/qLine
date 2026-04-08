@@ -782,7 +782,7 @@ assert_contains "C-09d: bar present" "$LAST_STDOUT" "50%"
 # C-10: Real payload format (used_percentage + context_window_size)
 run_statusline "$(cat "$FIXTURES/valid-real-payload.json")"
 assert_exit_zero "C-10a: exit 0" "$LAST_EXIT"
-assert_contains "C-10b: bar present" "$LAST_STDOUT" "29%"
+assert_contains "C-10b: bar present" "$LAST_STDOUT" "15%"
 assert_contains "C-10c: input tokens" "$LAST_STDOUT" "▲281k"
 assert_contains "C-10d: output tokens" "$LAST_STDOUT" "▼141k"
 assert_contains "C-10e: cost critical" "$LAST_STDOUT" '27.29'
