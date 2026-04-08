@@ -183,7 +183,7 @@ DEFAULT_THEME: dict[str, Any] = {
                   "cache_rate", "duration"],
         "line2": ["sys_overhead_pill", "cache_read", "cache_delta",
                   "turns", "obs_reads", "obs_rereads", "obs_writes",
-                  "obs_bash", "obs_failures", "obs_prompts", "obs_tasks",
+                  "obs_bash", "obs_failures", "obs_tasks",
                   "obs_subagents", "obs_health", "obs_compactions",
                   "obs_hook_faults", "lines_changed",
                   "session_count", "daily_cost", "weekly_cost",
@@ -1310,13 +1310,22 @@ def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_duration(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render duration module — compact: 󰥔3h30m, 󰥔45s, 󰥔2m30s."""
-    if "duration_ms" not in state:
+    """Render duration — prefer active time when available.
+
+    Shows active time (excluding idle gaps > 15min) to be consistent with
+    the $/hr rate. Falls back to wall time when active_time_s isn't available.
+    """
+    active_s = state.get("active_time_s")
+    if not active_s and "duration_ms" not in state:
         return None
     dur_cfg = theme.get("duration", {})
     fmt = dur_cfg.get("format", "auto")
     glyph = dur_cfg.get("glyph", "\U000f0954").rstrip()
-    text = f"{glyph}{_format_duration(state['duration_ms'], fmt)}"
+    if active_s and active_s > 0:
+        dur_ms = active_s * 1000
+    else:
+        dur_ms = state["duration_ms"]
+    text = f"{glyph}{_format_duration(int(dur_ms), fmt)}"
     return _pill(text, dur_cfg, theme=theme)
 
 
@@ -2325,6 +2334,11 @@ def _check_invariants(state: dict[str, Any]) -> list[str]:
     if dc and wc and dc > wc + 1:
         violations.append(f"daily>weekly: {dc}>{wc}")
 
+    # daily_cost >= session_cost (can't spend more than today's total)
+    sc = state.get("cost_usd", 0)
+    if dc and sc and dc < sc - 1:
+        violations.append(f"session>daily: session={sc} daily={dc}")
+
     # fail_rate bounded
     fr = state.get("fail_rate")
     if fr is not None and not (0 <= fr <= 100):
@@ -2828,12 +2842,16 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
             cache["_obs"] = obs_cache
             save_cache(cache)
 
-        d_cost = session_cache.get("daily_cost")
-        if d_cost and d_cost > 0:
-            state["daily_cost"] = d_cost
-        w_cost = session_cache.get("weekly_cost")
-        if w_cost and w_cost > 0:
-            state["weekly_cost"] = w_cost
+        # Floor daily/weekly cost at current session cost — the snapshot scan
+        # may lag behind the live payload, creating a contradiction where
+        # session cost > daily cost. Clamp to prevent this.
+        session_cost = state.get("cost_usd", 0)
+        d_cost = session_cache.get("daily_cost", 0)
+        if d_cost or session_cost:
+            state["daily_cost"] = max(d_cost, session_cost)
+        w_cost = session_cache.get("weekly_cost", 0)
+        if w_cost or session_cost:
+            state["weekly_cost"] = max(w_cost, session_cost)
         s_count = session_cache.get("session_count_today")
         if s_count and s_count > 0:
             state["session_count_today"] = s_count
