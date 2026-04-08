@@ -2152,12 +2152,12 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
 
 
 def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
-                       modules: list[str], box_sep: str) -> str:
-    """Render line 2 with width-aware wrapping and PIPE | after cache_read.
+                       modules: list[str], box_sep: str) -> tuple[str, list[str]]:
+    """Render line 2 with width-aware truncation and PIPE | after cache_read.
 
-    Modules are packed into rows that fit within max_width. When a module
-    would overflow the current row, a newline break is inserted.
-    Returns a multi-line string if wrapping occurs.
+    Returns (rendered_line, overflow_module_names). Overflow modules are
+    those that didn't fit within max_width — the caller distributes them
+    to other lines.
     """
     show_labels = theme.get("layout", {}).get("show_labels", False)
     state["_show_labels"] = show_labels
@@ -2174,46 +2174,45 @@ def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
             rendered.append((name, _apply_label(result, mod_cfg, show_labels)))
 
     if not rendered:
-        return ""
+        return "", []
 
     pipe = style_dim("|") if not NO_COLOR else "|"
-    sep_width = _visible_len(box_sep)
 
     layout_cfg = theme.get("layout", {})
-    term_width = layout_cfg.get("max_width") or shutil.get_terminal_size((200, 24)).columns
+    term_width = layout_cfg.get("max_width") or shutil.get_terminal_size((120, 24)).columns
 
-    # Pack modules into rows respecting width limit
-    rows: list[list[str]] = []
-    current_row: list[str] = []
+    # Pack modules into a single row. Overflow names are returned to caller.
+    parts: list[str] = []
+    overflow: list[str] = []
     current_width = 0
     prev_name = ""
+    overflowing = False
 
     for name, text in rendered:
-        # Choose separator based on previous module
-        if current_row:
+        if overflowing:
+            overflow.append(name)
+            continue
+
+        if parts:
             sep = pipe if prev_name in LINE2_PIPE_AFTER else box_sep
             needed = _visible_len(sep) + _visible_len(text)
         else:
             sep = ""
             needed = _visible_len(text)
 
-        if current_row and current_width + needed > term_width:
-            rows.append(current_row)
-            current_row = [text]
-            current_width = _visible_len(text)
-        else:
-            if sep:
-                current_row.append(sep)
-                current_width += _visible_len(sep)
-            current_row.append(text)
-            current_width += _visible_len(text)
+        if parts and current_width + needed > term_width:
+            overflowing = True
+            overflow.append(name)
+            continue
 
+        if sep:
+            parts.append(sep)
+            current_width += _visible_len(sep)
+        parts.append(text)
+        current_width += _visible_len(text)
         prev_name = name
 
-    if current_row:
-        rows.append(current_row)
-
-    return "\n".join("".join(row) for row in rows)
+    return "".join(parts), overflow
 
 
 def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
@@ -2262,10 +2261,14 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     sep_dim = sep_cfg.get("dim", True)
     box_sep = style_dim(sep_char) if sep_dim else sep_char
 
+    # Render all layout lines. Line 2 may overflow — collect overflow modules.
+    max_lines = layout.get("max_lines", 3)
     rendered_lines: list[str] = []
+    overflow_modules: list[str] = []  # modules that didn't fit on line 2
+
     for idx, modules in enumerate(layout_lines):
         if idx == 1:
-            line = _render_line2_piped(state, theme, modules, box_sep)
+            line, overflow_modules = _render_line2_piped(state, theme, modules, box_sep)
         else:
             line = _render_wrapped(state, theme, modules, sep_override=box_sep)
         if line:
@@ -2276,11 +2279,31 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     if banner and rendered_lines:
         return rendered_lines[0] + "\n" + banner
 
-    # CC supports up to 3 output lines. Line 2 may have wrapped into
-    # multiple rows; join everything and enforce the limit.
+    # If line 2 overflowed, merge overflow into the last layout line.
+    # This distributes excess modules onto line 3 alongside dir/git/cpu/etc.
+    if overflow_modules and len(rendered_lines) >= 2:
+        # Render overflow modules
+        show_labels = theme.get("layout", {}).get("show_labels", False)
+        state["_show_labels"] = show_labels
+        overflow_parts = []
+        for name in overflow_modules:
+            renderer = MODULE_RENDERERS.get(name)
+            if renderer:
+                mod_cfg = theme.get(name, {})
+                result = renderer(state, theme)
+                if result is not None:
+                    overflow_parts.append(_apply_label(result, mod_cfg, show_labels))
+        if overflow_parts:
+            overflow_str = box_sep.join(overflow_parts)
+            last_line = rendered_lines[-1]
+            if last_line:
+                rendered_lines[-1] = last_line + box_sep + overflow_str
+            else:
+                rendered_lines[-1] = overflow_str
+
+    # Enforce max output lines
     output = "\n".join(rendered_lines)
     output_lines = output.split("\n")
-    max_lines = layout.get("max_lines", 3)
     if len(output_lines) > max_lines:
         output_lines = output_lines[:max_lines]
     return "\n".join(output_lines)
