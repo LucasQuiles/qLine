@@ -70,7 +70,7 @@ CACHE_VERSION = 1
 _FAULT_LEDGER_PATH = os.path.join(
     os.path.expanduser("~"), ".claude", "logs", "lifecycle-hook-faults.jsonl"
 )
-_FAULT_SCAN_BYTES = 8192  # fast reverse scan: read last 8KB
+_FAULT_SCAN_BYTES = 32768  # fast reverse scan: read last 32KB
 
 # --- Default Theme (Muted Ocean) ---
 
