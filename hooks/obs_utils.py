@@ -24,6 +24,7 @@ Directory layout produced by create_package():
 from __future__ import annotations
 
 import fcntl
+import heapq
 import json
 import os
 import time
@@ -80,11 +81,13 @@ def _save_read_state(state_path: str, state: dict) -> None:
     """
     try:
         if len(state) > 500:
-            sorted_keys = sorted(
+            evict_count = len(state) - 500
+            evict_keys = heapq.nsmallest(
+                evict_count,
                 state.keys(),
                 key=lambda k: state[k].get("last_read_seq", 0) if isinstance(state[k], dict) else 0,
             )
-            for evict_key in sorted_keys[: len(state) - 500]:
+            for evict_key in evict_keys:
                 del state[evict_key]
         parent = os.path.dirname(state_path)
         if parent and parent not in _dirs_ensured:
