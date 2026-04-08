@@ -162,12 +162,12 @@ DEFAULT_THEME: dict[str, Any] = {
     "layout": {
         "force_single_line": False,
         "max_width": 200,
-        "line1": ["model", "token_counts", "context_bar",
+        "line1": ["model", "token_counts", "token_out_counts", "context_bar",
                   "cache_rate", "duration"],
-        "line2": ["sys_overhead_pill", "cache_pill",
-                  "turns", "obs_reads", "obs_writes",
-                  "obs_bash", "obs_tasks", "obs_subagents",
-                  "obs_compactions", "cost"],
+        "line2": ["sys_overhead_pill", "cache_read", "cache_delta",
+                  "obs_reads", "obs_rereads", "obs_writes",
+                  "obs_bash", "obs_prompts", "obs_tasks", "obs_subagents",
+                  "obs_health", "obs_compactions", "cost"],
         "line3": ["dir", "git", "cpu", "memory", "disk"],
     },
     "git": {
@@ -239,7 +239,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "bg": "#2e3440",
     },
     "obs_rereads": {
-        "enabled": False,
+        "enabled": True,
         "glyph": "\u00ae ",  # ® (registered sign)
         "color": "#a5b4fc",
         "bg": "#2e3440",
@@ -262,7 +262,7 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     # --- Obs: Work group ---
     "obs_prompts": {
-        "enabled": False,
+        "enabled": True,
         "glyph": "\U000f017a ",  # nf-md-comment_text
         "color": "#d8b4fe",
         "bg": "#2e3440",
@@ -297,7 +297,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "bg": "#2e3440",
     },
     "obs_health": {
-        "enabled": False,
+        "enabled": True,
         "glyph": "\U000f0565 ",  # nf-md-shield_check
         "color": "#86efac",
         "bg": "#2e3440",
@@ -959,14 +959,13 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         sep = style(" ", "#4c566a", bg_color=bg_hex)
         return sep.join(pills)
 
-    # NO_COLOR fallback — no brackets, 󰋑pct% suffix
+    # NO_COLOR fallback — no brackets, 󰋑pct% suffix, tight (no spaces)
     bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
     parts = []
     if alert_glyph_str:
         parts.append(f"\u26a0")
-    parts.append(bar)
-    parts.append(f"{glyph}{pct_text}")
-    return "  ".join(parts)
+    parts.append(f"{bar}{glyph}{pct_text}")
+    return "".join(parts)
 
 
 def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -998,21 +997,23 @@ def render_sys_overhead_pill(state: dict[str, Any], theme: dict[str, Any]) -> st
 
 
 def render_token_counts(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render combined token counts: ▲71.4k │ ▼484k."""
-    has_in = "input_tokens" in state and state["input_tokens"] > 0
-    has_out = "output_tokens" in state and state["output_tokens"] > 0
-    if not has_in and not has_out:
+    """Render input token count only: ▲71.4k (output rendered separately)."""
+    if "input_tokens" not in state or state["input_tokens"] <= 0:
         return None
     cfg = theme.get("tokens", {})
     color = state.get("_sev_color", cfg.get("color", "#a8d4d0"))
     bold = state.get("_sev_bold", False)
-    parts = []
-    if has_in:
-        parts.append(f"\u25b2{_abbreviate_count(state['input_tokens'])}")
-    if has_out:
-        parts.append(f"\u25bc{_abbreviate_count(state['output_tokens'])}")
-    text = " \u2502 ".join(parts)
-    return _pill(text, cfg, color, bold, theme)
+    return _pill(f"\u25b2{_abbreviate_count(state['input_tokens'])}", cfg, color, bold, theme)
+
+
+def render_token_out_counts(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render output token count: ▼484k."""
+    if "output_tokens" not in state or state["output_tokens"] <= 0:
+        return None
+    cfg = theme.get("tokens", {})
+    color = state.get("_sev_color", cfg.get("color", "#a8d4d0"))
+    bold = state.get("_sev_bold", False)
+    return _pill(f"\u25bc{_abbreviate_count(state['output_tokens'])}", cfg, color, bold, theme)
 
 
 def render_token_in(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1036,27 +1037,33 @@ def render_token_out(state: dict[str, Any], theme: dict[str, Any]) -> str | None
 
 
 def render_cache_pill(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render combined cache: 󰃨307k™ 󰍻+454™."""
+    """Legacy stub — cache now rendered by cache_read + cache_delta modules."""
+    return None
+
+
+def render_cache_read(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render cache read: ©307k™."""
     last_cr = state.get("last_cache_read")
-    last_cc = state.get("last_cache_create")
-    if (not last_cr or last_cr <= 0) and (not last_cc or last_cc <= 0):
+    if not last_cr or last_cr <= 0:
         return None
     cfg = theme.get("cache_writes", {})
     bg_hex = cfg.get("bg")
     if NO_COLOR:
-        parts = []
-        if last_cr and last_cr > 0:
-            parts.append(f"\U000f00e8{_abbreviate_count(last_cr)}\u2122")
-        if last_cc and last_cc > 0:
-            parts.append(f"\U000f037b+{_abbreviate_count(last_cc)}\u2122")
-        return " ".join(parts) if parts else None
-    fragments = []
-    if last_cr and last_cr > 0:
-        fragments.append(style(f"\U000f00e8{_abbreviate_count(last_cr)}\u2122", "#b48ead", bg_color=bg_hex))
-    if last_cc and last_cc > 0:
-        cw_color = state.get("_cw_color", "#8fbcbb")
-        fragments.append(style(f"\U000f037b+{_abbreviate_count(last_cc)}\u2122", cw_color, bg_color=bg_hex))
-    return " ".join(fragments) if fragments else None
+        return f"\u00a9{_abbreviate_count(last_cr)}\u2122"
+    return style(f"\u00a9{_abbreviate_count(last_cr)}\u2122", "#b48ead", bg_color=bg_hex)
+
+
+def render_cache_delta(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render cache delta: 󰍻 +454™."""
+    last_cc = state.get("last_cache_create")
+    if not last_cc or last_cc <= 0:
+        return None
+    cfg = theme.get("cache_writes", {})
+    bg_hex = cfg.get("bg")
+    cw_color = state.get("_cw_color", "#8fbcbb")
+    if NO_COLOR:
+        return f"\U000f037b +{_abbreviate_count(last_cc)}\u2122"
+    return style(f"\U000f037b +{_abbreviate_count(last_cc)}\u2122", cw_color, bg_color=bg_hex)
 
 
 def render_cache_rate(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1104,7 +1111,7 @@ def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     if dur_ms > 60000 and cost_val > 0:  # need at least 1 min for meaningful rate
         hours = dur_ms / 3_600_000
         rate = cost_val / hours
-        rate_str = f" {_format_cost(rate)}/hr"
+        rate_str = f"|{_format_cost(rate)}/hr"
 
     cost_text = f"{glyph}{_format_cost(cost_val)}{rate_str}"
     warn_t = c_cfg.get("warn_threshold", 2.0)
@@ -1484,7 +1491,8 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
     if state.get("_compact") and compact_label:
         text = f"{compact_label}{bar}{pct}%"
     else:
-        glyph = cfg.get("glyph", "").rstrip()
+        glyph = cfg.get("glyph", "")
+        # Preserve trailing space in glyph (e.g. "󰓌 " → "󰓌 ░░░7%")
         text = f"{glyph}{bar}{pct}%"
 
     is_stale = state.get(f"{theme_key}_stale", False)
@@ -1586,7 +1594,7 @@ def render_obs_rereads(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         return None
     cfg = theme.get("obs_rereads", {})
     re_pct = state.get("obs_reread_pct", 0)
-    glyph = cfg.get("glyph", "\U000f04e6 ")  # nf-md-compress
+    glyph = cfg.get("glyph", "\u00ae ").rstrip()  # ® registered sign
     text = f"{glyph}{re_pct}%"
     crit_t = cfg.get("critical_threshold", 50)
     warn_t = cfg.get("warn_threshold", 30)
@@ -1663,7 +1671,7 @@ def render_obs_prompts(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     if not n:
         return None
     cfg = theme.get("obs_prompts", {})
-    glyph = cfg.get("glyph", "\U000f017a ")  # nf-md-comment_text
+    glyph = cfg.get("glyph", "\U000f017a").rstrip()
     return _pill(f"{glyph}{n}", cfg, theme=theme)
 
 
@@ -1700,9 +1708,12 @@ MODULE_RENDERERS: dict[str, Any] = {
     "sys_overhead": render_sys_overhead,
     "sys_overhead_pill": render_sys_overhead_pill,
     "token_counts": render_token_counts,
+    "token_out_counts": render_token_out_counts,
     "token_in": render_token_in,
     "token_out": render_token_out,
     "cache_pill": render_cache_pill,
+    "cache_read": render_cache_read,
+    "cache_delta": render_cache_delta,
     "cache_rate": render_cache_rate,
     "turns_pill": render_turns_pill,
     "cache_writes": render_cache_delta,
@@ -1727,24 +1738,18 @@ MODULE_RENDERERS: dict[str, Any] = {
     "turns": render_turns,
 }
 
-DEFAULT_LINE1 = ["model", "token_counts", "context_bar",
+DEFAULT_LINE1 = ["model", "token_counts", "token_out_counts", "context_bar",
                  "cache_rate", "duration"]
-DEFAULT_LINE2 = ["sys_overhead_pill", "cache_pill",
-                 "turns", "obs_reads", "obs_writes",
-                 "obs_bash", "obs_tasks", "obs_subagents",
-                 "obs_compactions", "cost"]
+DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
+                 "obs_reads", "obs_rereads", "obs_writes",
+                 "obs_bash", "obs_prompts", "obs_tasks", "obs_subagents",
+                 "obs_health", "obs_compactions", "cost"]
 DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk"]
 
-# Semantic groups for compact line 2 layout.
-# Groups are separated by │, items within a group by double-space.
-LINE2_GROUPS = [
-    ["sys_overhead_pill"],                          # Group 1: Overhead
-    ["cache_pill"],                                 # Group 2: Cache (read + delta)
-    ["turns", "obs_reads", "obs_writes"],           # Group 3: Volume
-    ["obs_bash", "obs_tasks", "obs_subagents"],     # Group 4: Tools/Orchestration
-    ["obs_compactions"],                            # Group 5: Compactions
-    ["cost"],                                       # Group 6: Cost
-]
+# PIPE separator positions on line 2 (module names after which a PIPE | is used
+# instead of BOX │).  Only two: after cache_read and within cost (handled by
+# the cost renderer itself).
+LINE2_PIPE_AFTER = {"cache_read"}
 
 
 def render_line(state: dict[str, Any], theme: dict[str, Any],
@@ -1839,34 +1844,41 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
     return "\n".join(sep.join(row) for row in rows)
 
 
-def _render_line2_grouped(state: dict[str, Any], theme: dict[str, Any]) -> str:
-    """Render line 2 as semantic groups separated by │.
+def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
+                       modules: list[str], box_sep: str) -> str:
+    """Render line 2 with │ separators and PIPE | after cache_read.
 
-    Groups are separated by │ (box drawing). Items within a group
-    are separated by double-space. Empty groups are omitted.
+    All modules joined by │ (box drawing, no spaces) except after
+    cache_read which uses | (pipe, no spaces).
     """
-    sep_cfg = theme.get("separator", {})
-    sep_char = sep_cfg.get("char", "\u2502")
-    sep_dim = sep_cfg.get("dim", True)
-    sep = style_dim(f" {sep_char} ") if sep_dim else f" {sep_char} "
+    # Render all modules, keeping track of names for pipe-after logic
+    rendered: list[tuple[str, str]] = []  # (module_name, rendered_text)
+    for name in modules:
+        renderer = MODULE_RENDERERS.get(name)
+        if renderer is None:
+            continue
+        mod_cfg = theme.get(name, {})
+        if not mod_cfg.get("enabled", True):
+            continue
+        result = renderer(state, theme)
+        if result is not None:
+            rendered.append((name, result))
 
-    group_strs: list[str] = []
-    for group in LINE2_GROUPS:
-        parts: list[str] = []
-        for name in group:
-            renderer = MODULE_RENDERERS.get(name)
-            if renderer is None:
-                continue
-            mod_cfg = theme.get(name, {})
-            if not mod_cfg.get("enabled", True):
-                continue
-            result = renderer(state, theme)
-            if result is not None:
-                parts.append(result)
-        if parts:
-            group_strs.append(" ".join(parts))
+    if not rendered:
+        return ""
 
-    return sep.join(group_strs) if group_strs else ""
+    # Join with appropriate separators
+    pipe = style_dim("|") if not NO_COLOR else "|"
+    parts = [rendered[0][1]]
+    for i in range(1, len(rendered)):
+        prev_name = rendered[i - 1][0]
+        if prev_name in LINE2_PIPE_AFTER:
+            parts.append(pipe)
+        else:
+            parts.append(box_sep)
+        parts.append(rendered[i][1])
+
+    return "".join(parts)
 
 
 def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
@@ -1908,21 +1920,20 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         return _render_wrapped(state, theme, merged)
 
     # Multi-line: render each layout line separately, enforce line breaks
-    # Line 1 uses double-space separator; line 2 uses grouped │ layout;
-    # Line 3 uses │ with spaces
+    # All lines use │ (BOX DRAWING) with NO spaces as the default separator.
+    # Line 2 uses PIPE | after specific modules (cache_read, cost rate).
     sep_cfg = theme.get("separator", {})
     sep_char = sep_cfg.get("char", "\u2502")
     sep_dim = sep_cfg.get("dim", True)
-    line3_sep = f" {style_dim(sep_char) if sep_dim else sep_char} "
+    box_sep = style_dim(sep_char) if sep_dim else sep_char
+
     rendered_lines: list[str] = []
     for idx, modules in enumerate(layout_lines):
-        # Line 2 (index 1) uses semantic grouping when it matches default layout
-        if idx == 1 and modules == DEFAULT_LINE2:
-            line = _render_line2_grouped(state, theme)
-        elif idx == 0:
-            line = _render_wrapped(state, theme, modules, sep_override="  ")
+        if idx == 1:
+            # Line 2: custom join with PIPE after cache_read
+            line = _render_line2_piped(state, theme, modules, box_sep)
         else:
-            line = _render_wrapped(state, theme, modules, sep_override=line3_sep)
+            line = _render_wrapped(state, theme, modules, sep_override=box_sep)
         if line:
             rendered_lines.append(line)
 
