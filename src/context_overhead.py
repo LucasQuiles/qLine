@@ -811,6 +811,9 @@ def inject_context_overhead(
         if not isinstance(session_id, str) or not session_id:
             return
 
+        # Expose session_id to renderers (alert file lifecycle needs it)
+        state["_session_id"] = session_id
+
         load_cache = cache_ctx["load_cache"]
         save_cache = cache_ctx["save_cache"]
         cache_max_age = cache_ctx["cache_max_age"]

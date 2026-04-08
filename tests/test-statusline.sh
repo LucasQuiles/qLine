@@ -17,6 +17,7 @@
 #   bash tests/test-statusline.sh --section collector
 #   bash tests/test-statusline.sh --section cache
 #   bash tests/test-statusline.sh --section obs
+#   bash tests/test-statusline.sh --section alerts
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -3235,6 +3236,535 @@ finally:
 " 2>/dev/null || echo "ERROR")
 assert_equals "T-opp17-3: fail-open (exception propagates to outer wrapper)" "$OPP17_RESULT3" "OK"
 
+fi
+
+# ======================================================================
+# SECTION: alerts — alert trigger audit + lifecycle tests
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "alerts" ]; then
+echo ""
+echo "=== Section: alerts ==="
+
+# Helper: run render_context_bar with given state dict and return result
+# Isolates /tmp/qline-alert.json by pointing it at a tmpfile each test.
+
+# AL-01: bust trigger fires on cache_busting=True
+echo ""
+echo "--- AL-01: bust trigger fires ---"
+AL01=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 100000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+    '_session_id': 'test-al01',
+}
+import builtins
+_orig_open = builtins.open
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a): super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    result = render_context_bar(state, DEFAULT_THEME)
+# NO_COLOR mode: alert shows as U+26A0 (warning sign)
+print('HAS_ALERT' if result and '\u26a0' in result else f'NO_ALERT: {result!r}')
+")
+assert_equals "AL-01: bust trigger glyph" "$AL01" "HAS_ALERT"
+
+# AL-02: expired trigger fires on cache_expired=True (with no cache_busting)
+echo ""
+echo "--- AL-02: expired trigger fires ---"
+AL02=$(run_py "
+import unittest.mock as mock, time as _t
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 100000,
+    'sys_overhead_source': 'measured',
+    'cache_expired': True,
+    '_session_id': 'test-al02',
+}
+import builtins
+_orig_open = builtins.open
+_written = {}
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a):
+                    _written['data'] = self.getvalue()
+                    super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    result = render_context_bar(state, DEFAULT_THEME)
+print('HAS_ALERT' if result and '\u26a0' in result else f'NO_ALERT: {result!r}')
+")
+assert_equals "AL-02: expired trigger glyph" "$AL02" "HAS_ALERT"
+
+# AL-03: micro trigger fires on microcompact_suspected=True
+echo ""
+echo "--- AL-03: micro trigger fires ---"
+AL03=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 100000,
+    'sys_overhead_source': 'measured',
+    'microcompact_suspected': True,
+    '_session_id': 'test-al03',
+}
+import builtins
+_orig_open = builtins.open
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a): super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    result = render_context_bar(state, DEFAULT_THEME)
+print('HAS_ALERT' if result and '\u26a0' in result else f'NO_ALERT: {result!r}')
+")
+assert_equals "AL-03: micro trigger glyph" "$AL03" "HAS_ALERT"
+
+# AL-04: bloat trigger fires when sys_overhead >= 50% of context_total
+echo ""
+echo "--- AL-04: bloat trigger fires ---"
+AL04=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+# sys_overhead = 600k / 1000k = 60% >= sys_crit_t (50%)
+state = {
+    'context_used': 700000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 600000,
+    'sys_overhead_source': 'measured',
+    '_session_id': 'test-al04',
+}
+import builtins
+_orig_open = builtins.open
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a): super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    result = render_context_bar(state, DEFAULT_THEME)
+print('HAS_ALERT' if result and '\u26a0' in result else f'NO_ALERT: {result!r}')
+")
+assert_equals "AL-04: bloat trigger glyph" "$AL04" "HAS_ALERT"
+
+# AL-05: heavy trigger fires when total_pct >= crit_t (~83% for 1M window)
+echo ""
+echo "--- AL-05: heavy trigger fires ---"
+AL05=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+from context_overhead import compute_context_thresholds
+thresholds = compute_context_thresholds(1000000)
+# Use autocompact_pct as crit_t
+crit_t = thresholds['autocompact_pct']
+# Go 1% over crit_t
+target_pct = int(crit_t) + 1
+ctx_used = target_pct * 1000000 // 100
+state = {
+    'context_used': ctx_used,
+    'context_total': 1000000,
+    'cc_autocompact_pct': crit_t,
+    '_session_id': 'test-al05',
+}
+import builtins
+_orig_open = builtins.open
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a): super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    result = render_context_bar(state, DEFAULT_THEME)
+print('HAS_ALERT' if result and '\u26a0' in result else f'NO_ALERT crit_t={crit_t} ctx_used={ctx_used}: {result!r}')
+")
+assert_equals "AL-05: heavy trigger glyph" "$AL05" "HAS_ALERT"
+
+# AL-06: compact trigger fires when 0 < tuc <= 10
+echo ""
+echo "--- AL-06: compact trigger fires ---"
+AL06=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'turns_until_compact': 5,
+    '_session_id': 'test-al06',
+}
+import builtins
+_orig_open = builtins.open
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a): super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    result = render_context_bar(state, DEFAULT_THEME)
+print('HAS_ALERT' if result and '\u26a0' in result else f'NO_ALERT: {result!r}')
+")
+assert_equals "AL-06: compact trigger glyph" "$AL06" "HAS_ALERT"
+
+# AL-07: turns trigger fires when 10 < tuc <= 50
+echo ""
+echo "--- AL-07: turns trigger fires ---"
+AL07=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'turns_until_compact': 30,
+    '_session_id': 'test-al07',
+}
+import builtins
+_orig_open = builtins.open
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a): super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    result = render_context_bar(state, DEFAULT_THEME)
+print('HAS_ALERT' if result and '\u26a0' in result else f'NO_ALERT: {result!r}')
+")
+assert_equals "AL-07: turns trigger glyph" "$AL07" "HAS_ALERT"
+
+# AL-08: degraded trigger fires on cache_degraded=True (lowest priority)
+echo ""
+echo "--- AL-08: degraded trigger fires ---"
+AL08=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 100000,
+    'sys_overhead_source': 'measured',
+    'cache_degraded': True,
+    '_session_id': 'test-al08',
+}
+import builtins
+_orig_open = builtins.open
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a): super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    result = render_context_bar(state, DEFAULT_THEME)
+print('HAS_ALERT' if result and '\u26a0' in result else f'NO_ALERT: {result!r}')
+")
+assert_equals "AL-08: degraded trigger glyph" "$AL08" "HAS_ALERT"
+
+# AL-09: priority order — bust wins over degraded when both set
+echo ""
+echo "--- AL-09: priority bust > degraded ---"
+AL09=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 100000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+    'cache_degraded': True,
+    '_session_id': 'test-al09',
+}
+import builtins, json as _json
+_orig_open = builtins.open
+_saved = {}
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a):
+                    _saved['data'] = self.getvalue()
+                    super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    result = render_context_bar(state, DEFAULT_THEME)
+saved_key = _json.loads(_saved.get('data', '{}')).get('key', 'NONE')
+print(f'KEY:{saved_key}')
+")
+assert_equals "AL-09: bust wins over degraded (key=bust)" "$AL09" "KEY:bust"
+
+# AL-10: no alert — normal state produces no alert glyph
+echo ""
+echo "--- AL-10: no alert in normal state ---"
+AL10=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 100000,
+    'context_total': 1000000,
+    '_session_id': 'test-al10',
+}
+import builtins
+_orig_open = builtins.open
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a): super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    result = render_context_bar(state, DEFAULT_THEME)
+print('NO_ALERT' if result and '\u26a0' not in result else f'HAS_ALERT: {result!r}')
+")
+assert_equals "AL-10: no alert in normal state" "$AL10" "NO_ALERT"
+
+# AL-11: banner text — bust banner contains expected message
+echo ""
+echo "--- AL-11: bust banner text ---"
+AL11=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+import time as _t
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 100000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+    '_session_id': 'test-al11',
+}
+import builtins
+_orig_open = builtins.open
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a): super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    render_context_bar(state, DEFAULT_THEME)
+banner = state.get('_alert_banner', '')
+print('OK' if 'CACHE BUSTED' in banner else f'BAD_BANNER: {banner!r}')
+")
+assert_equals "AL-11: bust banner has CACHE BUSTED" "$AL11" "OK"
+
+# AL-12: banner text — turns banner contains dynamic turn count
+echo ""
+echo "--- AL-12: turns banner text ---"
+AL12=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'turns_until_compact': 25,
+    '_session_id': 'test-al12',
+}
+import builtins
+_orig_open = builtins.open
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a): super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    render_context_bar(state, DEFAULT_THEME)
+banner = state.get('_alert_banner', '')
+print('OK' if '25' in banner and 'TURNS LEFT' in banner else f'BAD_BANNER: {banner!r}')
+")
+assert_equals "AL-12: turns banner has count and TURNS LEFT" "$AL12" "OK"
+
+# AL-13: session isolation — different session_id in alert file treated as new alert
+echo ""
+echo "--- AL-13: session isolation ---"
+AL13=$(run_py "
+import json, unittest.mock as mock, time as _t
+from statusline import render_context_bar, DEFAULT_THEME
+
+# Simulate pre-existing alert file from a DIFFERENT session (old session)
+old_onset = _t.time() - 100  # 100 seconds ago (well past 5s banner window)
+old_alert = {'key': 'bust', 'onset': old_onset, 'session_id': 'old-session-xyz'}
+
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 100000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+    '_session_id': 'new-session-abc',  # Different from old_alert's session_id
+}
+
+import builtins
+_orig_open = builtins.open
+_saved = {}
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a):
+                    _saved['data'] = self.getvalue()
+                    super().__exit__(*a)
+            return _Buf()
+        else:
+            # Return old alert data from 'different session'
+            import io
+            return io.StringIO(json.dumps(old_alert))
+    return _orig_open(path, mode, **kw)
+
+with mock.patch('builtins.open', side_effect=_fake_open):
+    render_context_bar(state, DEFAULT_THEME)
+
+# With session isolation fix: new session ignores old onset, writes new onset
+# Banner should appear (elapsed ~0, not 100s)
+banner = state.get('_alert_banner', '')
+saved = json.loads(_saved.get('data', '{}'))
+new_sid = saved.get('session_id', 'MISSING')
+has_banner = bool(banner)
+# New alert should be saved with new session_id
+print('OK' if has_banner and new_sid == 'new-session-abc' else f'FAIL: has_banner={has_banner} new_sid={new_sid!r} banner={banner!r}')
+")
+assert_equals "AL-13: session isolation resets onset" "$AL13" "OK"
+
+# AL-14: alert file written with session_id field
+echo ""
+echo "--- AL-14: alert file includes session_id ---"
+AL14=$(run_py "
+import json, unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+
+state = {
+    'context_used': 200000,
+    'context_total': 1000000,
+    'sys_overhead_tokens': 100000,
+    'sys_overhead_source': 'measured',
+    'cache_busting': True,
+    '_session_id': 'test-sid-check',
+}
+
+import builtins
+_orig_open = builtins.open
+_saved = {}
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a):
+                    _saved['data'] = self.getvalue()
+                    super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+
+with mock.patch('builtins.open', side_effect=_fake_open):
+    render_context_bar(state, DEFAULT_THEME)
+
+saved = json.loads(_saved.get('data', '{}'))
+sid = saved.get('session_id', 'MISSING')
+key = saved.get('key', 'MISSING')
+print('OK' if sid == 'test-sid-check' and key == 'bust' else f'FAIL: sid={sid!r} key={key!r}')
+")
+assert_equals "AL-14: alert file has session_id and key" "$AL14" "OK"
+
+# AL-15: tuc=0 does NOT trigger compact or turns (condition: 0 < tuc)
+echo ""
+echo "--- AL-15: tuc=0 does not trigger alert ---"
+AL15=$(run_py "
+import unittest.mock as mock
+from statusline import render_context_bar, DEFAULT_THEME
+state = {
+    'context_used': 100000,
+    'context_total': 1000000,
+    'turns_until_compact': 0,
+    '_session_id': 'test-al15',
+}
+import builtins
+_orig_open = builtins.open
+def _fake_open(path, mode='r', **kw):
+    if '/tmp/qline-alert' in str(path):
+        if 'w' in mode:
+            import io
+            class _Buf(io.StringIO):
+                def __exit__(self, *a): super().__exit__(*a)
+            return _Buf()
+        else:
+            raise FileNotFoundError
+    return _orig_open(path, mode, **kw)
+with mock.patch('builtins.open', side_effect=_fake_open):
+    result = render_context_bar(state, DEFAULT_THEME)
+print('NO_ALERT' if result and '\u26a0' not in result else f'HAS_ALERT: {result!r}')
+")
+assert_equals "AL-15: tuc=0 no alert" "$AL15" "NO_ALERT"
+
+echo ""
 fi
 
 # ======================================================================

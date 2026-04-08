@@ -870,6 +870,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     _ALERT_FILE = "/tmp/qline-alert.json"
     alert_glyph_str = None
     alert_crit = False
+    _sid = state.get("_session_id", "")
 
     def _load_alert():
         try:
@@ -888,8 +889,12 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     if alert_key:
         now = _time.time()
         persisted = _load_alert()
+        # Treat stale session alert as new: different session_id means a new CC
+        # process has started; the old onset time is irrelevant.
+        if _sid and persisted.get("session_id", "") != _sid:
+            persisted = {}
         if alert_key != persisted.get("key"):
-            persisted = {"key": alert_key, "onset": now}
+            persisted = {"key": alert_key, "onset": now, "session_id": _sid}
             _save_alert(persisted)
         elapsed = now - persisted.get("onset", now)
         gdef = _ALERT_DEFS.get(alert_key, _ALERT_DEFS["degraded"])
