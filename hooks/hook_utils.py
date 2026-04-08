@@ -9,6 +9,7 @@ import json
 import os
 import select
 import sys
+import time
 import traceback
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -261,11 +262,9 @@ class Deadline:
     __slots__ = ("_expires",)
 
     def __init__(self, budget_s: float = 3.0):
-        import time
         self._expires = time.monotonic() + budget_s
 
     def remaining(self) -> float:
-        import time
         return max(0.0, self._expires - time.monotonic())
 
     def check(self, op: str = "") -> None:
@@ -317,7 +316,6 @@ def circuit_is_open(service: str) -> bool:
             state = json.load(f)
         s = state.get(service, {})
         if s.get("failures", 0) >= _CIRCUIT_OPEN_THRESHOLD:
-            import time
             return (time.time() - s.get("opened_at", 0)) < _CIRCUIT_RECOVERY_S
     except Exception:
         pass
@@ -327,7 +325,6 @@ def circuit_is_open(service: str) -> bool:
 def record_circuit_result(service: str, success: bool) -> None:
     """Record a success or failure for circuit breaker state. Never raises."""
     try:
-        import time
         try:
             with open(_CIRCUIT_PATH) as f:
                 state = json.load(f)
