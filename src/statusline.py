@@ -508,6 +508,7 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
             # Synthesize used/total from percentage and size
             state["context_used"] = int(used_pct * ctx_size / 100)
             state["context_total"] = int(ctx_size)
+            state["raw_used_pct"] = int(used_pct)
         else:
             # Fallback: used/total fields (older payloads, test fixtures)
             used = ctx_window.get("used")
@@ -735,12 +736,17 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     ctx_used = state.get("context_used_corrected", state["context_used"])
     ctx_total = state["context_total"]
     total_pct = (ctx_used * 100) // ctx_total if ctx_total > 0 else 0
+    # CC's raw used_percentage is the authoritative source for alert decisions
+    # (context_used_corrected can exceed 100% when output tokens are added).
+    raw_used_pct = state.get("raw_used_pct", total_pct)
+    # Cap visual percentage at 100 — bar can't overflow
+    display_pct = min(total_pct, 100)
     width = cfg.get("width", 20)
     if width <= 0:
         import shutil as _shutil
         term_w = _shutil.get_terminal_size((120, 24)).columns
         width = max(10, term_w - 55)
-    filled = (total_pct * width) // 100
+    filled = (display_pct * width) // 100
 
     # Dual-bar: sys overhead vs conversation within filled portion
     has_overhead = "sys_overhead_tokens" in state
@@ -773,7 +779,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     sys_warn_t = cfg.get("sys_warn_threshold", 30.0)
     sys_crit_t = cfg.get("sys_critical_threshold", 50.0)
 
-    total_sev = 2 if total_pct >= crit_t else (1 if total_pct >= warn_t else 0)
+    total_sev = 2 if raw_used_pct >= crit_t else (1 if raw_used_pct >= warn_t else 0)
     sys_sev = 0
     if has_overhead:
         sys_sev = 2 if raw_sys_pct >= sys_crit_t else (1 if raw_sys_pct >= sys_warn_t else 0)
@@ -803,11 +809,11 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
     # Percentage suffix
     if sev == 2:
-        pct_text = f"{total_pct}%!"
+        pct_text = f"{display_pct}%!"
     elif sev == 1:
-        pct_text = f"{total_pct}%~"
+        pct_text = f"{display_pct}%~"
     else:
-        pct_text = f"{total_pct}%"
+        pct_text = f"{display_pct}%"
 
     # ── Render as separate pills ──
 
@@ -857,7 +863,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         alert_key = "micro"
     elif has_overhead and raw_sys_pct >= sys_crit_t:
         alert_key = "bloat"
-    elif total_pct >= crit_t:
+    elif raw_used_pct >= crit_t:
         alert_key = "heavy"
     elif tuc is not None and 0 < tuc <= 10:
         alert_key = "compact"
