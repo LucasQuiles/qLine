@@ -2671,6 +2671,255 @@ fi
 fi
 
 # ======================================================================
+# Section: opp18 — Hook Fault Surfacing
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "opp18" ]; then
+echo ""
+echo "=== Section: opp18 (OPP-18 hook fault surfacing) ==="
+
+# T-opp18-1: _count_recent_faults returns 0 on non-existent ledger
+echo ""
+echo "--- T-opp18-1: zero count for missing ledger ---"
+OPP18_RESULT1=$(python3 -c "
+import sys, os, tempfile
+sys.path.insert(0, '$REPO_DIR/src')
+import statusline
+# Point to a path that definitely does not exist
+statusline._FAULT_LEDGER_PATH = '/tmp/nonexistent-faults-$(date +%s).jsonl'
+count = statusline._count_recent_faults()
+print('OK' if count == 0 else f'FAIL: got {count}')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp18-1: zero count for missing ledger" "$OPP18_RESULT1" "OK"
+
+# T-opp18-2: _count_recent_faults counts recent fault entries
+echo ""
+echo "--- T-opp18-2: counts recent fault entries ---"
+OPP18_RESULT2=$(python3 -c "
+import sys, os, json, tempfile, time
+from datetime import datetime, timezone
+sys.path.insert(0, '$REPO_DIR/src')
+import statusline
+
+# Write 3 fault records + 1 diagnostic + 1 old fault to a temp ledger
+tf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+now_iso = datetime.now(timezone.utc).isoformat()
+old_iso = datetime.fromtimestamp(time.time() - 7200, tz=timezone.utc).isoformat()
+records = [
+    {'ts': now_iso, 'hook': 'h1', 'event': 'e1', 'level': 'fault'},
+    {'ts': now_iso, 'hook': 'h2', 'event': 'e2', 'level': 'fault'},
+    {'ts': now_iso, 'hook': 'h3', 'event': 'e3', 'level': 'diagnostic'},
+    {'ts': old_iso, 'hook': 'h4', 'event': 'e4', 'level': 'fault'},
+    {'ts': now_iso, 'hook': 'h5', 'event': 'e5', 'level': 'fault'},
+]
+for r in records:
+    tf.write(json.dumps(r) + '\n')
+tf.close()
+statusline._FAULT_LEDGER_PATH = tf.name
+count = statusline._count_recent_faults()
+os.unlink(tf.name)
+# Expect 3: 2 recent faults + 1 more recent fault = 3 (not the old one, not diagnostic)
+print('OK' if count == 3 else f'FAIL: expected 3, got {count}')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp18-2: counts recent fault entries" "$OPP18_RESULT2" "OK"
+
+# T-opp18-3: _count_recent_faults is fail-open on corrupt ledger
+echo ""
+echo "--- T-opp18-3: fail-open on corrupt ledger ---"
+OPP18_RESULT3=$(python3 -c "
+import sys, os, tempfile
+sys.path.insert(0, '$REPO_DIR/src')
+import statusline
+tf = tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False)
+tf.write('not json\n{bad\n')
+tf.close()
+statusline._FAULT_LEDGER_PATH = tf.name
+count = statusline._count_recent_faults()
+os.unlink(tf.name)
+print('OK' if count == 0 else f'FAIL: got {count}')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp18-3: fail-open on corrupt ledger" "$OPP18_RESULT3" "OK"
+
+# T-opp18-4: render_obs_hook_faults returns None when no faults
+echo ""
+echo "--- T-opp18-4: render returns None when no faults ---"
+OPP18_RESULT4=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+import os; os.environ['NO_COLOR'] = '1'
+import statusline
+state = {}
+theme = statusline.DEFAULT_THEME
+result = statusline.render_obs_hook_faults(state, theme)
+print('OK' if result is None else f'FAIL: got {result!r}')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp18-4: render returns None when no faults" "$OPP18_RESULT4" "OK"
+
+# T-opp18-5: render_obs_hook_faults renders non-zero fault count
+echo ""
+echo "--- T-opp18-5: render returns pill for fault count ---"
+OPP18_RESULT5=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+import os; os.environ['NO_COLOR'] = '1'
+import statusline
+state = {'obs_hook_faults': 2}
+theme = statusline.DEFAULT_THEME
+result = statusline.render_obs_hook_faults(state, theme)
+print('OK' if result and '2' in result else f'FAIL: got {result!r}')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp18-5: render returns pill for fault count" "$OPP18_RESULT5" "OK"
+
+# T-opp18-6: render_obs_hook_faults in MODULE_RENDERERS
+echo ""
+echo "--- T-opp18-6: obs_hook_faults in MODULE_RENDERERS ---"
+OPP18_RESULT6=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/src')
+import statusline
+print('OK' if 'obs_hook_faults' in statusline.MODULE_RENDERERS else 'FAIL')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp18-6: obs_hook_faults in MODULE_RENDERERS" "$OPP18_RESULT6" "OK"
+
+fi
+
+# ======================================================================
+# Section: opp12 — Hook Performance Sidecar
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "opp12" ]; then
+echo ""
+echo "=== Section: opp12 (OPP-12 hook perf sidecar) ==="
+
+# T-opp12-1: run_fail_open is backward compatible (no session_id)
+echo ""
+echo "--- T-opp12-1: backward compat (no session_id) ---"
+OPP12_RESULT1=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/hooks')
+import hook_utils
+called = []
+def main_fn():
+    called.append(1)
+try:
+    hook_utils.run_fail_open(main_fn, 'test_hook', 'test_event')
+except SystemExit:
+    pass
+print('OK' if called else 'FAIL: main_fn not called')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp12-1: backward compat (no session_id)" "$OPP12_RESULT1" "OK"
+
+# T-opp12-2: _write_hook_perf is fail-open when obs_utils unavailable
+echo ""
+echo "--- T-opp12-2: _write_hook_perf fail-open ---"
+OPP12_RESULT2=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_DIR/hooks')
+import hook_utils
+# Call with a fake session_id where no package exists — must not raise
+try:
+    hook_utils._write_hook_perf('nonexistent-session', 'h', 'e', 42.5)
+    print('OK')
+except Exception as exc:
+    print(f'FAIL: raised {exc!r}')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp12-2: _write_hook_perf fail-open" "$OPP12_RESULT2" "OK"
+
+# T-opp12-3: run_fail_open with session_id writes timing record
+echo ""
+echo "--- T-opp12-3: perf record written with session_id ---"
+OPP12_RESULT3=$(python3 -c "
+import sys, os, json, tempfile
+# Insert hooks dir first so obs_utils is the collocated hooks version
+sys.path.insert(0, '$REPO_DIR/hooks')
+from obs_utils import create_package
+
+# Create a real package so _write_hook_perf can resolve it
+pkg_dir = tempfile.mkdtemp()
+session_id = 'test-perf-session-opp12'
+package_root = create_package(session_id, '/tmp', '/tmp/t.jsonl', 'test', obs_root=pkg_dir)
+
+# Patch env so resolve_package_root_env picks up our test obs_root
+os.environ['OBS_ROOT'] = pkg_dir
+
+import hook_utils
+
+called = []
+def main_fn():
+    called.append(1)
+
+try:
+    hook_utils.run_fail_open(main_fn, 'test_hook', 'TestEvent', session_id=session_id)
+except SystemExit:
+    pass
+
+# Verify perf record was written
+perf_path = os.path.join(package_root, 'metadata', 'hook_perf.jsonl')
+if not os.path.exists(perf_path):
+    print(f'FAIL: perf file not found at {perf_path}')
+    sys.exit(0)
+with open(perf_path) as f:
+    records = [json.loads(l) for l in f if l.strip()]
+if not records:
+    print('FAIL: no records in perf file')
+    sys.exit(0)
+rec = records[0]
+ok = (
+    rec.get('hook') == 'test_hook' and
+    rec.get('event') == 'TestEvent' and
+    isinstance(rec.get('duration_ms'), (int, float)) and
+    rec.get('duration_ms') >= 0 and
+    'ts' in rec
+)
+print('OK' if ok else f'FAIL: bad record {rec!r}')
+
+# cleanup
+import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
+del os.environ['OBS_ROOT']
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp12-3: perf record written with session_id" "$OPP12_RESULT3" "OK"
+
+# T-opp12-4: run_fail_open timing applies even when main_fn raises
+echo ""
+echo "--- T-opp12-4: timing still writes on main_fn exception ---"
+OPP12_RESULT4=$(python3 -c "
+import sys, os, json, tempfile
+# Insert hooks dir first so obs_utils is the collocated hooks version
+sys.path.insert(0, '$REPO_DIR/hooks')
+from obs_utils import create_package
+
+pkg_dir = tempfile.mkdtemp()
+session_id = 'test-perf-exc-opp12'
+package_root = create_package(session_id, '/tmp', '/tmp/t.jsonl', 'test', obs_root=pkg_dir)
+os.environ['OBS_ROOT'] = pkg_dir
+
+import hook_utils
+
+def bad_fn():
+    raise RuntimeError('deliberate error')
+
+# run_fail_open catches the exception and exits 0 (via sys.exit)
+try:
+    hook_utils.run_fail_open(bad_fn, 'bad_hook', 'TestEvent', session_id=session_id)
+except SystemExit:
+    pass
+
+# Perf record should still be written
+perf_path = os.path.join(package_root, 'metadata', 'hook_perf.jsonl')
+if not os.path.exists(perf_path):
+    print(f'FAIL: perf file not found')
+    sys.exit(0)
+with open(perf_path) as f:
+    records = [json.loads(l) for l in f if l.strip()]
+ok = len(records) == 1 and records[0].get('hook') == 'bad_hook'
+print('OK' if ok else f'FAIL: records={records!r}')
+
+import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
+del os.environ['OBS_ROOT']
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-opp12-4: timing still writes on main_fn exception" "$OPP12_RESULT4" "OK"
+
+fi
+
+# ======================================================================
 # Summary
 # ======================================================================
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="

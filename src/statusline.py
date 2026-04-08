@@ -67,6 +67,10 @@ _alert_state: dict[str, Any] = {}  # in-process cache (reset per invocation)
 # must be loaded from / saved to the disk cache for persistence.
 # The load/save happens in inject_context_overhead via cache_ctx.
 CACHE_VERSION = 1
+_FAULT_LEDGER_PATH = os.path.join(
+    os.path.expanduser("~"), ".claude", "logs", "lifecycle-hook-faults.jsonl"
+)
+_FAULT_SCAN_BYTES = 8192  # fast reverse scan: read last 8KB
 
 # --- Default Theme (Muted Ocean) ---
 
@@ -159,7 +163,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "line2": ["sys_overhead_pill", "cache_read", "cache_delta",
                   "obs_reads", "obs_rereads", "obs_writes",
                   "obs_bash", "obs_prompts", "obs_tasks", "obs_subagents",
-                  "obs_health", "obs_compactions", "cost"],
+                  "obs_health", "obs_compactions", "obs_hook_faults", "cost"],
         "line3": ["dir", "git", "cpu", "memory", "disk"],
     },
     "git": {
@@ -295,6 +299,16 @@ DEFAULT_THEME: dict[str, Any] = {
         "bg": "#2e3440",
         "degraded_color": "#f0d399",
         "failed_color": "#d06070",
+    },
+    "obs_hook_faults": {
+        "enabled": True,
+        "glyph": "\U000f0029 ",  # nf-md-alert
+        "color": "#fda4af",
+        "bg": "#2e3440",
+        "warn_threshold": 1,
+        "critical_threshold": 5,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
     },
 }
 
@@ -1661,6 +1675,17 @@ def render_obs_prompts(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     return _render_obs_counter(state, theme, "obs_prompts", "obs_prompts", default_glyph="\U000f017a")
 
 
+def render_obs_hook_faults(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render hook fault count from the lifecycle fault ledger (last hour).
+
+    Warn at 1 fault, critical at 5 — hook crashes are always notable.
+    """
+    return _render_obs_counter(
+        state, theme, "obs_hook_faults", "obs_hook_faults",
+        default_glyph="\U000f0029 ", suffix="",
+    )
+
+
 def render_turns(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Render session turn count: 󰐕475."""
     n = state.get("session_turn_count")
@@ -1721,6 +1746,7 @@ MODULE_RENDERERS: dict[str, Any] = {
     "obs_compactions": render_obs_compactions,
     "obs_prompts": render_obs_prompts,
     "obs_health": render_obs_health,
+    "obs_hook_faults": render_obs_hook_faults,
     "turns": render_turns,
 }
 
@@ -1729,7 +1755,7 @@ DEFAULT_LINE1 = ["model", "token_counts", "token_out_counts", "context_bar",
 DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
                  "obs_reads", "obs_rereads", "obs_writes",
                  "obs_bash", "obs_prompts", "obs_tasks", "obs_subagents",
-                 "obs_health", "obs_compactions", "cost"]
+                 "obs_health", "obs_compactions", "obs_hook_faults", "cost"]
 DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk"]
 
 # PIPE separator positions on line 2 (module names after which a PIPE | is used
@@ -1988,6 +2014,54 @@ def _read_obs_health(package_root: str) -> str:
         return "unknown"
 
 
+def _count_recent_faults(max_age_s: float = 3600) -> int:
+    """Count fault-level hook fault ledger entries from the last max_age_s seconds.
+
+    Fast reverse scan: reads last _FAULT_SCAN_BYTES of the ledger, parses JSONL
+    lines, counts entries where level == 'fault' and ts is within max_age_s.
+    Returns 0 on any error (never raises).
+    """
+    try:
+        if not os.path.exists(_FAULT_LEDGER_PATH):
+            return 0
+        file_size = os.path.getsize(_FAULT_LEDGER_PATH)
+        if file_size == 0:
+            return 0
+        seek_pos = max(0, file_size - _FAULT_SCAN_BYTES)
+        with open(_FAULT_LEDGER_PATH, "rb") as f:
+            f.seek(seek_pos)
+            raw = f.read()
+        # Decode and split into lines; skip partial first line if we sought mid-file
+        lines = raw.decode("utf-8", errors="replace").splitlines()
+        if seek_pos > 0 and lines:
+            lines = lines[1:]  # discard potentially truncated first line
+        cutoff = time.time() - max_age_s
+        count = 0
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if rec.get("level") != "fault":
+                continue
+            ts_str = rec.get("ts", "")
+            if not ts_str:
+                continue
+            try:
+                from datetime import datetime, timezone
+                ts_val = datetime.fromisoformat(ts_str).timestamp()
+                if ts_val >= cutoff:
+                    count += 1
+            except (ValueError, OSError):
+                continue
+        return count
+    except Exception:
+        return 0
+
+
 def _inject_obs_counters(state: dict, payload: dict) -> None:
     """Inject obs event counters into state for module renderers. Never raises."""
     if not _OBS_AVAILABLE:
@@ -2046,6 +2120,14 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
             cache["_obs"] = obs_cache
             save_cache(cache)
 
+        # Refresh fault count if stale (same 5s TTL as other obs data)
+        if now - session_cache.get("last_fault_ts", 0) >= 5:
+            session_cache["hook_fault_count"] = _count_recent_faults()
+            session_cache["last_fault_ts"] = now
+            obs_cache[session_id] = session_cache
+            cache["_obs"] = obs_cache
+            save_cache(cache)
+
         tr = session_cache.get("total_reads", 0)
         rr = session_cache.get("reread_count", 0)
         state["obs_reads"] = tr
@@ -2059,6 +2141,9 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         state["obs_compactions"] = ec.get("compact.started", 0)
         state["obs_prompts"] = ec.get("prompt.observed", 0)
         state["obs_health"] = session_cache.get("obs_health", "unknown")
+        hook_faults = session_cache.get("hook_fault_count", 0)
+        if hook_faults > 0:
+            state["obs_hook_faults"] = hook_faults
     except Exception:
         pass
 

@@ -99,17 +99,74 @@ def log_hook_fault(
     })
 
 
-def run_fail_open(main_fn: Callable, hook_name: str, event_name: str) -> None:
+def _write_hook_perf(
+    session_id: str,
+    hook_name: str,
+    event_name: str,
+    elapsed_ms: float,
+) -> None:
+    """Write a hook performance record to {package_root}/metadata/hook_perf.jsonl.
+
+    Never raises — all errors are silently ignored.
+    """
+    try:
+        try:
+            from obs_utils import resolve_package_root_env
+        except ImportError:
+            return
+        package_root = resolve_package_root_env(session_id)
+        if not package_root:
+            return
+        record = {
+            "ts": now_iso(),
+            "hook": hook_name,
+            "event": event_name,
+            "duration_ms": round(elapsed_ms, 1),
+        }
+        perf_path = os.path.join(package_root, "metadata", "hook_perf.jsonl")
+        try:
+            if _atomic_jsonl_append is not None:
+                _atomic_jsonl_append(perf_path, record)
+                return
+        except Exception:
+            pass
+        # Fallback: direct write
+        os.makedirs(os.path.dirname(perf_path), exist_ok=True)
+        line = json.dumps(record, default=str) + "\n"
+        fd = os.open(perf_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        try:
+            os.write(fd, line.encode())
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+
+def run_fail_open(
+    main_fn: Callable,
+    hook_name: str,
+    event_name: str,
+    *,
+    session_id: str | None = None,
+) -> None:
     """Run a hook main function with fail-open crash resistance.
 
     Catches Exception (not BaseException), logs the fault, then exits 0.
     SystemExit passes through naturally since it is not a subclass of Exception.
+
+    If session_id is provided, wall-clock timing is recorded to
+    {package_root}/metadata/hook_perf.jsonl (fail-open — never crashes).
     """
+    t0 = time.monotonic()
     try:
         main_fn()
     except Exception as exc:
         log_hook_fault(hook_name, event_name, exc)
         sys.exit(0)
+    finally:
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        if session_id:
+            _write_hook_perf(session_id, hook_name, event_name, elapsed_ms)
 
 
 # --- Session quality hook functions ---
