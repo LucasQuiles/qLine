@@ -178,7 +178,7 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     "layout": {
         "force_single_line": False,
-        "max_width": 200,
+        "max_width": 120,
         "line1": ["model", "token_counts", "token_out_counts", "context_bar",
                   "cache_rate", "duration"],
         "line2": ["sys_overhead_pill", "cache_read", "cache_delta",
@@ -888,8 +888,12 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     display_pct = min(total_pct, 100)
     width = cfg.get("width", 20)
     if width <= 0:
-        import shutil as _shutil
-        term_w = _shutil.get_terminal_size((120, 24)).columns
+        layout_max = theme.get("layout", {}).get("max_width")
+        if layout_max:
+            term_w = layout_max
+        else:
+            import shutil as _shutil
+            term_w = _shutil.get_terminal_size((120, 24)).columns
         width = max(10, term_w - 55)
     filled = (display_pct * width) // 100
 
@@ -2149,12 +2153,12 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
 
 def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
                        modules: list[str], box_sep: str) -> str:
-    """Render line 2 with │ separators and PIPE | after cache_read.
+    """Render line 2 with width-aware wrapping and PIPE | after cache_read.
 
-    All modules joined by │ (box drawing, no spaces) except after
-    cache_read which uses | (pipe, no spaces).
+    Modules are packed into rows that fit within max_width. When a module
+    would overflow the current row, a newline break is inserted.
+    Returns a multi-line string if wrapping occurs.
     """
-    # Render all modules, keeping track of names for pipe-after logic
     show_labels = theme.get("layout", {}).get("show_labels", False)
     state["_show_labels"] = show_labels
     rendered: list[tuple[str, str]] = []  # (module_name, rendered_text)
@@ -2172,18 +2176,44 @@ def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
     if not rendered:
         return ""
 
-    # Join with appropriate separators
     pipe = style_dim("|") if not NO_COLOR else "|"
-    parts = [rendered[0][1]]
-    for i in range(1, len(rendered)):
-        prev_name = rendered[i - 1][0]
-        if prev_name in LINE2_PIPE_AFTER:
-            parts.append(pipe)
-        else:
-            parts.append(box_sep)
-        parts.append(rendered[i][1])
+    sep_width = _visible_len(box_sep)
 
-    return "".join(parts)
+    layout_cfg = theme.get("layout", {})
+    term_width = layout_cfg.get("max_width") or shutil.get_terminal_size((200, 24)).columns
+
+    # Pack modules into rows respecting width limit
+    rows: list[list[str]] = []
+    current_row: list[str] = []
+    current_width = 0
+    prev_name = ""
+
+    for name, text in rendered:
+        # Choose separator based on previous module
+        if current_row:
+            sep = pipe if prev_name in LINE2_PIPE_AFTER else box_sep
+            needed = _visible_len(sep) + _visible_len(text)
+        else:
+            sep = ""
+            needed = _visible_len(text)
+
+        if current_row and current_width + needed > term_width:
+            rows.append(current_row)
+            current_row = [text]
+            current_width = _visible_len(text)
+        else:
+            if sep:
+                current_row.append(sep)
+                current_width += _visible_len(sep)
+            current_row.append(text)
+            current_width += _visible_len(text)
+
+        prev_name = name
+
+    if current_row:
+        rows.append(current_row)
+
+    return "\n".join("".join(row) for row in rows)
 
 
 def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
@@ -2235,7 +2265,6 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     rendered_lines: list[str] = []
     for idx, modules in enumerate(layout_lines):
         if idx == 1:
-            # Line 2: custom join with PIPE after cache_read
             line = _render_line2_piped(state, theme, modules, box_sep)
         else:
             line = _render_wrapped(state, theme, modules, sep_override=box_sep)
@@ -2243,12 +2272,18 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
             rendered_lines.append(line)
 
     # Alert banner: when active, replace lines 2+ with the banner text.
-    # Line 1 (the health bar with inline glyph) always shows.
     banner = state.get("_alert_banner")
     if banner and rendered_lines:
         return rendered_lines[0] + "\n" + banner
 
-    return "\n".join(rendered_lines)
+    # CC supports up to 3 output lines. Line 2 may have wrapped into
+    # multiple rows; join everything and enforce the limit.
+    output = "\n".join(rendered_lines)
+    output_lines = output.split("\n")
+    max_lines = layout.get("max_lines", 3)
+    if len(output_lines) > max_lines:
+        output_lines = output_lines[:max_lines]
+    return "\n".join(output_lines)
 
 
 # --- Observability snapshot ---
