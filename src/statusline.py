@@ -162,12 +162,12 @@ DEFAULT_THEME: dict[str, Any] = {
     "layout": {
         "force_single_line": False,
         "max_width": 200,
-        "line1": ["model", "token_in", "token_out", "context_bar",
+        "line1": ["model", "token_counts", "context_bar",
                   "cache_rate", "duration"],
         "line2": ["sys_overhead_pill", "cache_pill",
-                  "obs_reads", "obs_rereads", "obs_writes", "obs_bash",
-                  "obs_prompts", "obs_tasks", "obs_subagents", "obs_health",
-                  "turns_pill", "cost"],
+                  "turns", "obs_reads", "obs_writes",
+                  "obs_bash", "obs_tasks", "obs_subagents",
+                  "obs_compactions", "cost"],
         "line3": ["dir", "git", "cpu", "memory", "disk"],
     },
     "git": {
@@ -233,7 +233,7 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     # --- Obs: I/O group ---
     "obs_reads": {
-        "enabled": False,
+        "enabled": True,
         "glyph": "\U000f0447 ",  # nf-md-file_document (󰑇)
         "color": "#a5b4fc",
         "bg": "#2e3440",
@@ -249,13 +249,13 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "obs_writes": {
-        "enabled": False,
+        "enabled": True,
         "glyph": "\U000f064f ",  # nf-md-lead_pencil
         "color": "#86efac",
         "bg": "#2e3440",
     },
     "obs_bash": {
-        "enabled": False,
+        "enabled": True,
         "glyph": "\U000f018d ",  # nf-md-console
         "color": "#fcd34d",
         "bg": "#2e3440",
@@ -268,13 +268,13 @@ DEFAULT_THEME: dict[str, Any] = {
         "bg": "#2e3440",
     },
     "obs_tasks": {
-        "enabled": False,
+        "enabled": True,
         "glyph": "\U000f0318 ",  # nf-md-checkbox_marked_circle
         "color": "#67e8f9",
         "bg": "#2e3440",
     },
     "obs_subagents": {
-        "enabled": False,
+        "enabled": True,
         "glyph": "\U000f0026 ",  # nf-md-account_multiple
         "color": "#c4b5fd",
         "bg": "#2e3440",
@@ -291,8 +291,8 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "obs_compactions": {
-        "enabled": False,
-        "glyph": "\U000f10e7 ",  # nf-md-archive_arrow_down
+        "enabled": True,
+        "glyph": "\U000f0520 ",  # nf-md-timer (compactions)
         "color": "#a8a29e",
         "bg": "#2e3440",
     },
@@ -445,9 +445,18 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(model, dict):
         name = model.get("display_name")
         if isinstance(name, str) and name:
-            # "Opus 4.6 (1M context)" → "Opus 4.6[1M]"
+            # "Claude Opus 4.6 (1M context)" → "Opus4.6[1M]"
+            if name.startswith("Claude "):
+                name = name[7:]
             name = name.replace(" context)", ")")
             name = name.replace(" (", "[").replace(")", "]")
+            # Remove spaces between name parts: "Opus 4.6[1M]" → "Opus4.6[1M]"
+            bracket_idx = name.find("[")
+            if bracket_idx >= 0:
+                prefix = name[:bracket_idx].replace(" ", "")
+                name = prefix + name[bracket_idx:]
+            else:
+                name = name.replace(" ", "")
             state["model_name"] = name
 
     # Directory — prefer workspace.current_dir, fall back to cwd
@@ -638,8 +647,8 @@ def _pill(text: str, cfg: dict[str, Any], color: str | None = None,
 
 
 def format_tokens(input_tokens: int, output_tokens: int, theme: dict[str, Any]) -> str:
-    """Format token counts as ▲12.3k ▼4.1k."""
-    text = f"\u25b2 {_abbreviate_count(input_tokens)} \u25bc {_abbreviate_count(output_tokens)}"
+    """Format token counts as ▲71.4k │ ▼484k."""
+    text = f"\u25b2{_abbreviate_count(input_tokens)} \u2502 \u25bc{_abbreviate_count(output_tokens)}"
     tok_cfg = theme.get("tokens", {})
     return _pill(text, tok_cfg, theme=theme)
 
@@ -676,13 +685,15 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
 
 
 def render_model(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render model name module."""
+    """Render model name module — plain text with glyph, no pill wrapper."""
     model_name = state.get("model_name")
     if not model_name:
         return None
     m_cfg = theme.get("model", {})
-    text = f"{m_cfg.get('glyph', '')}{_sanitize_fragment(model_name)}"
-    return _pill(text, m_cfg, bold=m_cfg.get("bold", False), theme=theme)
+    glyph = m_cfg.get("glyph", "\U000f06a9 ")
+    text = f"{glyph}{_sanitize_fragment(model_name)}"
+    color = m_cfg.get("color", "#d8dee9")
+    return style(text, color, m_cfg.get("bold", False))
 
 
 def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -780,7 +791,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         color = cfg.get("color", "#b5d4a0")
         bold = False
 
-    glyph = cfg.get("glyph", "\U000f02d1")  # 󰋑 heart
+    glyph = cfg.get("glyph", "\U000f02d1").rstrip()  # 󰋑 heart (strip trailing space)
 
     # Percentage suffix
     if sev == 2:
@@ -933,7 +944,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             # Colorize the banner too
             if "_alert_banner" in state:
                 state["_alert_banner"] = _flash(state["_alert_banner"], ac, critical=alert_crit)
-        # [bar 󰋑]
+        # bar (no brackets): █▓░ 󰋑pct%
         bar_styled = ""
         if sys_blocks > 0:
             bar_styled += style("\u2588" * sys_blocks, sys_color_hex, bg_color=bg_hex)
@@ -941,22 +952,21 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             bar_styled += style("\u2593" * conv_blocks, conv_color_hex, bg_color=bg_hex)
         if free_blocks > 0:
             bar_styled += style("\u2591" * free_blocks, free_color_hex, bg_color=bg_hex)
-        bar_inner = bar_styled + style(glyph, color, bold, bg_hex)
-        pills.append(bar_inner)
-        # [pct%]
-        pills.append(_mkpill(pct_text, color, b=bold))
+        pills.append(bar_styled)
+        # 󰋑pct% — glyph directly before percentage, no spaces
+        pills.append(_mkpill(f"{glyph}{pct_text}", color, b=bold))
 
         sep = style(" ", "#4c566a", bg_color=bg_hex)
         return sep.join(pills)
 
-    # NO_COLOR fallback
+    # NO_COLOR fallback — no brackets, 󰋑pct% suffix
     bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
     parts = []
     if alert_glyph_str:
-        parts.append(f"[\u26a0]")
-    parts.append(f"[{bar} {glyph}]")
-    parts.append(f"[{pct_text}]")
-    return "".join(parts)
+        parts.append(f"\u26a0")
+    parts.append(bar)
+    parts.append(f"{glyph}{pct_text}")
+    return "  ".join(parts)
 
 
 def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -975,40 +985,58 @@ def render_cache_delta(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
 
 def render_sys_overhead_pill(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render standalone system overhead pill: [󰑖 38.2k™]."""
+    """Render standalone system overhead: 󰑖17.1k™."""
     if "sys_overhead_tokens" not in state:
         return None
     cfg = theme.get("sys_overhead", {})
     color = cfg.get("color", "#81a1c1")
-    glyph = cfg.get("glyph", "\U000f0456 ")
+    glyph = cfg.get("glyph", "\U000f0456").rstrip()
     source = state.get("sys_overhead_source", "")
     suffix = "\u2248" if source == "estimated" else ""
     text = f"{glyph}{_abbreviate_count(state['sys_overhead_tokens'])}{suffix}\u2122"
     return _pill(text, cfg, color, theme=theme)
 
 
+def render_token_counts(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render combined token counts: ▲71.4k │ ▼484k."""
+    has_in = "input_tokens" in state and state["input_tokens"] > 0
+    has_out = "output_tokens" in state and state["output_tokens"] > 0
+    if not has_in and not has_out:
+        return None
+    cfg = theme.get("tokens", {})
+    color = state.get("_sev_color", cfg.get("color", "#a8d4d0"))
+    bold = state.get("_sev_bold", False)
+    parts = []
+    if has_in:
+        parts.append(f"\u25b2{_abbreviate_count(state['input_tokens'])}")
+    if has_out:
+        parts.append(f"\u25bc{_abbreviate_count(state['output_tokens'])}")
+    text = " \u2502 ".join(parts)
+    return _pill(text, cfg, color, bold, theme)
+
+
 def render_token_in(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render input token pill: [▲1.1M]."""
+    """Render input token count: ▲71.4k (legacy, used when token_in is in layout)."""
     if "input_tokens" not in state or state["input_tokens"] <= 0:
         return None
     cfg = theme.get("tokens", {})
     color = state.get("_sev_color", cfg.get("color", "#a8d4d0"))
     bold = state.get("_sev_bold", False)
-    return _pill(f"\u25b2 {_abbreviate_count(state['input_tokens'])}", cfg, color, bold, theme)
+    return _pill(f"\u25b2{_abbreviate_count(state['input_tokens'])}", cfg, color, bold, theme)
 
 
 def render_token_out(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render output token pill: [▼ 334k]."""
+    """Render output token count: ▼484k (legacy, used when token_out is in layout)."""
     if "output_tokens" not in state or state["output_tokens"] <= 0:
         return None
     cfg = theme.get("tokens", {})
     color = state.get("_sev_color", cfg.get("color", "#a8d4d0"))
     bold = state.get("_sev_bold", False)
-    return _pill(f"\u25bc {_abbreviate_count(state['output_tokens'])}", cfg, color, bold, theme)
+    return _pill(f"\u25bc{_abbreviate_count(state['output_tokens'])}", cfg, color, bold, theme)
 
 
 def render_cache_pill(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render combined cache pill: [© 521k™ 󰁍 +1.0k™]."""
+    """Render combined cache: 󰃨307k™ 󰍻+454™."""
     last_cr = state.get("last_cache_read")
     last_cc = state.get("last_cache_create")
     if (not last_cr or last_cr <= 0) and (not last_cc or last_cc <= 0):
@@ -1018,28 +1046,38 @@ def render_cache_pill(state: dict[str, Any], theme: dict[str, Any]) -> str | Non
     if NO_COLOR:
         parts = []
         if last_cr and last_cr > 0:
-            parts.append(f"\u00a9 {_abbreviate_count(last_cr)}\u2122")
+            parts.append(f"\U000f00e8{_abbreviate_count(last_cr)}\u2122")
         if last_cc and last_cc > 0:
-            parts.append(f"\U000f037b  +{_abbreviate_count(last_cc)}")
+            parts.append(f"\U000f037b+{_abbreviate_count(last_cc)}\u2122")
         return " ".join(parts) if parts else None
     fragments = []
     if last_cr and last_cr > 0:
-        fragments.append(style(f"\u00a9 {_abbreviate_count(last_cr)}\u2122", "#b48ead", bg_color=bg_hex))
+        fragments.append(style(f"\U000f00e8{_abbreviate_count(last_cr)}\u2122", "#b48ead", bg_color=bg_hex))
     if last_cc and last_cc > 0:
         cw_color = state.get("_cw_color", "#8fbcbb")
-        fragments.append(style(f"\U000f037b  +{_abbreviate_count(last_cc)}", cw_color, bg_color=bg_hex))
+        fragments.append(style(f"\U000f037b+{_abbreviate_count(last_cc)}\u2122", cw_color, bg_color=bg_hex))
     return " ".join(fragments) if fragments else None
 
 
 def render_cache_rate(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render cache hit rate pill: [󰓅 99%]."""
+    """Render cache hit rate: 󰓅99%."""
     hit_rate = state.get("cache_hit_rate")
-    source = state.get("sys_overhead_source", "")
-    if hit_rate is None or source != "measured":
+    if hit_rate is None:
+        # Also check integer percentage form
+        hit_rate_int = state.get("cache_hit_rate_pct")
+        if isinstance(hit_rate_int, (int, float)) and hit_rate_int > 0:
+            cfg = theme.get("context_bar", {})
+            rate_color = "#8fbcbb"  # nord7 teal
+            return _pill(f"\U000f04c5{int(hit_rate_int)}%", cfg, rate_color, theme=theme)
+        return None
+    if not isinstance(hit_rate, (int, float)):
+        return None
+    rate_pct = int(hit_rate * 100) if hit_rate <= 1.0 else int(hit_rate)
+    if rate_pct <= 0:
         return None
     cfg = theme.get("context_bar", {})
     rate_color = "#8fbcbb"  # nord7 teal
-    return _pill(f"\U000f04c5 {int(hit_rate * 100)}%", cfg, rate_color, theme=theme)
+    return _pill(f"\U000f04c5{rate_pct}%", cfg, rate_color, theme=theme)
 
 
 def render_turns_pill(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1079,12 +1117,13 @@ def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_duration(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render duration module."""
+    """Render duration module — compact: 󰥔3h30m, 󰥔45s, 󰥔2m30s."""
     if "duration_ms" not in state:
         return None
     dur_cfg = theme.get("duration", {})
-    fmt = dur_cfg.get("format", "hm")
-    text = f"{dur_cfg.get('glyph', '')}{_format_duration(state['duration_ms'], fmt)}"
+    fmt = dur_cfg.get("format", "auto")
+    glyph = dur_cfg.get("glyph", "\U000f0954").rstrip()
+    text = f"{glyph}{_format_duration(state['duration_ms'], fmt)}"
     return _pill(text, dur_cfg, theme=theme)
 
 
@@ -1443,10 +1482,10 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
     if state.get("_compact") and compact_label:
-        text = f"{compact_label}{bar} {pct}%"
+        text = f"{compact_label}{bar}{pct}%"
     else:
-        glyph = cfg.get("glyph", "")
-        text = f"{glyph}{bar} {pct}%"
+        glyph = cfg.get("glyph", "").rstrip()
+        text = f"{glyph}{bar}{pct}%"
 
     is_stale = state.get(f"{theme_key}_stale", False)
     if pct >= crit_t:
@@ -1537,7 +1576,7 @@ def render_obs_reads(state: dict[str, Any], theme: dict[str, Any]) -> str | None
     if not n:
         return None
     cfg = theme.get("obs_reads", {})
-    glyph = cfg.get("glyph", "\U000f0447 ")  # nf-md-file_document
+    glyph = cfg.get("glyph", "\U000f0447").rstrip()
     return _pill(f"{glyph}{n}", cfg, theme=theme)
 
 
@@ -1563,7 +1602,7 @@ def render_obs_writes(state: dict[str, Any], theme: dict[str, Any]) -> str | Non
     if not n:
         return None
     cfg = theme.get("obs_writes", {})
-    glyph = cfg.get("glyph", "\U000f064f ")  # nf-md-lead_pencil
+    glyph = cfg.get("glyph", "\U000f064f").rstrip()
     return _pill(f"{glyph}{n}", cfg, theme=theme)
 
 
@@ -1572,7 +1611,7 @@ def render_obs_bash(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     if not n:
         return None
     cfg = theme.get("obs_bash", {})
-    glyph = cfg.get("glyph", "\U000f018d ")  # nf-md-console
+    glyph = cfg.get("glyph", "\U000f018d").rstrip()
     return _pill(f"{glyph}{n}", cfg, theme=theme)
 
 
@@ -1597,7 +1636,7 @@ def render_obs_subagents(state: dict[str, Any], theme: dict[str, Any]) -> str | 
     if not n:
         return None
     cfg = theme.get("obs_subagents", {})
-    glyph = cfg.get("glyph", "\U000f04c1 ")  # nf-md-source_fork
+    glyph = cfg.get("glyph", "\U000f0026").rstrip()
     return _pill(f"{glyph}{n}", cfg, theme=theme)
 
 
@@ -1606,7 +1645,7 @@ def render_obs_tasks(state: dict[str, Any], theme: dict[str, Any]) -> str | None
     if not n:
         return None
     cfg = theme.get("obs_tasks", {})
-    glyph = cfg.get("glyph", "\U000f0137 ")  # nf-md-clipboard_check
+    glyph = cfg.get("glyph", "\U000f0318").rstrip()
     return _pill(f"{glyph}{n}", cfg, theme=theme)
 
 
@@ -1615,8 +1654,8 @@ def render_obs_compactions(state: dict[str, Any], theme: dict[str, Any]) -> str 
     if not n:
         return None
     cfg = theme.get("obs_compactions", {})
-    glyph = cfg.get("glyph", "\U000f10e7 ")  # nf-md-archive_arrow_down
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    glyph = cfg.get("glyph", "\U000f0520").rstrip()
+    return _pill(f"{glyph}x{n}", cfg, theme=theme)
 
 
 def render_obs_prompts(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1626,6 +1665,15 @@ def render_obs_prompts(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     cfg = theme.get("obs_prompts", {})
     glyph = cfg.get("glyph", "\U000f017a ")  # nf-md-comment_text
     return _pill(f"{glyph}{n}", cfg, theme=theme)
+
+
+def render_turns(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render session turn count: 󰐕475."""
+    n = state.get("session_turn_count")
+    if not n or n <= 0:
+        return None
+    cfg = theme.get("tokens", {})
+    return _pill(f"\U000f0415{n}", cfg, theme=theme)
 
 
 def render_obs_health(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1651,6 +1699,7 @@ MODULE_RENDERERS: dict[str, Any] = {
     "tokens": render_tokens,
     "sys_overhead": render_sys_overhead,
     "sys_overhead_pill": render_sys_overhead_pill,
+    "token_counts": render_token_counts,
     "token_in": render_token_in,
     "token_out": render_token_out,
     "cache_pill": render_cache_pill,
@@ -1675,19 +1724,31 @@ MODULE_RENDERERS: dict[str, Any] = {
     "obs_compactions": render_obs_compactions,
     "obs_prompts": render_obs_prompts,
     "obs_health": render_obs_health,
+    "turns": render_turns,
 }
 
-DEFAULT_LINE1 = ["model", "token_in", "token_out", "context_bar",
+DEFAULT_LINE1 = ["model", "token_counts", "context_bar",
                  "cache_rate", "duration"]
 DEFAULT_LINE2 = ["sys_overhead_pill", "cache_pill",
-                 "obs_reads", "obs_rereads", "obs_writes", "obs_bash",
-                 "obs_prompts", "obs_tasks", "obs_subagents", "obs_health",
-                 "turns_pill", "cost"]
+                 "turns", "obs_reads", "obs_writes",
+                 "obs_bash", "obs_tasks", "obs_subagents",
+                 "obs_compactions", "cost"]
 DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk"]
+
+# Semantic groups for compact line 2 layout.
+# Groups are separated by │, items within a group by double-space.
+LINE2_GROUPS = [
+    ["sys_overhead_pill"],                          # Group 1: Overhead
+    ["cache_pill"],                                 # Group 2: Cache (read + delta)
+    ["turns", "obs_reads", "obs_writes"],           # Group 3: Volume
+    ["obs_bash", "obs_tasks", "obs_subagents"],     # Group 4: Tools/Orchestration
+    ["obs_compactions"],                            # Group 5: Compactions
+    ["cost"],                                       # Group 6: Cost
+]
 
 
 def render_line(state: dict[str, Any], theme: dict[str, Any],
-                modules: list[str]) -> str:
+                modules: list[str], sep_override: str | None = None) -> str:
     """Render a single line from a list of module names.
 
     Iterates modules, looks up each in MODULE_RENDERERS, skips unknown
@@ -1695,10 +1756,13 @@ def render_line(state: dict[str, Any], theme: dict[str, Any],
     and joins with the theme separator.
     """
     parts: list[str] = []
-    sep_cfg = theme.get("separator", {})
-    sep_char = sep_cfg.get("char", "\u2502")
-    sep_dim = sep_cfg.get("dim", True)
-    sep = style_dim(sep_char) if sep_dim else sep_char
+    if sep_override is not None:
+        sep = sep_override
+    else:
+        sep_cfg = theme.get("separator", {})
+        sep_char = sep_cfg.get("char", "\u2502")
+        sep_dim = sep_cfg.get("dim", True)
+        sep = style_dim(sep_char) if sep_dim else sep_char
 
     for name in modules:
         renderer = MODULE_RENDERERS.get(name)
@@ -1717,12 +1781,15 @@ def render_line(state: dict[str, Any], theme: dict[str, Any],
 
 
 def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
-                    modules: list[str]) -> str:
+                    modules: list[str], sep_override: str | None = None) -> str:
     """Render modules into auto-wrapped rows that fit terminal width."""
-    sep_cfg = theme.get("separator", {})
-    sep_char = sep_cfg.get("char", "\u2502")
-    sep_dim = sep_cfg.get("dim", True)
-    sep = style_dim(sep_char) if sep_dim else sep_char
+    if sep_override is not None:
+        sep = sep_override
+    else:
+        sep_cfg = theme.get("separator", {})
+        sep_char = sep_cfg.get("char", "\u2502")
+        sep_dim = sep_cfg.get("dim", True)
+        sep = style_dim(sep_char) if sep_dim else sep_char
     sep_width = _visible_len(sep)
 
     # Render all modules, keep only non-None results
@@ -1772,6 +1839,36 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
     return "\n".join(sep.join(row) for row in rows)
 
 
+def _render_line2_grouped(state: dict[str, Any], theme: dict[str, Any]) -> str:
+    """Render line 2 as semantic groups separated by │.
+
+    Groups are separated by │ (box drawing). Items within a group
+    are separated by double-space. Empty groups are omitted.
+    """
+    sep_cfg = theme.get("separator", {})
+    sep_char = sep_cfg.get("char", "\u2502")
+    sep_dim = sep_cfg.get("dim", True)
+    sep = style_dim(f" {sep_char} ") if sep_dim else f" {sep_char} "
+
+    group_strs: list[str] = []
+    for group in LINE2_GROUPS:
+        parts: list[str] = []
+        for name in group:
+            renderer = MODULE_RENDERERS.get(name)
+            if renderer is None:
+                continue
+            mod_cfg = theme.get(name, {})
+            if not mod_cfg.get("enabled", True):
+                continue
+            result = renderer(state, theme)
+            if result is not None:
+                parts.append(result)
+        if parts:
+            group_strs.append(" ".join(parts))
+
+    return sep.join(group_strs) if group_strs else ""
+
+
 def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     """Render status output from normalized state using layout config.
 
@@ -1811,9 +1908,21 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         return _render_wrapped(state, theme, merged)
 
     # Multi-line: render each layout line separately, enforce line breaks
+    # Line 1 uses double-space separator; line 2 uses grouped │ layout;
+    # Line 3 uses │ with spaces
+    sep_cfg = theme.get("separator", {})
+    sep_char = sep_cfg.get("char", "\u2502")
+    sep_dim = sep_cfg.get("dim", True)
+    line3_sep = f" {style_dim(sep_char) if sep_dim else sep_char} "
     rendered_lines: list[str] = []
-    for modules in layout_lines:
-        line = _render_wrapped(state, theme, modules)
+    for idx, modules in enumerate(layout_lines):
+        # Line 2 (index 1) uses semantic grouping when it matches default layout
+        if idx == 1 and modules == DEFAULT_LINE2:
+            line = _render_line2_grouped(state, theme)
+        elif idx == 0:
+            line = _render_wrapped(state, theme, modules, sep_override="  ")
+        else:
+            line = _render_wrapped(state, theme, modules, sep_override=line3_sep)
         if line:
             rendered_lines.append(line)
 

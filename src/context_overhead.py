@@ -718,6 +718,7 @@ def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> No
         "cache_busting", "cache_degraded", "cache_expired",
         "last_cache_create", "last_cache_read", "prev_cache_create", "microcompact_suspected",
         "calibration_accuracy", "context_growth_per_turn", "turns_until_compact",
+        "session_turn_count",
     )
     for key in _FIELDS:
         if key in session_cache:
