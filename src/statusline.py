@@ -48,15 +48,7 @@ try:
     for _obs_path in [_script_dir, os.path.join(os.path.expanduser("~"), ".claude", "scripts")]:
         if _obs_path not in sys.path:
             sys.path.insert(0, _obs_path)
-    try:
-        from obs_utils import resolve_package_root_env, update_health, _atomic_jsonl_append
-    except ImportError:
-        # Fallback: older obs_utils without resolve_package_root_env
-        from obs_utils import resolve_package_root, update_health, _atomic_jsonl_append
-        def resolve_package_root_env(session_id):
-            obs_root = os.environ.get("OBS_ROOT")
-            kwargs = {"obs_root": obs_root} if obs_root else {}
-            return resolve_package_root(session_id, **kwargs)
+    from obs_utils import resolve_package_root_env, update_health, _atomic_jsonl_append
     _OBS_AVAILABLE = True
 except Exception:
     _OBS_AVAILABLE = False
@@ -1580,13 +1572,36 @@ def render_tmux(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 # --- Observability Module Renderers ---
 
 
-def render_obs_reads(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_reads")
+def _render_obs_counter(
+    state: dict[str, Any],
+    theme: dict[str, Any],
+    state_key: str,
+    theme_key: str,
+    *,
+    default_glyph: str = "",
+    prefix: str = "",
+    display_key: str | None = None,
+    suffix: str = "",
+) -> str | None:
+    """Data-driven obs counter renderer."""
+    n = state.get(state_key)
     if not n:
         return None
-    cfg = theme.get("obs_reads", {})
-    glyph = cfg.get("glyph", "\U000f0447").rstrip()
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    cfg = theme.get(theme_key, {})
+    glyph = cfg.get("glyph", default_glyph).rstrip()
+    display = state.get(display_key, n) if display_key else n
+    text = f"{glyph}{prefix}{display}{suffix}"
+    crit_t = cfg.get("critical_threshold")
+    warn_t = cfg.get("warn_threshold")
+    if crit_t is not None and n >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+    if warn_t is not None and n >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
+
+
+def render_obs_reads(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    return _render_obs_counter(state, theme, "obs_reads", "obs_reads", default_glyph="\U000f0447")
 
 
 def render_obs_rereads(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1607,21 +1622,11 @@ def render_obs_rereads(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
 
 def render_obs_writes(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_writes")
-    if not n:
-        return None
-    cfg = theme.get("obs_writes", {})
-    glyph = cfg.get("glyph", "\U000f064f").rstrip()
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_writes", "obs_writes", default_glyph="\U000f064f")
 
 
 def render_obs_bash(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_bash")
-    if not n:
-        return None
-    cfg = theme.get("obs_bash", {})
-    glyph = cfg.get("glyph", "\U000f018d").rstrip()
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_bash", "obs_bash", default_glyph="\U000f018d")
 
 
 def render_obs_failures(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1641,39 +1646,19 @@ def render_obs_failures(state: dict[str, Any], theme: dict[str, Any]) -> str | N
 
 
 def render_obs_subagents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_subagents")
-    if not n:
-        return None
-    cfg = theme.get("obs_subagents", {})
-    glyph = cfg.get("glyph", "\U000f0026").rstrip()
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_subagents", "obs_subagents", default_glyph="\U000f0026")
 
 
 def render_obs_tasks(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_tasks")
-    if not n:
-        return None
-    cfg = theme.get("obs_tasks", {})
-    glyph = cfg.get("glyph", "\U000f0318").rstrip()
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_tasks", "obs_tasks", default_glyph="\U000f0318")
 
 
 def render_obs_compactions(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_compactions")
-    if not n:
-        return None
-    cfg = theme.get("obs_compactions", {})
-    glyph = cfg.get("glyph", "\U000f0520").rstrip()
-    return _pill(f"{glyph}x{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_compactions", "obs_compactions", default_glyph="\U000f0520", prefix="x")
 
 
 def render_obs_prompts(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_prompts")
-    if not n:
-        return None
-    cfg = theme.get("obs_prompts", {})
-    glyph = cfg.get("glyph", "\U000f017a").rstrip()
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_prompts", "obs_prompts", default_glyph="\U000f017a")
 
 
 def render_turns(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
