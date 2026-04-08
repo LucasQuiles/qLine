@@ -471,17 +471,9 @@ def generate_overhead_report(
         except (json.JSONDecodeError, ValueError):
             continue
 
-        msg = entry.get("message")
-        if isinstance(msg, dict) and msg.get("stop_reason") is not None:
-            usage = msg.get("usage")
-            if isinstance(usage, dict):
-                turns.append(usage)
-                continue
-        tur = entry.get("toolUseResult")
-        if isinstance(tur, dict):
-            usage = tur.get("usage")
-            if isinstance(usage, dict):
-                turns.append(usage)
+        usage, _, _, _ = extract_usage_full(entry)
+        if usage is not None:
+            turns.append(usage)
 
     if not turns:
         return None
