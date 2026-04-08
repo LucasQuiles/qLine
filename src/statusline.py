@@ -179,7 +179,9 @@ DEFAULT_THEME: dict[str, Any] = {
                   "obs_subagents", "obs_health", "obs_compactions",
                   "obs_hook_faults", "lines_changed",
                   "session_count", "daily_cost", "weekly_cost",
-                  "api_efficiency", "cost"],
+                  "api_efficiency", "cost_per_ktok",
+                  "io_ratio", "tokens_per_turn",
+                  "free_context", "growth_rate", "cost"],
         "line3": ["dir", "git", "cpu", "memory", "disk"],
     },
     "git": {
@@ -353,6 +355,26 @@ DEFAULT_THEME: dict[str, Any] = {
     "session_count": {
         "enabled": True,
         "color": "#8fbcbb",
+    },
+    "cost_per_ktok": {
+        "enabled": True,
+        "color": "#e5c890",
+    },
+    "io_ratio": {
+        "enabled": True,
+        "color": "#88c0d0",
+    },
+    "tokens_per_turn": {
+        "enabled": True,
+        "color": "#a3be8c",
+    },
+    "free_context": {
+        "enabled": True,
+        "color": "#8fbcbb",
+    },
+    "growth_rate": {
+        "enabled": True,
+        "color": "#d08770",
     },
 }
 
@@ -1847,6 +1869,69 @@ def render_session_count(state: dict[str, Any], theme: dict[str, Any]) -> str | 
     return _pill(f"#{count}", cfg, theme=theme)
 
 
+def render_cost_per_ktok(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render cost per 1k output tokens: $/k0.15."""
+    cost = state.get("cost_usd")
+    out_tok = state.get("output_tokens")
+    if not cost or not out_tok or out_tok <= 0:
+        return None
+    cfg = theme.get("cost_per_ktok", {})
+    per_k = cost / (out_tok / 1000)
+    if per_k < 0.01:
+        text = f"$/k{per_k:.3f}"
+    else:
+        text = f"$/k{per_k:.2f}"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_io_ratio(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render output:input token ratio: io:6.8x."""
+    in_tok = state.get("input_tokens")
+    out_tok = state.get("output_tokens")
+    if not in_tok or not out_tok or in_tok <= 0:
+        return None
+    cfg = theme.get("io_ratio", {})
+    ratio = out_tok / in_tok
+    text = f"io:{ratio:.1f}x"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_tokens_per_turn(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render average output tokens per turn: tok/t 1.2k."""
+    out_tok = state.get("output_tokens")
+    turns = state.get("session_turn_count")
+    if not out_tok or not turns or turns <= 0:
+        return None
+    cfg = theme.get("tokens_per_turn", {})
+    avg = out_tok // turns
+    text = f"tok/t{_abbreviate_count(avg)}"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_free_context(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render free context tokens: ▼286k free."""
+    total = state.get("context_total")
+    used = state.get("context_used_corrected", state.get("context_used"))
+    if not total or not used:
+        return None
+    free = max(0, total - used)
+    if free <= 0:
+        return None
+    cfg = theme.get("free_context", {})
+    text = f"\u25bc{_abbreviate_count(free)}free"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_growth_rate(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render context growth per turn: gro:8.8k/t."""
+    growth = state.get("context_growth_per_turn")
+    if not growth or growth <= 0:
+        return None
+    cfg = theme.get("growth_rate", {})
+    text = f"gro:{_abbreviate_count(growth)}/t"
+    return _pill(text, cfg, theme=theme)
+
+
 MODULE_RENDERERS: dict[str, Any] = {
     "model": render_model,
     "dir": render_dir,
@@ -1889,6 +1974,11 @@ MODULE_RENDERERS: dict[str, Any] = {
     "daily_cost": render_daily_cost,
     "weekly_cost": render_weekly_cost,
     "session_count": render_session_count,
+    "cost_per_ktok": render_cost_per_ktok,
+    "io_ratio": render_io_ratio,
+    "tokens_per_turn": render_tokens_per_turn,
+    "free_context": render_free_context,
+    "growth_rate": render_growth_rate,
 }
 
 DEFAULT_LINE1 = ["model", "token_counts", "token_out_counts", "context_bar",
