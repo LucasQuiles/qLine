@@ -189,7 +189,9 @@ DEFAULT_THEME: dict[str, Any] = {
                   "session_count", "daily_cost", "weekly_cost",
                   "api_efficiency", "cost_per_ktok",
                   "io_ratio", "tokens_per_turn",
-                  "free_context", "growth_rate", "cost"],
+                  "free_context", "growth_rate",
+                  "unique_files", "fail_rate", "think_pct",
+                  "cost_per_turn", "burn_trend", "cost"],
         "line3": ["dir", "git", "cpu", "memory", "disk"],
     },
     "git": {
@@ -410,6 +412,36 @@ DEFAULT_THEME: dict[str, Any] = {
         "label": "grow",
         "enabled": True,
         "color": "#d08770",
+    },
+    "unique_files": {
+        "label": "files",
+        "enabled": True,
+        "color": "#88c0d0",
+    },
+    "fail_rate": {
+        "label": "fail%",
+        "enabled": True,
+        "color": "#fda4af",
+        "warn_threshold": 5,
+        "critical_threshold": 15,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+    },
+    "think_pct": {
+        "label": "think",
+        "enabled": True,
+        "color": "#c4b5fd",
+    },
+    "cost_per_turn": {
+        "label": "$/turn",
+        "enabled": True,
+        "color": "#e5c890",
+    },
+    "burn_trend": {
+        "label": "burn",
+        "enabled": True,
+        "color": "#a3be8c",
+        "warn_color": "#f0d399",
     },
 }
 
@@ -1972,6 +2004,66 @@ def render_growth_rate(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     return _pill(text, cfg, theme=theme)
 
 
+def render_unique_files(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render unique files touched this session."""
+    n = state.get("unique_files")
+    if not n:
+        return None
+    cfg = theme.get("unique_files", {})
+    return _pill(f"\U000f024b{n}", cfg, theme=theme)  # nf-md-file_multiple
+
+
+def render_fail_rate(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render tool failure rate: fail:3.2%."""
+    rate = state.get("fail_rate")
+    if rate is None or rate == 0:
+        return None
+    cfg = theme.get("fail_rate", {})
+    text = f"{rate}%" if state.get("_show_labels") else f"fail:{rate}%"
+    warn_t = cfg.get("warn_threshold", 5)
+    crit_t = cfg.get("critical_threshold", 15)
+    if rate >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+    if rate >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
+
+
+def render_think_pct(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render human think time percentage: 󰔛71% (waiting vs working)."""
+    pct = state.get("think_pct")
+    if pct is None:
+        return None
+    cfg = theme.get("think_pct", {})
+    text = f"{pct}%" if state.get("_show_labels") else f"\U000f0520{pct}%"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_cost_per_turn(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render cost per turn: $/t0.15."""
+    cost = state.get("cost_usd")
+    turns = state.get("session_turn_count")
+    if not cost or not turns or turns <= 0:
+        return None
+    cfg = theme.get("cost_per_turn", {})
+    cpt = cost / turns
+    text = f"{cpt:.2f}" if state.get("_show_labels") else f"$/t{cpt:.2f}"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_burn_trend(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render cost acceleration: 󰔰↗ accelerating, 󰔳→ steady, 󰔱↘ decelerating."""
+    trend = state.get("burn_trend")
+    if trend is None:
+        return None
+    cfg = theme.get("burn_trend", {})
+    symbols = {"accelerating": "\u2197", "steady": "\u2192", "decelerating": "\u2198"}
+    text = symbols.get(trend, "?")
+    if trend == "accelerating":
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
+
+
 MODULE_RENDERERS: dict[str, Any] = {
     "model": render_model,
     "dir": render_dir,
@@ -2019,6 +2111,11 @@ MODULE_RENDERERS: dict[str, Any] = {
     "tokens_per_turn": render_tokens_per_turn,
     "free_context": render_free_context,
     "growth_rate": render_growth_rate,
+    "unique_files": render_unique_files,
+    "fail_rate": render_fail_rate,
+    "think_pct": render_think_pct,
+    "cost_per_turn": render_cost_per_turn,
+    "burn_trend": render_burn_trend,
 }
 
 DEFAULT_LINE1 = ["model", "token_counts", "token_out_counts", "context_bar",
@@ -2385,6 +2482,89 @@ def _count_parse_errors(package_root: str) -> int:
         return 0
 
 
+def _compute_session_insights(package_root: str) -> dict:
+    """Compute derived insights from hook_events.jsonl timestamps and data.
+
+    Returns dict with: unique_files, fail_rate, think_time_s, think_pct,
+    cost_per_turn, burn_trend. Never raises.
+    """
+    try:
+        ledger = os.path.join(package_root, "metadata", "hook_events.jsonl")
+        timestamps: list[float] = []
+        unique_files: set[str] = set()
+        total_tool_uses = 0
+        tool_failures = 0
+
+        with open(ledger) as f:
+            for line in f:
+                # Extract timestamp
+                ts_idx = line.find('"ts": "')
+                if ts_idx >= 0:
+                    ts_start = ts_idx + 7
+                    ts_end = line.find('"', ts_start)
+                    if ts_end > ts_start:
+                        try:
+                            timestamps.append(
+                                datetime.fromisoformat(line[ts_start:ts_end]).timestamp()
+                            )
+                        except (ValueError, OSError):
+                            pass
+
+                # Extract event type
+                ev_idx = line.find('"event": "')
+                if ev_idx >= 0:
+                    ev_start = ev_idx + 10
+                    ev_end = line.find('"', ev_start)
+                    if ev_end > ev_start:
+                        event = line[ev_start:ev_end]
+                        if event == "tool.failed":
+                            tool_failures += 1
+                        if event.startswith("file.") or event == "bash.executed":
+                            total_tool_uses += 1
+                        if event == "tool.failed":
+                            total_tool_uses += 1
+
+                # Extract file paths from data
+                fp_idx = line.find('"file_path": "')
+                if fp_idx >= 0:
+                    fp_start = fp_idx + 14
+                    fp_end = line.find('"', fp_start)
+                    if fp_end > fp_start:
+                        unique_files.add(line[fp_start:fp_end])
+                else:
+                    # Also check "path" key
+                    p_idx = line.find('"path": "')
+                    if p_idx >= 0:
+                        p_start = p_idx + 9
+                        p_end = line.find('"', p_start)
+                        if p_end > p_start:
+                            unique_files.add(line[p_start:p_end])
+
+        result: dict = {}
+        result["unique_files"] = len(unique_files)
+
+        # Fail rate
+        if total_tool_uses > 0:
+            result["fail_rate"] = round(tool_failures / total_tool_uses * 100, 1)
+
+        # Think time: sum of gaps > 30s between events
+        if len(timestamps) >= 2:
+            timestamps.sort()
+            think_s = sum(
+                timestamps[i + 1] - timestamps[i]
+                for i in range(len(timestamps) - 1)
+                if timestamps[i + 1] - timestamps[i] > 30
+            )
+            total_s = timestamps[-1] - timestamps[0]
+            result["think_time_s"] = round(think_s)
+            if total_s > 0:
+                result["think_pct"] = round(think_s / total_s * 100)
+
+        return result
+    except Exception:
+        return {}
+
+
 def _scan_cost_and_sessions() -> tuple[float, float, int]:
     """Scan session snapshots for daily cost, weekly cost, and today's session count.
 
@@ -2533,6 +2713,24 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         if hook_faults > 0:
             state["obs_hook_faults"] = hook_faults
 
+        # Session insights (30s TTL — heavier scan with timestamp parsing)
+        if now - session_cache.get("last_insights_ts", 0) >= 30:
+            insights = _compute_session_insights(package_root)
+            session_cache["insights"] = insights
+            session_cache["last_insights_ts"] = now
+            obs_cache[session_id] = session_cache
+            cache["_obs"] = obs_cache
+            save_cache(cache)
+
+        insights = session_cache.get("insights", {})
+        if insights.get("unique_files"):
+            state["unique_files"] = insights["unique_files"]
+        if insights.get("fail_rate"):
+            state["fail_rate"] = insights["fail_rate"]
+        if insights.get("think_pct") is not None:
+            state["think_pct"] = insights["think_pct"]
+            state["think_time_s"] = insights.get("think_time_s", 0)
+
         # Daily/weekly cost + session count (60s TTL — scans all session packages)
         if now - session_cache.get("last_cost_scan_ts", 0) >= 60:
             d_cost, w_cost, s_count = _scan_cost_and_sessions()
@@ -2553,6 +2751,37 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         s_count = session_cache.get("session_count_today")
         if s_count and s_count > 0:
             state["session_count_today"] = s_count
+
+        # Burn trend from snapshot history
+        try:
+            snap_path = os.path.join(
+                package_root, "native", "statusline", "snapshots.jsonl"
+            )
+            if os.path.isfile(snap_path):
+                with open(snap_path, "rb") as f:
+                    fsize = os.path.getsize(snap_path)
+                    f.seek(max(0, fsize - 4096))
+                    tail = f.read().decode("utf-8", errors="replace")
+                snap_lines = [l for l in tail.strip().splitlines() if l.strip()]
+                if len(snap_lines) >= 4:
+                    first = json.loads(snap_lines[0])
+                    mid = json.loads(snap_lines[len(snap_lines) // 2])
+                    last = json.loads(snap_lines[-1])
+                    c0 = first.get("cost_usd", 0)
+                    cm = mid.get("cost_usd", 0)
+                    cl = last.get("cost_usd", 0)
+                    first_half = cm - c0
+                    second_half = cl - cm
+                    if first_half > 0.1:
+                        ratio = second_half / first_half
+                        if ratio > 1.2:
+                            state["burn_trend"] = "accelerating"
+                        elif ratio < 0.8:
+                            state["burn_trend"] = "decelerating"
+                        else:
+                            state["burn_trend"] = "steady"
+        except Exception:
+            pass
         parse_errors = session_cache.get("parse_error_count", 0)
         if parse_errors > 0:
             state["obs_parse_errors"] = parse_errors
