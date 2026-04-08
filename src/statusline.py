@@ -177,7 +177,9 @@ DEFAULT_THEME: dict[str, Any] = {
                   "turns", "obs_reads", "obs_rereads", "obs_writes",
                   "obs_bash", "obs_failures", "obs_prompts", "obs_tasks",
                   "obs_subagents", "obs_health", "obs_compactions",
-                  "obs_hook_faults", "cost"],
+                  "obs_hook_faults", "lines_changed",
+                  "session_count", "daily_cost", "weekly_cost",
+                  "api_efficiency", "cost"],
         "line3": ["dir", "git", "cpu", "memory", "disk"],
     },
     "git": {
@@ -323,6 +325,34 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_threshold": 5,
         "warn_color": "#f0d399",
         "critical_color": "#d06070",
+    },
+    "lines_changed": {
+        "enabled": True,
+        "color": "#88c0d0",
+    },
+    "api_efficiency": {
+        "enabled": True,
+        "color": "#a3be8c",
+    },
+    "daily_cost": {
+        "enabled": True,
+        "color": "#e5c890",
+        "warn_threshold": 200,
+        "critical_threshold": 400,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+    },
+    "weekly_cost": {
+        "enabled": True,
+        "color": "#e5c890",
+        "warn_threshold": 1000,
+        "critical_threshold": 2000,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+    },
+    "session_count": {
+        "enabled": True,
+        "color": "#8fbcbb",
     },
 }
 
@@ -537,6 +567,15 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
         duration_ms = cost.get("total_duration_ms")
         if isinstance(duration_ms, (int, float)):
             state["duration_ms"] = int(duration_ms)
+        api_ms = cost.get("total_api_duration_ms")
+        if isinstance(api_ms, (int, float)):
+            state["api_duration_ms"] = int(api_ms)
+        lines_add = cost.get("total_lines_added")
+        lines_rm = cost.get("total_lines_removed")
+        if isinstance(lines_add, (int, float)):
+            state["lines_added"] = int(lines_add)
+        if isinstance(lines_rm, (int, float)):
+            state["lines_removed"] = int(lines_rm)
     # Fallback: top-level cost_usd and duration_ms (CC sends these directly)
     if "cost_usd" not in state:
         c = payload.get("cost_usd")
@@ -1740,6 +1779,74 @@ def render_obs_health(state: dict[str, Any], theme: dict[str, Any]) -> str | Non
     return _pill(glyph.rstrip(), cfg, cfg.get("failed_color", "#d06070"), True, theme)
 
 
+def render_lines_changed(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render lines added/removed: +2.5k/-800."""
+    added = state.get("lines_added")
+    removed = state.get("lines_removed")
+    if not added and not removed:
+        return None
+    cfg = theme.get("lines_changed", {})
+    parts = []
+    if added:
+        parts.append(f"+{_abbreviate_count(added)}")
+    if removed:
+        parts.append(f"-{_abbreviate_count(removed)}")
+    text = "/".join(parts)
+    return _pill(text, cfg, theme=theme)
+
+
+def render_api_efficiency(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render API time vs wall time: ⏱53% (API-active ratio)."""
+    api_ms = state.get("api_duration_ms")
+    wall_ms = state.get("duration_ms")
+    if not api_ms or not wall_ms or wall_ms <= 0:
+        return None
+    cfg = theme.get("api_efficiency", {})
+    pct = min(round(api_ms / wall_ms * 100), 100)
+    return _pill(f"\u23f1{pct}%", cfg, theme=theme)
+
+
+def render_daily_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render today's cumulative cost from session snapshot history."""
+    cost = state.get("daily_cost")
+    if cost is None:
+        return None
+    cfg = theme.get("daily_cost", {})
+    warn_t = cfg.get("warn_threshold", 200)
+    crit_t = cfg.get("critical_threshold", 400)
+    text = f"\U0001f4c5${cost:.0f}"
+    if cost >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+    if cost >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
+
+
+def render_weekly_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render this week's cumulative cost."""
+    cost = state.get("weekly_cost")
+    if cost is None:
+        return None
+    cfg = theme.get("weekly_cost", {})
+    warn_t = cfg.get("warn_threshold", 1000)
+    crit_t = cfg.get("critical_threshold", 2000)
+    text = f"${cost:.0f}/wk"
+    if cost >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+    if cost >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
+
+
+def render_session_count(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render session count for today: #91."""
+    count = state.get("session_count_today")
+    if not count:
+        return None
+    cfg = theme.get("session_count", {})
+    return _pill(f"#{count}", cfg, theme=theme)
+
+
 MODULE_RENDERERS: dict[str, Any] = {
     "model": render_model,
     "dir": render_dir,
@@ -1777,6 +1884,11 @@ MODULE_RENDERERS: dict[str, Any] = {
     "obs_health": render_obs_health,
     "obs_hook_faults": render_obs_hook_faults,
     "turns": render_turns,
+    "lines_changed": render_lines_changed,
+    "api_efficiency": render_api_efficiency,
+    "daily_cost": render_daily_cost,
+    "weekly_cost": render_weekly_cost,
+    "session_count": render_session_count,
 }
 
 DEFAULT_LINE1 = ["model", "token_counts", "token_out_counts", "context_bar",
@@ -1785,7 +1897,9 @@ DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
                  "turns", "obs_reads", "obs_rereads", "obs_writes",
                  "obs_bash", "obs_failures", "obs_prompts", "obs_tasks",
                  "obs_subagents", "obs_health", "obs_compactions",
-                 "obs_hook_faults", "cost"]
+                 "obs_hook_faults", "lines_changed",
+                 "session_count", "daily_cost", "weekly_cost",
+                 "api_efficiency", "cost"]
 DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk"]
 
 # PIPE separator positions on line 2 (module names after which a PIPE | is used
@@ -2104,6 +2218,70 @@ def _count_parse_errors(package_root: str) -> int:
         return 0
 
 
+def _scan_cost_and_sessions() -> tuple[float, float, int]:
+    """Scan session snapshots for daily cost, weekly cost, and today's session count.
+
+    Returns (daily_cost, weekly_cost, session_count_today). Never raises.
+    """
+    try:
+        import glob
+        from datetime import date, timedelta
+
+        obs_root = os.path.join(os.path.expanduser("~"), ".claude", "observability")
+        sessions_dir = os.path.join(obs_root, "sessions")
+        if not os.path.isdir(sessions_dir):
+            return 0.0, 0.0, 0
+
+        today = date.today()
+        today_str = today.isoformat()
+        week_start = today - timedelta(days=today.weekday())
+
+        daily_cost = 0.0
+        weekly_cost = 0.0
+        session_count = 0
+
+        for date_dir_name in os.listdir(sessions_dir):
+            try:
+                dir_date = date.fromisoformat(date_dir_name)
+            except ValueError:
+                continue
+            if dir_date < week_start:
+                continue
+
+            date_dir = os.path.join(sessions_dir, date_dir_name)
+            is_today = (date_dir_name == today_str)
+
+            for sess_id in os.listdir(date_dir):
+                snap_path = os.path.join(
+                    date_dir, sess_id, "native", "statusline", "snapshots.jsonl"
+                )
+                if not os.path.isfile(snap_path):
+                    continue
+
+                if is_today:
+                    session_count += 1
+
+                # Read last line for final cost
+                try:
+                    with open(snap_path, "rb") as f:
+                        f.seek(max(0, os.path.getsize(snap_path) - 1024))
+                        tail = f.read().decode("utf-8", errors="replace")
+                    lines = tail.strip().splitlines()
+                    if lines:
+                        rec = json.loads(lines[-1])
+                        c = rec.get("cost_usd", 0)
+                        if isinstance(c, (int, float)):
+                            weekly_cost += c
+                            if is_today:
+                                daily_cost += c
+                except Exception:
+                    pass
+
+        return daily_cost, weekly_cost, session_count
+    except Exception:
+        return 0.0, 0.0, 0
+
+
 def _inject_obs_counters(state: dict, payload: dict) -> None:
     """Inject obs event counters into state for module renderers. Never raises."""
     if not _OBS_AVAILABLE:
@@ -2187,6 +2365,27 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         hook_faults = session_cache.get("hook_fault_count", 0)
         if hook_faults > 0:
             state["obs_hook_faults"] = hook_faults
+
+        # Daily/weekly cost + session count (60s TTL — scans all session packages)
+        if now - session_cache.get("last_cost_scan_ts", 0) >= 60:
+            d_cost, w_cost, s_count = _scan_cost_and_sessions()
+            session_cache["daily_cost"] = d_cost
+            session_cache["weekly_cost"] = w_cost
+            session_cache["session_count_today"] = s_count
+            session_cache["last_cost_scan_ts"] = now
+            obs_cache[session_id] = session_cache
+            cache["_obs"] = obs_cache
+            save_cache(cache)
+
+        d_cost = session_cache.get("daily_cost")
+        if d_cost and d_cost > 0:
+            state["daily_cost"] = d_cost
+        w_cost = session_cache.get("weekly_cost")
+        if w_cost and w_cost > 0:
+            state["weekly_cost"] = w_cost
+        s_count = session_cache.get("session_count_today")
+        if s_count and s_count > 0:
+            state["session_count_today"] = s_count
         parse_errors = session_cache.get("parse_error_count", 0)
         if parse_errors > 0:
             state["obs_parse_errors"] = parse_errors
