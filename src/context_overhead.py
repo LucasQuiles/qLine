@@ -652,7 +652,14 @@ def _try_phase2_transcript(
 
     # Context growth rate: average cache_read delta per turn over trailing window.
     # Combined with autocompact threshold, gives "turns until compaction".
-    if len(trailing) >= 2:
+    # Require at least 3 trailing turns before computing — early-session deltas
+    # are inflated by initial context loading and produce absurd estimates
+    # (e.g., "compact in 1 turn" at 4% usage).
+    if len(trailing) < 3:
+        # Not enough data — clear any stale estimate from cache
+        session_cache.pop("turns_until_compact", None)
+        session_cache.pop("context_growth_per_turn", None)
+    if len(trailing) >= 3:
         deltas = []
         for j in range(1, len(trailing)):
             d = trailing[j]["cache_read"] - trailing[j - 1]["cache_read"]
@@ -661,14 +668,17 @@ def _try_phase2_transcript(
         if deltas:
             avg_growth = sum(deltas) // len(deltas)
             session_cache["context_growth_per_turn"] = avg_growth
-            # Estimate turns until autocompact from current usage
+            # Estimate turns until autocompact from current usage.
+            # Use raw context_used (not corrected) — consistent with bar display.
             ctx_total = state.get("context_total", 0)
-            ctx_used = state.get("context_used_corrected", state.get("context_used", 0))
+            ctx_used = state.get("context_used", 0)
             if ctx_total > 0 and avg_growth > 0:
                 thresholds = compute_context_thresholds(ctx_total)
                 remaining = thresholds["autocompact_at"] - ctx_used
                 if remaining > 0:
                     session_cache["turns_until_compact"] = remaining // avg_growth
+                else:
+                    session_cache["turns_until_compact"] = 0
 
     # Monotonic session turn counter (does not saturate like trailing window)
     session_turn = session_cache.get("session_turn_count", 0) + 1
