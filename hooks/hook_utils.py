@@ -279,6 +279,17 @@ def block_stop(reason: str, event: str = "SubagentStop") -> None:
     sys.exit(0)
 
 
+def allow_with_context(message: str, event: str = "PreToolUse") -> None:
+    """Print an allow decision with context message. Used by non-qLine hooks."""
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": event,
+            "decision": "allow",
+            "message": message,
+        }
+    }))
+
+
 # ---------------------------------------------------------------------------
 # v2.0 contract additions
 # ---------------------------------------------------------------------------
