@@ -866,7 +866,6 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         alert_key = "degraded"
 
     # Track onset via disk file (script runs once per CC call, no in-memory state)
-    import time as _time
     _ALERT_FILE = "/tmp/qline-alert.json"
     alert_glyph_str = None
     alert_crit = False
@@ -887,7 +886,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             pass
 
     if alert_key:
-        now = _time.time()
+        now = time.time()
         persisted = _load_alert()
         # Treat stale session alert as new: different session_id means a new CC
         # process has started; the old onset time is irrelevant.
@@ -944,11 +943,6 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
                 # Bold + underline: visible in Apple Terminal without blink
                 return f"\033[1;4;5;{cc}m{text}\033[0m"
 
-        # ── Dynamic alert messages ──
-        # Full text shows for 5s on first appearance, then collapses
-        # to a blinking glyph. Onset tracked per alert key.
-        alert_color = "#bf616a"  # nord11 red
-        warn_color_hex = "#ebcb8b"  # nord13 yellow
         # Inline alert glyph (flashing)
         if alert_glyph_str:
             ac = alert_color_hex if alert_crit else warn_color_hex
@@ -981,17 +975,12 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
 
 def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Legacy stub — tokens now rendered by token_in/token_out modules."""
+    """Legacy stub — tokens now rendered by token_counts/token_out_counts."""
     return None
 
 
 def render_sys_overhead(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Legacy stub — overhead now rendered by sys_overhead_pill module."""
-    return None
-
-
-def render_cache_delta(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Legacy stub — cache now rendered by cache_pill module."""
+    """Legacy stub — overhead now rendered by sys_overhead_pill."""
     return None
 
 
@@ -1029,27 +1018,17 @@ def render_token_out_counts(state: dict[str, Any], theme: dict[str, Any]) -> str
 
 
 def render_token_in(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render input token count: ▲71.4k (legacy, used when token_in is in layout)."""
-    if "input_tokens" not in state or state["input_tokens"] <= 0:
-        return None
-    cfg = theme.get("tokens", {})
-    color = state.get("_sev_color", cfg.get("color", "#a8d4d0"))
-    bold = state.get("_sev_bold", False)
-    return _pill(f"\u25b2{_abbreviate_count(state['input_tokens'])}", cfg, color, bold, theme)
+    """Legacy alias for render_token_counts (layout compat)."""
+    return render_token_counts(state, theme)
 
 
 def render_token_out(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render output token count: ▼484k (legacy, used when token_out is in layout)."""
-    if "output_tokens" not in state or state["output_tokens"] <= 0:
-        return None
-    cfg = theme.get("tokens", {})
-    color = state.get("_sev_color", cfg.get("color", "#a8d4d0"))
-    bold = state.get("_sev_bold", False)
-    return _pill(f"\u25bc{_abbreviate_count(state['output_tokens'])}", cfg, color, bold, theme)
+    """Legacy alias for render_token_out_counts (layout compat)."""
+    return render_token_out_counts(state, theme)
 
 
 def render_cache_pill(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Legacy stub — cache now rendered by cache_read + cache_delta modules."""
+    """Legacy stub — cache now rendered by cache_read + cache_delta."""
     return None
 
 
@@ -1649,19 +1628,7 @@ def render_obs_bash(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_obs_failures(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_failures")
-    if not n:
-        return None
-    cfg = theme.get("obs_failures", {})
-    glyph = cfg.get("glyph", "\U000f0029 ")  # nf-md-alert
-    text = f"{glyph}{n}"
-    crit_t = cfg.get("critical_threshold", 5)
-    warn_t = cfg.get("warn_threshold", 1)
-    if n >= crit_t:
-        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
-    if n >= warn_t:
-        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
-    return _pill(text, cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_failures", "obs_failures", default_glyph="\U000f0029 ")
 
 
 def render_obs_subagents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -2027,8 +1994,6 @@ def _count_recent_faults(max_age_s: float = 3600) -> int:
     Returns 0 on any error (never raises).
     """
     try:
-        if not os.path.exists(_FAULT_LEDGER_PATH):
-            return 0
         file_size = os.path.getsize(_FAULT_LEDGER_PATH)
         if file_size == 0:
             return 0
@@ -2056,7 +2021,6 @@ def _count_recent_faults(max_age_s: float = 3600) -> int:
             if not ts_str:
                 continue
             try:
-                from datetime import datetime, timezone
                 ts_val = datetime.fromisoformat(ts_str).timestamp()
                 if ts_val >= cutoff:
                     count += 1
@@ -2071,8 +2035,6 @@ def _count_parse_errors(package_root: str) -> int:
     """Count entries in the parse diagnostic sidecar. Returns 0 if file absent or unreadable."""
     try:
         diag_path = os.path.join(package_root, "native", "statusline", "diagnostics.jsonl")
-        if not os.path.exists(diag_path):
-            return 0
         count = 0
         with open(diag_path, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -2142,9 +2104,10 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
             cache["_obs"] = obs_cache
             save_cache(cache)
 
-        # Refresh fault count if stale (same 5s TTL as other obs data)
+        # Refresh fault count and parse errors if stale (same 5s TTL as other obs data)
         if now - session_cache.get("last_fault_ts", 0) >= 5:
             session_cache["hook_fault_count"] = _count_recent_faults()
+            session_cache["parse_error_count"] = _count_parse_errors(package_root)
             session_cache["last_fault_ts"] = now
             obs_cache[session_id] = session_cache
             cache["_obs"] = obs_cache
@@ -2166,7 +2129,7 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         hook_faults = session_cache.get("hook_fault_count", 0)
         if hook_faults > 0:
             state["obs_hook_faults"] = hook_faults
-        parse_errors = _count_parse_errors(package_root)
+        parse_errors = session_cache.get("parse_error_count", 0)
         if parse_errors > 0:
             state["obs_parse_errors"] = parse_errors
     except Exception:
