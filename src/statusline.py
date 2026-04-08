@@ -508,7 +508,7 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(style_name, str) and style_name:
             state["output_style"] = style_name
 
-    # Cost fields
+    # Cost fields — check both nested cost dict and top-level keys
     cost = payload.get("cost")
     if isinstance(cost, dict):
         cost_usd = cost.get("total_cost_usd")
@@ -517,6 +517,15 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
         duration_ms = cost.get("total_duration_ms")
         if isinstance(duration_ms, (int, float)):
             state["duration_ms"] = int(duration_ms)
+    # Fallback: top-level cost_usd and duration_ms (CC sends these directly)
+    if "cost_usd" not in state:
+        c = payload.get("cost_usd")
+        if isinstance(c, (int, float)):
+            state["cost_usd"] = float(c)
+    if "duration_ms" not in state:
+        d = payload.get("duration_ms")
+        if isinstance(d, (int, float)):
+            state["duration_ms"] = int(d)
 
     # Optional: context window
     ctx_window = payload.get("context_window")
