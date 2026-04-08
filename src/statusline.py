@@ -347,7 +347,7 @@ DEFAULT_THEME: dict[str, Any] = {
     "obs_hook_faults": {
         "label": "faults",
         "enabled": True,
-        "glyph": "\U000f0029 ",  # nf-md-alert
+        "glyph": "\U000f0028 ",  # nf-md-alert_circle (distinct from obs_failures' alert)
         "color": "#fda4af",
         "bg": "#2e3440",
         "warn_threshold": 1,
@@ -1849,13 +1849,16 @@ def render_obs_hook_faults(state: dict[str, Any], theme: dict[str, Any]) -> str 
     """
     return _render_obs_counter(
         state, theme, "obs_hook_faults", "obs_hook_faults",
-        default_glyph="\U000f0029 ", suffix="",
+        default_glyph="\U000f0028 ", suffix="",
     )
 
 
 def render_turns(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render session turn count: 󰐕475."""
-    n = state.get("session_turn_count")
+    """Render prompt turn count: 󰐕46 (from obs prompt events, not overhead pipeline)."""
+    # Use obs_prompts (actual human prompts) as the authoritative turn count.
+    # session_turn_count only increments on transcript pipeline runs, which
+    # undercounts severely and produces misleading per-turn derived metrics.
+    n = state.get("obs_prompts") or state.get("session_turn_count")
     if not n or n <= 0:
         return None
     cfg = theme.get("tokens", {})
@@ -1977,7 +1980,7 @@ def render_io_ratio(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 def render_tokens_per_turn(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Render average output tokens per turn: tok/t 1.2k."""
     out_tok = state.get("output_tokens")
-    turns = state.get("session_turn_count")
+    turns = state.get("obs_prompts") or state.get("session_turn_count")
     if not out_tok or not turns or turns <= 0:
         return None
     cfg = theme.get("tokens_per_turn", {})
@@ -1987,9 +1990,12 @@ def render_tokens_per_turn(state: dict[str, Any], theme: dict[str, Any]) -> str 
 
 
 def render_free_context(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render free context tokens: ▼286k free."""
+    """Render free context tokens: ▼180kfree."""
     total = state.get("context_total")
-    used = state.get("context_used_corrected", state.get("context_used"))
+    # Use context_used (from CC raw percentage), NOT context_used_corrected.
+    # The bar uses raw_used_pct for fill; free_context must agree with the bar
+    # or it disappears while the bar still shows free space.
+    used = state.get("context_used")
     if not total or not used:
         return None
     free = max(0, total - used)
@@ -2048,7 +2054,7 @@ def render_think_pct(state: dict[str, Any], theme: dict[str, Any]) -> str | None
 def render_cost_per_turn(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Render cost per turn: $/t0.15."""
     cost = state.get("cost_usd")
-    turns = state.get("session_turn_count")
+    turns = state.get("obs_prompts") or state.get("session_turn_count")
     if not cost or not turns or turns <= 0:
         return None
     cfg = theme.get("cost_per_turn", {})
