@@ -85,6 +85,20 @@ _FAULT_LEDGER_PATH = os.path.join(
 )
 _FAULT_SCAN_BYTES = 32768  # fast reverse scan: read last 32KB
 
+def _get_term_width(theme: dict | None = None) -> int:
+    """Get effective terminal width for wrapping.
+
+    Priority: layout.max_width config > live terminal detection > 200 fallback.
+    Called on every render (not cached) so window resizes take effect immediately.
+    """
+    if theme:
+        cfg_max = theme.get("layout", {}).get("max_width")
+        if cfg_max and cfg_max > 0:
+            return cfg_max
+    # Live detection — handles terminal resize between renders.
+    # Fallback 200 for headless (CC has no TTY).
+    return shutil.get_terminal_size((200, 24)).columns
+
 # --- Default Theme (Muted Ocean) ---
 
 DEFAULT_THEME: dict[str, Any] = {
@@ -921,12 +935,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     display_pct = raw_used_pct
     width = cfg.get("width", 20)
     if width <= 0:
-        layout_max = theme.get("layout", {}).get("max_width")
-        if layout_max:
-            term_w = layout_max
-        else:
-            import shutil as _shutil
-            term_w = _shutil.get_terminal_size((120, 24)).columns
+        term_w = _get_term_width(theme)
         width = max(10, term_w - 55)
     filled = (display_pct * width) // 100
 
@@ -2205,10 +2214,8 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
     if not parts:
         return ""
 
-    # Get terminal width — layout.max_width overrides auto-detection
-    # (Claude Code runs without a TTY, so auto-detect falls back to 80)
     layout_cfg = theme.get("layout", {})
-    term_width = layout_cfg.get("max_width") or shutil.get_terminal_size((200, 24)).columns
+    term_width = _get_term_width(theme)
 
     # Pack modules into rows
     rows: list[list[str]] = []
@@ -2262,8 +2269,7 @@ def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
 
     pipe = style_dim("|") if not NO_COLOR else "|"
 
-    layout_cfg = theme.get("layout", {})
-    term_width = layout_cfg.get("max_width") or shutil.get_terminal_size((120, 24)).columns
+    term_width = _get_term_width(theme)
 
     # Pack modules into a single row. Overflow names are returned to caller.
     parts: list[str] = []
@@ -2428,7 +2434,7 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
 
     # If line 2 overflowed, merge overflow into the last layout line.
     # Respect max_width so line 3 doesn't exceed the width limit.
-    term_width = layout.get("max_width") or 120
+    term_width = _get_term_width(theme)
     if overflow_modules and len(rendered_lines) >= 2:
         # Render overflow modules
         show_labels = state.get("_show_labels", False)
