@@ -1836,7 +1836,7 @@ def render_daily_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | Non
     cfg = theme.get("daily_cost", {})
     warn_t = cfg.get("warn_threshold", 200)
     crit_t = cfg.get("critical_threshold", 400)
-    text = f"\U0001f4c5${cost:.0f}"
+    text = f"\U000f00ed${cost:.0f}"
     if cost >= crit_t:
         return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
     if cost >= warn_t:
@@ -1989,7 +1989,9 @@ DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
                  "obs_subagents", "obs_health", "obs_compactions",
                  "obs_hook_faults", "lines_changed",
                  "session_count", "daily_cost", "weekly_cost",
-                 "api_efficiency", "cost"]
+                 "api_efficiency", "cost_per_ktok",
+                 "io_ratio", "tokens_per_turn",
+                 "free_context", "growth_rate", "cost"]
 DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk"]
 
 # PIPE separator positions on line 2 (module names after which a PIPE | is used
