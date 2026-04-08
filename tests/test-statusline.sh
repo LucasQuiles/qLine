@@ -1376,13 +1376,13 @@ OBS_TEST_CACHE=$(mktemp)
 
 OBS_SESSION_ID="test-obs-session-$(date +%s)"
 python3 -c "
-import sys; sys.path.insert(0, '$HOME/.claude/scripts')
+import sys; sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package
 create_package('$OBS_SESSION_ID', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$OBS_TEST_ROOT')
 "
 
 OBS_PKG_ROOT=$(python3 -c "
-import sys; sys.path.insert(0, '$HOME/.claude/scripts')
+import sys; sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import resolve_package_root
 print(resolve_package_root('$OBS_SESSION_ID', obs_root='$OBS_TEST_ROOT'))
 ")
@@ -1505,7 +1505,7 @@ echo "--- T-obs-8: cache survival ---"
 OBS_TEST_CACHE_8=$(mktemp)
 OBS_SESSION_8="test-obs-cache-$(date +%s)"
 python3 -c "
-import sys; sys.path.insert(0, '$HOME/.claude/scripts')
+import sys; sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package
 create_package('$OBS_SESSION_8', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$OBS_TEST_ROOT')
 "
@@ -2235,7 +2235,7 @@ rm -f "$INTEGRATION_TRANSCRIPT" /tmp/qline-cache.json
 echo "  obs_utils: update_manifest_if_absent_batch writes when absent"
 LAST_STDOUT=$(run_py "
 import json, os, sys, tempfile
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts'))
+sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import update_manifest_if_absent_batch
 
 pkg = tempfile.mkdtemp()
@@ -2264,11 +2264,10 @@ assert_equals "manifest_if_absent" "$LAST_STDOUT" "OK"
 echo "  obs-stop-cache: extracts cache metrics from transcript"
 run_py "
 import json, os, sys, tempfile
-sys.path.insert(0, os.path.expanduser('~/.claude/hooks'))
-sys.path.insert(0, os.path.expanduser('~/.claude/scripts'))
+sys.path.insert(0, '$REPO_DIR/hooks')
 
 from importlib.util import spec_from_file_location, module_from_spec
-hook_path = os.path.expanduser('~/.claude/hooks/obs-stop-cache.py')
+hook_path = '$REPO_DIR/hooks/obs-stop-cache.py'
 spec = spec_from_file_location('obs_stop_cache', hook_path)
 mod = module_from_spec(spec)
 spec.loader.exec_module(mod)
