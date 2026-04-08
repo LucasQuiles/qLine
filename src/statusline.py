@@ -466,13 +466,12 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
                 name = name.replace(" ", "")
             state["model_name"] = name
     elif isinstance(model, str) and model:
-        # String model ID: "claude-opus-4-6" → "Opus4.6"
+        # String model ID: "claude-opus-4-6" → "Opus4.6[1M]"
         name = model
         if name.startswith("claude-"):
             name = name[7:]
         # Strip date suffixes: "haiku-4-5-20251001" → "haiku-4-5"
         parts = name.split("-")
-        # Find where version numbers end and date begins (8+ digit part)
         clean = []
         for p in parts:
             if len(p) >= 8 and p.isdigit():
@@ -480,10 +479,18 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
             clean.append(p)
         if clean:
             clean[0] = clean[0].capitalize()
-            # "opus", "4", "6" → "Opus4.6" (no dot before first number)
             name = clean[0]
             for i, p in enumerate(clean[1:]):
                 name += p if i == 0 else f".{p}"
+        # Append context window size if available: "Opus4.6[1M]"
+        ctx_window = payload.get("context_window")
+        if isinstance(ctx_window, dict):
+            ctx_size = ctx_window.get("context_window_size")
+            if isinstance(ctx_size, (int, float)) and ctx_size > 0:
+                if ctx_size >= 1_000_000:
+                    name += f"[{ctx_size // 1_000_000}M]"
+                elif ctx_size >= 1_000:
+                    name += f"[{ctx_size // 1_000}K]"
         state["model_name"] = name
 
     # Directory — prefer workspace.current_dir, fall back to cwd
