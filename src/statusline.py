@@ -913,11 +913,12 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     ctx_used = state.get("context_used_corrected", state["context_used"])
     ctx_total = state["context_total"]
     total_pct = (ctx_used * 100) // ctx_total if ctx_total > 0 else 0
-    # CC's raw used_percentage is the authoritative source for alert decisions
-    # (context_used_corrected can exceed 100% when output tokens are added).
+    # CC's raw used_percentage is the authoritative source for both display
+    # and alerts. context_used_corrected adds output tokens which can push
+    # past 100%, creating a bar that visually contradicts the percentage.
+    # Use raw for everything so bar fill matches the number.
     raw_used_pct = state.get("raw_used_pct", total_pct)
-    # Cap visual percentage at 100 — bar can't overflow
-    display_pct = min(total_pct, 100)
+    display_pct = raw_used_pct
     width = cfg.get("width", 20)
     if width <= 0:
         layout_max = theme.get("layout", {}).get("max_width")
@@ -1285,10 +1286,15 @@ def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     cost_val = state["cost_usd"]
     glyph = c_cfg.get("glyph", "$")
 
-    # Compute $/hr from total cost and duration
+    # Compute $/hr — prefer active time (excludes idle/sleep) when available
+    active_s = state.get("active_time_s")
     dur_ms = state.get("duration_ms", 0)
     rate_str = ""
-    if dur_ms > 60000 and cost_val > 0:  # need at least 1 min for meaningful rate
+    if active_s and active_s > 60 and cost_val > 0:
+        hours = active_s / 3600
+        rate = cost_val / hours
+        rate_str = f"|{_format_cost(rate)}/hr"
+    elif dur_ms > 60000 and cost_val > 0:
         hours = dur_ms / 3_600_000
         rate = cost_val / hours
         rate_str = f"|{_format_cost(rate)}/hr"
@@ -2547,18 +2553,28 @@ def _compute_session_insights(package_root: str) -> dict:
         if total_tool_uses > 0:
             result["fail_rate"] = round(tool_failures / total_tool_uses * 100, 1)
 
-        # Think time: sum of gaps > 30s between events
+        # Think time: gaps 30s-15min between events (human thinking).
+        # Gaps > 15min are idle/away/sleep — excluded from think time.
+        _THINK_MIN = 30
+        _THINK_MAX = 900  # 15 minutes
         if len(timestamps) >= 2:
             timestamps.sort()
             think_s = sum(
-                timestamps[i + 1] - timestamps[i]
-                for i in range(len(timestamps) - 1)
-                if timestamps[i + 1] - timestamps[i] > 30
+                min(gap, _THINK_MAX)
+                for gap in (timestamps[i + 1] - timestamps[i] for i in range(len(timestamps) - 1))
+                if _THINK_MIN < gap <= _THINK_MAX
+            )
+            # Active time = session duration minus idle gaps (> 15min)
+            idle_s = sum(
+                gap for gap in (timestamps[i + 1] - timestamps[i] for i in range(len(timestamps) - 1))
+                if gap > _THINK_MAX
             )
             total_s = timestamps[-1] - timestamps[0]
+            active_s = total_s - idle_s
             result["think_time_s"] = round(think_s)
-            if total_s > 0:
-                result["think_pct"] = round(think_s / total_s * 100)
+            result["active_time_s"] = round(active_s)
+            if active_s > 0:
+                result["think_pct"] = round(think_s / active_s * 100)
 
         return result
     except Exception:
@@ -2730,6 +2746,8 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         if insights.get("think_pct") is not None:
             state["think_pct"] = insights["think_pct"]
             state["think_time_s"] = insights.get("think_time_s", 0)
+        if insights.get("active_time_s"):
+            state["active_time_s"] = insights["active_time_s"]
 
         # Daily/weekly cost + session count (60s TTL — scans all session packages)
         if now - session_cache.get("last_cost_scan_ts", 0) >= 60:
