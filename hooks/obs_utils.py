@@ -160,6 +160,7 @@ def create_package(
 
     # Write manifest.json — Tier 0: raise on failure
     manifest: dict[str, Any] = {
+        "schema_version": "1.0.0",
         "session_id": session_id,
         "cwd": cwd,
         "source": source,

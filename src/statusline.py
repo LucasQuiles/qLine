@@ -2035,6 +2035,17 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
             cache["_obs"] = obs_cache
             save_cache(cache)
 
+        # Compaction anchor invalidation: clear overhead/anchor caches when
+        # a new compact.anchor_invalidated event has been emitted.
+        anchor_inval_count = ec.get("compact.anchor_invalidated", 0)
+        if anchor_inval_count > session_cache.get("last_known_anchor_inval_count", 0):
+            session_cache.pop("overhead_ts", None)
+            session_cache.pop("turn_1_anchor", None)
+            session_cache["last_known_anchor_inval_count"] = anchor_inval_count
+            obs_cache[session_id] = session_cache
+            cache["_obs"] = obs_cache
+            save_cache(cache)
+
         tr = session_cache.get("total_reads", 0)
         rr = session_cache.get("reread_count", 0)
         state["obs_reads"] = tr

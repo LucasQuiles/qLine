@@ -74,6 +74,21 @@ def main() -> None:
         },
     )
 
+    # ------------------------------------------------------------------
+    # Emit anchor invalidation event (compaction breaks the turn-1 anchor)
+    # ------------------------------------------------------------------
+    append_event(
+        package_root,
+        "compact.anchor_invalidated",
+        session_id,
+        {
+            "trigger": trigger,
+            "compact_seq": compact_seq,
+        },
+        origin_type="native_snapshot",
+        hook="obs-precompact",
+    )
+
     sys.exit(0)
 
 

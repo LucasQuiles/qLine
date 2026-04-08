@@ -2446,6 +2446,231 @@ assert_equals "manifest anchor" "$LAST_STDOUT" "OK"
 fi
 
 # ======================================================================
+# Section: schema_version (OPP-15)
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "schema_version" ]; then
+echo ""
+echo "=== Section: schema_version ==="
+
+# T-sv-1: create_package writes schema_version to manifest.json
+echo ""
+echo "--- T-sv-1: schema_version present in manifest ---"
+SV_TEST_ROOT=$(mktemp -d)
+SV_RESULT=$(python3 -c "
+import sys, json, tempfile
+sys.path.insert(0, '$REPO_DIR/hooks')
+from obs_utils import create_package
+pkg = create_package('sv-test-session', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$SV_TEST_ROOT')
+import os
+with open(os.path.join(pkg, 'manifest.json')) as f:
+    m = json.load(f)
+print(m.get('schema_version', 'MISSING'))
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-sv-1: schema_version in manifest" "$SV_RESULT" "1.0.0"
+rm -rf "$SV_TEST_ROOT"
+
+# T-sv-2: schema_version value is exactly "1.0.0"
+echo ""
+echo "--- T-sv-2: schema_version value is 1.0.0 ---"
+SV_TEST_ROOT2=$(mktemp -d)
+SV_RESULT2=$(python3 -c "
+import sys, json
+sys.path.insert(0, '$REPO_DIR/hooks')
+from obs_utils import create_package
+pkg = create_package('sv-test-session-2', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$SV_TEST_ROOT2')
+import os
+with open(os.path.join(pkg, 'manifest.json')) as f:
+    m = json.load(f)
+v = m.get('schema_version', '')
+print('OK' if v == '1.0.0' else f'WRONG:{v}')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-sv-2: schema_version is 1.0.0" "$SV_RESULT2" "OK"
+rm -rf "$SV_TEST_ROOT2"
+
+fi
+
+# ======================================================================
+# Section: anchor_invalidated (OPP-16)
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "anchor_invalidated" ]; then
+echo ""
+echo "=== Section: anchor_invalidated ==="
+
+# T-ai-1: compact.anchor_invalidated event emitted by obs-precompact
+echo ""
+echo "--- T-ai-1: compact.anchor_invalidated event emitted ---"
+AI_TEST_ROOT=$(mktemp -d)
+AI_RESULT=$(python3 -c "
+import sys, json, os
+sys.path.insert(0, '$REPO_DIR/hooks')
+from obs_utils import create_package
+session_id = 'ai-test-session'
+pkg = create_package(session_id, '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$AI_TEST_ROOT')
+from obs_utils import append_event, update_manifest_array, resolve_package_root_env
+os.environ['OBS_ROOT'] = '$AI_TEST_ROOT'
+# Simulate what obs-precompact does: emit compact.started + anchor_invalidated
+compact_seq = 1
+append_event(pkg, 'compact.started', session_id, {'trigger': 'manual', 'compact_seq': compact_seq}, origin_type='native_snapshot', hook='obs-precompact')
+append_event(pkg, 'compact.anchor_invalidated', session_id, {'trigger': 'manual', 'compact_seq': compact_seq}, origin_type='native_snapshot', hook='obs-precompact')
+# Read back events
+ledger = os.path.join(pkg, 'metadata', 'hook_events.jsonl')
+events = []
+with open(ledger) as f:
+    for line in f:
+        try:
+            e = json.loads(line)
+            events.append(e.get('event', ''))
+        except Exception:
+            pass
+print('OK' if 'compact.anchor_invalidated' in events else 'MISSING:' + str(events))
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-ai-1: compact.anchor_invalidated emitted" "$AI_RESULT" "OK"
+rm -rf "$AI_TEST_ROOT"
+
+# T-ai-2: _inject_obs_counters clears overhead_ts/turn_1_anchor on new invalidation
+# Uses subprocess invocation so QLINE_CACHE_PATH is honoured at module import time.
+echo ""
+echo "--- T-ai-2: anchor invalidation clears overhead caches ---"
+AI_TEST_ROOT2=$(mktemp -d)
+AI_CACHE2=$(mktemp)
+AI_SESSION_2="ai-cache-session-$(date +%s)"
+# Create package and emit anchor_invalidated event
+python3 -c "
+import sys, json, time
+sys.path.insert(0, '$REPO_DIR/hooks')
+from obs_utils import create_package, append_event
+session_id = '$AI_SESSION_2'
+pkg = create_package(session_id, '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$AI_TEST_ROOT2')
+append_event(pkg, 'compact.anchor_invalidated', session_id, {'trigger': 'manual', 'compact_seq': 1}, origin_type='native_snapshot', hook='obs-precompact')
+" 2>/dev/null
+# Seed cache with overhead_ts and turn_1_anchor to simulate warm state
+python3 -c "
+import json, time
+cache = {
+    'version': 1,
+    'modules': {
+        '_obs': {
+            '$AI_SESSION_2': {
+                'overhead_ts': time.time(),
+                'turn_1_anchor': 50000,
+                'last_count_ts': 0,
+                'last_known_anchor_inval_count': 0,
+            }
+        }
+    }
+}
+with open('$AI_CACHE2', 'w') as f:
+    json.dump(cache, f)
+"
+# Run full statusline invocation with env vars set for the subprocess
+AI_PAYLOAD2=$(python3 -c "
+import json
+d = {'session_id': '$AI_SESSION_2', 'model': {'id': 'test', 'display_name': 'Test'}, 'cost': {'total_cost_usd': 1, 'total_duration_ms': 1000}, 'context_window': {'total_input_tokens': 1000, 'total_output_tokens': 500, 'context_window_size': 100000, 'used_percentage': 1, 'remaining_percentage': 99}}
+print(json.dumps(d))
+")
+printf '%s' "$AI_PAYLOAD2" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$AI_TEST_ROOT2" QLINE_CACHE_PATH="$AI_CACHE2" python3 "$SRC" > /dev/null 2>&1
+# Check that turn_1_anchor was cleared and invalidation counter incremented.
+# Note: overhead_ts may be re-set by the overhead estimator in the same run.
+AI_RESULT2=$(python3 -c "
+import json
+with open('$AI_CACHE2') as f:
+    updated = json.load(f)
+sc = updated.get('modules', {}).get('_obs', {}).get('$AI_SESSION_2', {})
+# turn_1_anchor must be absent (was cleared by invalidation)
+has_anchor = 'turn_1_anchor' in sc
+# invalidation counter must be 1 (event was processed)
+inval_count = sc.get('last_known_anchor_inval_count', 0)
+ok = not has_anchor and inval_count >= 1
+print('OK' if ok else f'FAIL: anchor={has_anchor} inval_count={inval_count} keys={list(sc.keys())}')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-ai-2: turn_1_anchor cleared, inval_count incremented" "$AI_RESULT2" "OK"
+rm -rf "$AI_TEST_ROOT2"
+rm -f "$AI_CACHE2"
+
+fi
+
+# ======================================================================
+# Section: transcript_schema (OPP-25)
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "transcript_schema" ]; then
+echo ""
+echo "=== Section: transcript_schema ==="
+
+REPLAY_DIR="$SCRIPT_DIR/replay/transcripts"
+
+# T-ts-1: _read_transcript_tail returns dict with expected keys on cold-start-simple
+echo ""
+echo "--- T-ts-1: _read_transcript_tail keys on cold-start-simple ---"
+TS_RESULT1=$(python3 -c "
+import sys
+sys.path.insert(0, '$(dirname $SRC)')
+from context_overhead import _read_transcript_tail
+result = _read_transcript_tail('$REPLAY_DIR/cold-start-simple.jsonl')
+assert result is not None, 'Expected dict, got None'
+assert 'turn_1_anchor' in result, f'Missing turn_1_anchor, keys={list(result.keys())}'
+assert 'trailing_turns' in result, f'Missing trailing_turns, keys={list(result.keys())}'
+assert 'cache_hit_rate' in result, f'Missing cache_hit_rate, keys={list(result.keys())}'
+print('OK')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-ts-1: _read_transcript_tail has expected keys" "$TS_RESULT1" "OK"
+
+# T-ts-2: _read_transcript_tail returns valid types on warm-start-varied
+echo ""
+echo "--- T-ts-2: _read_transcript_tail types on warm-start-varied ---"
+TS_RESULT2=$(python3 -c "
+import sys
+sys.path.insert(0, '$(dirname $SRC)')
+from context_overhead import _read_transcript_tail
+result = _read_transcript_tail('$REPLAY_DIR/warm-start-varied.jsonl')
+assert result is not None, 'Expected dict, got None'
+anchor = result.get('turn_1_anchor')
+trailing = result.get('trailing_turns')
+hit_rate = result.get('cache_hit_rate')
+assert isinstance(anchor, (int, float)) or anchor is None, f'turn_1_anchor bad type: {type(anchor)}'
+assert isinstance(trailing, list), f'trailing_turns should be list, got {type(trailing)}'
+assert isinstance(hit_rate, float), f'cache_hit_rate should be float, got {type(hit_rate)}'
+print('OK')
+" 2>/dev/null || echo "ERROR")
+assert_equals "T-ts-2: _read_transcript_tail valid types" "$TS_RESULT2" "OK"
+
+# T-ts-3: extract_usage_full returns 4-tuple with correct structure on real entries
+echo ""
+echo "--- T-ts-3: extract_usage_full tuple shape on real transcript ---"
+TS_RESULT3=$(python3 -c "
+import sys, json
+sys.path.insert(0, '$REPO_DIR/hooks')
+from obs_utils import extract_usage_full
+entries_tested = 0
+with open('$REPLAY_DIR/cold-start-long.jsonl') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except Exception:
+            continue
+        result = extract_usage_full(entry)
+        assert isinstance(result, tuple) and len(result) == 4, f'Expected 4-tuple, got {result!r}'
+        usage, model, req_id, entry_id = result
+        if usage is not None:
+            assert isinstance(usage, dict), f'usage should be dict, got {type(usage)}'
+            entries_tested += 1
+        if entries_tested >= 5:
+            break
+assert entries_tested > 0, 'No usable entries found in transcript'
+print(f'OK:{entries_tested}')
+" 2>/dev/null || echo "ERROR")
+# Accept OK:N where N > 0
+if echo "$TS_RESULT3" | grep -q "^OK:"; then
+    assert_equals "T-ts-3: extract_usage_full tuple shape" "OK" "OK"
+else
+    assert_equals "T-ts-3: extract_usage_full tuple shape" "$TS_RESULT3" "OK"
+fi
+
+fi
+
+# ======================================================================
 # Summary
 # ======================================================================
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
