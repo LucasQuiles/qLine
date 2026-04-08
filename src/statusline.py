@@ -111,9 +111,9 @@ DEFAULT_THEME: dict[str, Any] = {
         "color": "#8fbcbb",     # nord7 — teal (healthy: cohesive with frost bar)
         "bg": "#2e3440",
         "width": 0,  # 0 = auto (fill available width on its own line)
-        "warn_threshold": 40.0,
+        "warn_threshold": 75.0,
         "warn_color": "#ebcb8b",   # nord13 — yellow (warn: aurora accent)
-        "critical_threshold": 70.0,
+        "critical_threshold": 90.0,
         "critical_color": "#bf616a", # nord11 — red (critical: aurora danger)
         # Bar segment colors derive from computed severity (see _darken_hex).
         # No sys_color/conv_color config — segments track health state.
@@ -951,13 +951,17 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         free_blocks = width - filled
 
     # Severity from CC-verified autocompact threshold
+    # Severity thresholds. When the overhead pipeline provides the CC-verified
+    # autocompact percentage, use it (most accurate). Otherwise fall back to
+    # config defaults. The fallback crit of 90% prevents false HEAVY alerts —
+    # the old 70% default fired at normal usage for large context windows.
     cc_compact_pct = state.get("cc_autocompact_pct")
     if cc_compact_pct:
         warn_t = round(cc_compact_pct * 0.80, 1)
         crit_t = cc_compact_pct
     else:
-        warn_t = cfg.get("warn_threshold", 40.0)
-        crit_t = cfg.get("critical_threshold", 70.0)
+        warn_t = cfg.get("warn_threshold", 75.0)
+        crit_t = cfg.get("critical_threshold", 90.0)
     sys_warn_t = cfg.get("sys_warn_threshold", 30.0)
     sys_crit_t = cfg.get("sys_critical_threshold", 50.0)
 

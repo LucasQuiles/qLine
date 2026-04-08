@@ -526,12 +526,12 @@ print(line)
 assert_contains "R-04: model-only has glyph" "$OUT" "Sonnet"
 assert_not_contains "R-04b: no separator" "$OUT" "│"
 
-# R-05: Context bar warn at new threshold (>=40%)
+# R-05: Context bar warn at new threshold (>=75%)
 OUT=$(run_py "
 from statusline import render_bar, DEFAULT_THEME
-print(render_bar(45, DEFAULT_THEME))
+print(render_bar(80, DEFAULT_THEME))
 ")
-assert_contains "R-05: warn suffix at 45%" "$OUT" "45%~"
+assert_contains "R-05: warn suffix at 80%" "$OUT" "80%~"
 
 # R-06: Context bar critical at new threshold (>=70%)
 OUT=$(run_py "
@@ -745,7 +745,7 @@ assert_contains "C-02b: model" "$LAST_STDOUT" "Op"
 run_statusline "$(cat "$FIXTURES/valid-with-context-window.json")"
 assert_exit_zero "C-03a: exit 0" "$LAST_EXIT"
 assert_contains "C-03b: bar present" "$LAST_STDOUT" "█"
-assert_contains "C-03c: critical suffix (75% >= 70%)" "$LAST_STDOUT" "75%!"
+assert_contains "C-03c: warn suffix (75% >= 75%)" "$LAST_STDOUT" "75%~"
 
 # C-04: Critical context (90% >= 70%)
 run_statusline "$(cat "$FIXTURES/valid-context-critical.json")"
