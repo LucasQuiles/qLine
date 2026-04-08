@@ -63,10 +63,10 @@ When an alert condition is detected, the bar's inline glyph flashes and a full-t
 
 | Module | Glyph | Example | Source | Calculation |
 |--------|-------|---------|--------|-------------|
-| `sys_overhead_pill` | 󰑖 | `󰑖17.1k™` | Transcript first-turn `cache_creation_input_tokens` | System overhead = first turn's cache creation (the prompt + CLAUDE.md + tools). `™` suffix = token marker. `≈` suffix when estimated (no transcript yet). |
+| `sys_overhead_pill` | 󰑖 | `󰑖17.1k™` | Transcript first-turn usage | Cold start: first turn's `cache_creation_input_tokens`. Warm restart (cache_creation < 5000): uses `cache_read_input_tokens` instead. Falls back to static estimate when no transcript is available. `™` suffix = token marker. `≈` suffix = estimated (no transcript yet). |
 | `cache_read` | © | `©307k™` | Transcript latest turn `cache_read_input_tokens` | Last turn's cache read — how many tokens were served from cache. |
 | `cache_delta` | 󰍻 | `󰍻 +454™` | Transcript latest turn `cache_creation_input_tokens` | Last turn's cache creation delta — new tokens added to cache. Spike coloring: >5000 red, >1000 yellow. |
-| `turns` | 󰐕 | `󰐕475` | `inject_context_overhead` → `session_turn_count` | Incremented each invocation. Counts completed API turns in this session. |
+| `turns` | 󰐕 | `󰐕475` | `inject_context_overhead` → `session_turn_count` | Incremented when the transcript-based overhead path runs (Phase 2). Not updated when overhead falls back to estimate-only mode (early session, missing transcript). |
 
 ### Observability Counters
 
@@ -84,7 +84,7 @@ Sources vary per module. Most are from `hook_events.jsonl` but reads, health, an
 | `obs_subagents` | 󰀦 | agents | `metadata/hook_events.jsonl` | `subagent.stopped` | Subagent completions |
 | `obs_health` | 󰕥 | health | `manifest.json` | `health.overall` | Obs subsystem health: healthy (green), degraded (yellow), failed (red). Glyph-only when healthy. Shows dim placeholder `󰕥 ―` when health is unknown but session exists. |
 | `obs_compactions` | 󰔠 | compact | `metadata/hook_events.jsonl` | `compact.started` | Context compaction count. Prefix `x`. Hidden when 0. |
-| `obs_hook_faults` | 󰀩 | faults | `~/.claude/logs/lifecycle-hook-faults.jsonl` | `level == "fault"` within last hour | Hook crashes. 32KB reverse scan with timestamp filter. Warn at 1, critical at 5. |
+| `obs_hook_faults` | 󰀩 | faults | `~/.claude/logs/lifecycle-hook-faults.jsonl` | `level == "fault"` within last hour | Hook crashes. 32KB reverse scan with timestamp filter. Warn at 1, critical at 5. **Caveat:** only scans the last 32KB of the ledger; bursty logging can push older-but-still-within-the-hour records beyond the scan window, causing undercounts. |
 
 ### Session Metrics
 
@@ -109,7 +109,7 @@ Sources vary per module. Most are from `hook_events.jsonl` but reads, health, an
 | Module | Glyph | Label | Example | Source | Calculation |
 |--------|-------|-------|---------|--------|-------------|
 | `dir` | 󰝰 | dir | `󰝰 qLine` | `workspace.current_dir` or `cwd` | Basename of working directory. `⊛` marker when in git worktree. Dims when git data is stale. |
-| `git` | 󰘬 | git | `main@30edbac*` | `git rev-parse`, `git status` | Branch@SHA with `*` dirty marker. Truncated to 20 chars in compact mode. |
+| `git` | 󰘬 | git | `main@30edbac*` | `git rev-parse`, `git status` | Branch@SHA with `*` dirty marker. Branch truncated to 20 chars during collection; render truncates further to 12 in compact (single-line) mode. |
 | `cpu` | 󰓌 | cpu | `󰓌 ░░░░░7%` | `/proc/loadavg` (Linux) or `sysctl` (macOS) | 5-bar mini-graph + percentage. Renders at any value including 0%. Warn at 60%, critical at 85%. |
 | `memory` | 󰍛 | mem | `󰍛 ██░░░55%` | `/proc/meminfo` (Linux) or `vm_stat` (macOS) | 5-bar mini-graph + percentage. Renders at any value including 0%. Warn at 70%, critical at 90%. |
 | `disk` | 󰋊 | disk | `󰋊 █░░░░24%` | `os.statvfs("/")` | 5-bar mini-graph + percentage. Renders at any value including 0%. Warn at 80%, critical at 95%. |
