@@ -61,7 +61,7 @@ See `qline.example.toml` for all options.
 
 ## Modules
 
-37 modules across 3 lines — see [docs/modules.md](docs/modules.md) for source, calculation, and config for each module.
+41 modules across 3 lines — see [docs/modules.md](docs/modules.md) for source, calculation, and config for each module.
 
 **Line 1 (6):** model, input tokens, output tokens, context bar, cache rate, active duration
 
@@ -83,7 +83,7 @@ bash tests/test-statusline.sh --section renderer     # one section
 bash tests/test-statusline.sh --section invariants   # metric consistency proofs
 ```
 
-300 tests across 12 sections: parser, normalizer, renderer, config, ansi, command, layout, collector, cache, stale, obs, new_metrics, derived_metrics, alerts, OPP features, invariants.
+300 tests across 16+ sections: parser, normalizer, renderer, config, ansi, command, layout, collector, cache, stale, obs, overhead, new_metrics, derived_metrics, alerts, schema_version, anchor_invalidated, transcript_schema, OPP features, invariants.
 
 ## Architecture
 
