@@ -3887,6 +3887,77 @@ fi
 
 
 # ======================================================================
+# SECTION: derived_metrics — cost/ktok, io ratio, tokens/turn, free context, growth rate
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "derived_metrics" ]; then
+echo "--- Derived Metrics Tests ---"
+
+OUT=$(run_py "
+from statusline import render_cost_per_ktok, DEFAULT_THEME
+result = render_cost_per_ktok({'cost_usd': 75.0, 'output_tokens': 500000}, DEFAULT_THEME)
+assert result and '$/k' in result and '0.15' in result, f'got: {result}'
+print('OK')
+")
+assert_equals "DM-01: cost_per_ktok renders" "$OUT" "OK"
+
+OUT=$(run_py "
+from statusline import render_cost_per_ktok, DEFAULT_THEME
+assert render_cost_per_ktok({}, DEFAULT_THEME) is None
+print('OK')
+")
+assert_equals "DM-02: cost_per_ktok None without data" "$OUT" "OK"
+
+OUT=$(run_py "
+from statusline import render_io_ratio, DEFAULT_THEME
+result = render_io_ratio({'input_tokens': 100000, 'output_tokens': 500000}, DEFAULT_THEME)
+assert result and 'io:5.0x' in result, f'got: {result}'
+print('OK')
+")
+assert_equals "DM-03: io_ratio renders" "$OUT" "OK"
+
+OUT=$(run_py "
+from statusline import render_tokens_per_turn, DEFAULT_THEME
+result = render_tokens_per_turn({'output_tokens': 500000, 'session_turn_count': 50}, DEFAULT_THEME)
+assert result and 'tok/t' in result and '10.0k' in result, f'got: {result}'
+print('OK')
+")
+assert_equals "DM-04: tokens_per_turn renders" "$OUT" "OK"
+
+OUT=$(run_py "
+from statusline import render_free_context, DEFAULT_THEME
+result = render_free_context({'context_total': 1000000, 'context_used': 600000}, DEFAULT_THEME)
+assert result and '400k' in result and 'free' in result, f'got: {result}'
+print('OK')
+")
+assert_equals "DM-05: free_context renders" "$OUT" "OK"
+
+OUT=$(run_py "
+from statusline import render_free_context, DEFAULT_THEME
+result = render_free_context({'context_total': 1000000, 'context_used': 1000000}, DEFAULT_THEME)
+assert result is None, f'expected None when 0 free, got: {result}'
+print('OK')
+")
+assert_equals "DM-06: free_context None when full" "$OUT" "OK"
+
+OUT=$(run_py "
+from statusline import render_growth_rate, DEFAULT_THEME
+result = render_growth_rate({'context_growth_per_turn': 8778}, DEFAULT_THEME)
+assert result and 'gro:' in result and '8.8k' in result, f'got: {result}'
+print('OK')
+")
+assert_equals "DM-07: growth_rate renders" "$OUT" "OK"
+
+OUT=$(run_py "
+from statusline import render_growth_rate, DEFAULT_THEME
+assert render_growth_rate({}, DEFAULT_THEME) is None
+print('OK')
+")
+assert_equals "DM-08: growth_rate None without data" "$OUT" "OK"
+
+echo ""
+fi
+
+# ======================================================================
 # Summary
 # ======================================================================
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
