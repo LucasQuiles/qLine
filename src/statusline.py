@@ -89,6 +89,7 @@ _FAULT_SCAN_BYTES = 32768  # fast reverse scan: read last 32KB
 
 DEFAULT_THEME: dict[str, Any] = {
     "model": {
+        "label": "model",
         "enabled": True,
         "glyph": "\U000f06a9 ",  # nf-md-robot (Supplementary PUA)
         "color": "#d8dee9",
@@ -96,6 +97,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "bold": False,
     },
     "dir": {
+        "label": "dir",
         "enabled": True,
         "glyph": "\U000f0770 ",  # nf-md-folder_open (Supplementary PUA)
         "color": "#9bb8d3",
@@ -103,6 +105,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "worktree_marker": "\u229b",
     },
     "context_bar": {
+        "label": "ctx",
         "enabled": True,
         "glyph": "\U000f02d1 ",  # nf-md-heart (Supplementary PUA)
         "color": "#8fbcbb",     # nord7 — teal (healthy: cohesive with frost bar)
@@ -124,17 +127,20 @@ DEFAULT_THEME: dict[str, Any] = {
         "overhead_source": "auto",
     },
     "tokens": {
+        "label": "tok",
         "enabled": True,
         "color": "#a8d4d0",
         "bg": "#2e3440",
     },
     "sys_overhead": {
+        "label": "ovhd",
         "enabled": True,
         "glyph": "\U000f0456 ",  # nf-md-file_alert
         "color": "#81a1c1",      # nord9 blue
         "bg": "#2e3440",
     },
     "cache_writes": {
+        "label": "cw",
         "enabled": True,
         "glyph": "",             # no glyph for normal, spike glyph inline
         "color": "#8fbcbb",      # nord7 teal (normal)
@@ -145,6 +151,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "notable_threshold": 1000,
     },
     "cost": {
+        "label": "cost",
         "enabled": True,
         "glyph": "$",
         "color": "#e0956a",
@@ -155,6 +162,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "duration": {
+        "label": "dur",
         "enabled": True,
         "glyph": "\U000f0954 ",  # nf-md-clock_outline (Supplementary PUA)
         "color": "#8eacb8",
@@ -185,6 +193,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "line3": ["dir", "git", "cpu", "memory", "disk"],
     },
     "git": {
+        "label": "git",
         "enabled": True,
         "glyph": "\U000f04a9 ",
         "color": "#b48ead",
@@ -192,6 +201,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "dirty_marker": "*",
     },
     "cpu": {
+        "label": "cpu",
         "enabled": True,
         "glyph": "\U000f04cc ",  # nf-md-chip (Supplementary PUA)
         "color": "#a8d4d0",
@@ -204,6 +214,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "memory": {
+        "label": "mem",
         "enabled": True,
         "glyph": "\U000f035b ",  # nf-md-memory (Supplementary PUA)
         "color": "#a8d4d0",
@@ -216,6 +227,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "disk": {
+        "label": "disk",
         "enabled": True,
         "glyph": "\U000f02ca ",  # nf-md-harddisk (Supplementary PUA)
         "color": "#a8d4d0",
@@ -229,6 +241,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "agents": {
+        "label": "agents",
         "enabled": False,
         "glyph": "\U000f04cc ",
         "color": "#b48ead",
@@ -240,6 +253,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "tmux": {
+        "label": "tmux",
         "enabled": False,
         "glyph": "tmux ",
         "color": "#8eacb8",
@@ -247,12 +261,14 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     # --- Obs: I/O group ---
     "obs_reads": {
+        "label": "reads",
         "enabled": True,
         "glyph": "\U000f0447 ",  # nf-md-file_document (󰑇)
         "color": "#a5b4fc",
         "bg": "#2e3440",
     },
     "obs_rereads": {
+        "label": "reread",
         "enabled": True,
         "glyph": "\u00ae ",  # ® (registered sign)
         "color": "#a5b4fc",
@@ -263,12 +279,14 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "obs_writes": {
+        "label": "writes",
         "enabled": True,
         "glyph": "\U000f064f ",  # nf-md-lead_pencil
         "color": "#86efac",
         "bg": "#2e3440",
     },
     "obs_bash": {
+        "label": "bash",
         "enabled": True,
         "glyph": "\U000f018d ",  # nf-md-console
         "color": "#fcd34d",
@@ -276,18 +294,21 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     # --- Obs: Work group ---
     "obs_prompts": {
+        "label": "prompts",
         "enabled": True,
         "glyph": "\U000f017a ",  # nf-md-comment_text
         "color": "#d8b4fe",
         "bg": "#2e3440",
     },
     "obs_tasks": {
+        "label": "tasks",
         "enabled": True,
         "glyph": "\U000f0318 ",  # nf-md-checkbox_marked_circle
         "color": "#67e8f9",
         "bg": "#2e3440",
     },
     "obs_subagents": {
+        "label": "agents",
         "enabled": True,
         "glyph": "\U000f0026 ",  # nf-md-account_multiple
         "color": "#c4b5fd",
@@ -295,6 +316,7 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     # --- Obs: Health group ---
     "obs_failures": {
+        "label": "fails",
         "enabled": False,
         "glyph": "\U000f0029 ",  # nf-md-alert
         "color": "#fda4af",
@@ -305,12 +327,14 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "obs_compactions": {
+        "label": "compact",
         "enabled": True,
         "glyph": "\U000f0520 ",  # nf-md-timer (compactions)
         "color": "#a8a29e",
         "bg": "#2e3440",
     },
     "obs_health": {
+        "label": "health",
         "enabled": True,
         "glyph": "\U000f0565 ",  # nf-md-shield_check
         "color": "#86efac",
@@ -319,6 +343,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "failed_color": "#d06070",
     },
     "obs_hook_faults": {
+        "label": "faults",
         "enabled": True,
         "glyph": "\U000f0029 ",  # nf-md-alert
         "color": "#fda4af",
@@ -329,14 +354,17 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "lines_changed": {
+        "label": "lines",
         "enabled": True,
         "color": "#88c0d0",
     },
     "api_efficiency": {
+        "label": "api%",
         "enabled": True,
         "color": "#a3be8c",
     },
     "daily_cost": {
+        "label": "today",
         "enabled": True,
         "color": "#e5c890",
         "warn_threshold": 200,
@@ -345,6 +373,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "weekly_cost": {
+        "label": "week",
         "enabled": True,
         "color": "#e5c890",
         "warn_threshold": 1000,
@@ -353,26 +382,32 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "session_count": {
+        "label": "sess",
         "enabled": True,
         "color": "#8fbcbb",
     },
     "cost_per_ktok": {
+        "label": "$/kt",
         "enabled": True,
         "color": "#e5c890",
     },
     "io_ratio": {
+        "label": "io",
         "enabled": True,
         "color": "#88c0d0",
     },
     "tokens_per_turn": {
+        "label": "t/turn",
         "enabled": True,
         "color": "#a3be8c",
     },
     "free_context": {
+        "label": "free",
         "enabled": True,
         "color": "#8fbcbb",
     },
     "growth_rate": {
+        "label": "grow",
         "enabled": True,
         "color": "#d08770",
     },
@@ -1825,7 +1860,8 @@ def render_api_efficiency(state: dict[str, Any], theme: dict[str, Any]) -> str |
         return None
     cfg = theme.get("api_efficiency", {})
     pct = min(round(api_ms / wall_ms * 100), 100)
-    return _pill(f"\u23f1{pct}%", cfg, theme=theme)
+    text = f"{pct}%" if state.get("_show_labels") else f"\u23f1{pct}%"
+    return _pill(text, cfg, theme=theme)
 
 
 def render_daily_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1877,10 +1913,10 @@ def render_cost_per_ktok(state: dict[str, Any], theme: dict[str, Any]) -> str | 
         return None
     cfg = theme.get("cost_per_ktok", {})
     per_k = cost / (out_tok / 1000)
-    if per_k < 0.01:
-        text = f"$/k{per_k:.3f}"
+    if state.get("_show_labels"):
+        text = f"{per_k:.3f}" if per_k < 0.01 else f"{per_k:.2f}"
     else:
-        text = f"$/k{per_k:.2f}"
+        text = f"$/k{per_k:.3f}" if per_k < 0.01 else f"$/k{per_k:.2f}"
     return _pill(text, cfg, theme=theme)
 
 
@@ -1892,7 +1928,7 @@ def render_io_ratio(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
         return None
     cfg = theme.get("io_ratio", {})
     ratio = out_tok / in_tok
-    text = f"io:{ratio:.1f}x"
+    text = f"{ratio:.1f}x" if state.get("_show_labels") else f"io:{ratio:.1f}x"
     return _pill(text, cfg, theme=theme)
 
 
@@ -1904,7 +1940,7 @@ def render_tokens_per_turn(state: dict[str, Any], theme: dict[str, Any]) -> str 
         return None
     cfg = theme.get("tokens_per_turn", {})
     avg = out_tok // turns
-    text = f"tok/t{_abbreviate_count(avg)}"
+    text = f"{_abbreviate_count(avg)}" if state.get("_show_labels") else f"tok/t{_abbreviate_count(avg)}"
     return _pill(text, cfg, theme=theme)
 
 
@@ -1918,7 +1954,7 @@ def render_free_context(state: dict[str, Any], theme: dict[str, Any]) -> str | N
     if free <= 0:
         return None
     cfg = theme.get("free_context", {})
-    text = f"\u25bc{_abbreviate_count(free)}free"
+    text = f"{_abbreviate_count(free)}" if state.get("_show_labels") else f"\u25bc{_abbreviate_count(free)}free"
     return _pill(text, cfg, theme=theme)
 
 
@@ -1928,7 +1964,7 @@ def render_growth_rate(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     if not growth or growth <= 0:
         return None
     cfg = theme.get("growth_rate", {})
-    text = f"gro:{_abbreviate_count(growth)}/t"
+    text = f"{_abbreviate_count(growth)}/t" if state.get("_show_labels") else f"gro:{_abbreviate_count(growth)}/t"
     return _pill(text, cfg, theme=theme)
 
 
@@ -2000,6 +2036,18 @@ DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk"]
 LINE2_PIPE_AFTER = {"cache_read"}
 
 
+def _apply_label(result: str, mod_cfg: dict, show_labels: bool) -> str:
+    """Prepend a dimmed label prefix if show_labels is on and the module has one."""
+    if not show_labels:
+        return result
+    label = mod_cfg.get("label", "")
+    if not label:
+        return result
+    if NO_COLOR:
+        return f"{label}:{result}"
+    return f"{style_dim(label + ':')}{result}"
+
+
 def render_line(state: dict[str, Any], theme: dict[str, Any],
                 modules: list[str], sep_override: str | None = None) -> str:
     """Render a single line from a list of module names.
@@ -2007,6 +2055,9 @@ def render_line(state: dict[str, Any], theme: dict[str, Any],
     Iterates modules, looks up each in MODULE_RENDERERS, skips unknown
     or disabled modules, calls each renderer, collects non-None results,
     and joins with the theme separator.
+
+    When layout.show_labels is true, each module's "label" config key is
+    prepended as a dimmed prefix (e.g., "ovhd:17.1k™").
     """
     parts: list[str] = []
     if sep_override is not None:
@@ -2017,6 +2068,8 @@ def render_line(state: dict[str, Any], theme: dict[str, Any],
         sep_dim = sep_cfg.get("dim", True)
         sep = style_dim(sep_char) if sep_dim else sep_char
 
+    show_labels = theme.get("layout", {}).get("show_labels", False)
+    state["_show_labels"] = show_labels
     for name in modules:
         renderer = MODULE_RENDERERS.get(name)
         if renderer is None:
@@ -2026,7 +2079,7 @@ def render_line(state: dict[str, Any], theme: dict[str, Any],
             continue
         result = renderer(state, theme)
         if result is not None:
-            parts.append(result)
+            parts.append(_apply_label(result, mod_cfg, show_labels))
 
     if not parts:
         return ""
@@ -2046,6 +2099,8 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
     sep_width = _visible_len(sep)
 
     # Render all modules, keep only non-None results
+    show_labels = theme.get("layout", {}).get("show_labels", False)
+    state["_show_labels"] = show_labels
     parts: list[str] = []
     for name in modules:
         renderer = MODULE_RENDERERS.get(name)
@@ -2056,7 +2111,7 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
             continue
         result = renderer(state, theme)
         if result is not None:
-            parts.append(result)
+            parts.append(_apply_label(result, mod_cfg, show_labels))
 
     if not parts:
         return ""
@@ -2100,6 +2155,8 @@ def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
     cache_read which uses | (pipe, no spaces).
     """
     # Render all modules, keeping track of names for pipe-after logic
+    show_labels = theme.get("layout", {}).get("show_labels", False)
+    state["_show_labels"] = show_labels
     rendered: list[tuple[str, str]] = []  # (module_name, rendered_text)
     for name in modules:
         renderer = MODULE_RENDERERS.get(name)
@@ -2110,7 +2167,7 @@ def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
             continue
         result = renderer(state, theme)
         if result is not None:
-            rendered.append((name, result))
+            rendered.append((name, _apply_label(result, mod_cfg, show_labels)))
 
     if not rendered:
         return ""
