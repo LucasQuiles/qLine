@@ -1260,7 +1260,7 @@ def render_cache_rate(state: dict[str, Any], theme: dict[str, Any]) -> str | Non
         return None
     if not isinstance(hit_rate, (int, float)):
         return None
-    rate_pct = int(hit_rate * 100) if hit_rate <= 1.0 else int(hit_rate)
+    rate_pct = min(int(hit_rate * 100) if hit_rate <= 1.0 else int(hit_rate), 100)
     if rate_pct <= 0:
         return None
     cfg = theme.get("context_bar", {})
@@ -2284,6 +2284,55 @@ def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
     return "".join(parts), overflow
 
 
+def _check_invariants(state: dict[str, Any]) -> list[str]:
+    """Check metric invariants. Returns list of violations (empty = clean).
+
+    Runs automatically when QLINE_DEBUG=1. Violations are logged to stderr
+    but never crash the statusline.
+    """
+    violations: list[str] = []
+
+    # Bar fill must match displayed percentage
+    raw_pct = state.get("raw_used_pct", 0)
+    ctx_used = state.get("context_used", 0)
+    ctx_total = state.get("context_total", 1)
+    if ctx_total > 0:
+        computed = round(ctx_used * 100 / ctx_total)
+        if abs(computed - raw_pct) > 1:
+            violations.append(f"pct_drift: raw={raw_pct} computed={computed}")
+
+    # free + used == total (within rounding)
+    free = max(0, ctx_total - ctx_used)
+    if free + ctx_used != ctx_total:
+        violations.append(f"free_invariant: free={free}+used={ctx_used}!={ctx_total}")
+
+    # Cumulative counters must be non-negative
+    for key in ("obs_reads", "obs_writes", "obs_bash", "obs_failures",
+                "obs_prompts", "obs_tasks", "obs_subagents", "obs_compactions"):
+        val = state.get(key, 0)
+        if not isinstance(val, int) or val < 0:
+            violations.append(f"{key}_invalid: {val}")
+
+    # Percentages must be 0-100
+    for key in ("raw_used_pct", "obs_reread_pct", "think_pct"):
+        val = state.get(key)
+        if val is not None and not (0 <= val <= 100):
+            violations.append(f"{key}_oob: {val}")
+
+    # daily_cost <= weekly_cost
+    dc = state.get("daily_cost", 0)
+    wc = state.get("weekly_cost", 0)
+    if dc and wc and dc > wc + 1:
+        violations.append(f"daily>weekly: {dc}>{wc}")
+
+    # fail_rate bounded
+    fr = state.get("fail_rate")
+    if fr is not None and not (0 <= fr <= 100):
+        violations.append(f"fail_rate_oob: {fr}")
+
+    return violations
+
+
 def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     """Render status output from normalized state using layout config.
 
@@ -2293,6 +2342,14 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     """
     if theme is None:
         theme = DEFAULT_THEME
+
+    # Invariant checking (QLINE_DEBUG=1 enables)
+    if os.environ.get("QLINE_DEBUG") == "1":
+        violations = _check_invariants(state)
+        if violations:
+            import sys as _sys
+            for v in violations:
+                _sys.stderr.write(f"qline-invariant: {v}\n")
 
     layout = theme.get("layout", {})
     force_single = layout.get("force_single_line", False)
@@ -2727,7 +2784,7 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         rr = session_cache.get("reread_count", 0)
         state["obs_reads"] = tr
         state["obs_reread_count"] = rr
-        state["obs_reread_pct"] = round(rr / tr * 100) if tr > 0 else 0
+        state["obs_reread_pct"] = min(round(rr / tr * 100), 100) if tr > 0 else 0
         state["obs_writes"] = ec.get("file.write.diff", 0)
         state["obs_bash"] = ec.get("bash.executed", 0)
         state["obs_failures"] = ec.get("tool.failed", 0)

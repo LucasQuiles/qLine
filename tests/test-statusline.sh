@@ -3956,6 +3956,71 @@ assert_equals "DM-08: growth_rate None without data" "$OUT" "OK"
 echo ""
 fi
 
+
+
+# ======================================================================
+# SECTION: invariants — metric consistency proofs
+# ======================================================================
+if [ "$RUN_SECTION" = "all" ] || [ "$RUN_SECTION" = "invariants" ]; then
+echo "--- Invariant Tests ---"
+
+OUT=$(run_py "
+from statusline import _check_invariants
+# Clean state — no violations
+state = {'context_used': 400000, 'context_total': 1000000, 'raw_used_pct': 40,
+         'obs_reads': 100, 'obs_writes': 50, 'obs_bash': 30, 'obs_failures': 5,
+         'obs_prompts': 10, 'obs_tasks': 3, 'obs_subagents': 2, 'obs_compactions': 0,
+         'obs_reread_pct': 25, 'daily_cost': 50.0, 'weekly_cost': 200.0}
+violations = _check_invariants(state)
+assert violations == [], f'expected clean, got: {violations}'
+print('OK')
+")
+assert_equals "INV-01: clean state no violations" "$OUT" "OK"
+
+OUT=$(run_py "
+from statusline import _check_invariants
+# daily > weekly — violation
+state = {'daily_cost': 300.0, 'weekly_cost': 200.0}
+violations = _check_invariants(state)
+assert any('daily>weekly' in v for v in violations), f'expected daily>weekly: {violations}'
+print('OK')
+")
+assert_equals "INV-02: daily > weekly caught" "$OUT" "OK"
+
+OUT=$(run_py "
+from statusline import _check_invariants
+# Negative counter — violation
+state = {'obs_reads': -1}
+violations = _check_invariants(state)
+assert any('obs_reads' in v for v in violations), f'expected obs_reads violation: {violations}'
+print('OK')
+")
+assert_equals "INV-03: negative counter caught" "$OUT" "OK"
+
+OUT=$(run_py "
+from statusline import _check_invariants
+# Percentage out of bounds
+state = {'think_pct': 150}
+violations = _check_invariants(state)
+assert any('think_pct_oob' in v for v in violations), f'expected oob: {violations}'
+print('OK')
+")
+assert_equals "INV-04: percentage oob caught" "$OUT" "OK"
+
+OUT=$(run_py "
+from statusline import _check_invariants
+# pct drift: raw says 40 but used/total = 80%
+state = {'context_used': 800000, 'context_total': 1000000, 'raw_used_pct': 40}
+violations = _check_invariants(state)
+assert any('pct_drift' in v for v in violations), f'expected drift: {violations}'
+print('OK')
+")
+assert_equals "INV-05: pct drift caught" "$OUT" "OK"
+
+echo ""
+fi
+
+
 # ======================================================================
 # Summary
 # ======================================================================
