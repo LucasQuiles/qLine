@@ -779,6 +779,18 @@ def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 # ── Overhead Monitor: see src/context_overhead.py ───────────────────
 # Constants and functions imported at module top via context_overhead import.
 
+# Alert definitions: (glyph, is_critical, "TITLE — inline description")
+_ALERT_DEFS = {
+    "bust":     ("\U000f04bf", True,  "CACHE BUSTED \u2014 cache miss on every turn, 10-20x token cost until session restart"),
+    "expired":  ("\U000f0150", False, "CACHE EXPIRED \u2014 idle timeout, rebuilds automatically on next turn"),
+    "micro":    ("\U000f0456", False, "MICRO COMPACT \u2014 old tool results silently cleared, earlier file reads lost from context"),
+    "bloat":    ("\U000f0cf2", True,  "SYSTEM BLOAT \u2014 system overhead consuming >50% of context window, reduce plugins or MCP servers"),
+    "heavy":    ("\U000f02d1", True,  "HEAVY CONTEXT \u2014 approaching autocompact threshold, conversation will be summarized soon"),
+    "compact":  ("\U000f0520", True,  None),  # dynamic
+    "turns":    ("\U000f0520", False, None),   # dynamic
+    "degraded": ("\U000f04c5", False, "CACHE DEGRADED \u2014 partial cache misses each turn, token efficiency reduced"),
+}
+
 
 def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Render context health bar with severity computation.
@@ -894,18 +906,6 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     warn_color_hex = "#ebcb8b"    # nord13 yellow
     tuc = state.get("turns_until_compact")
 
-    # (glyph, is_critical, "TITLE — inline description")
-    _ALERT_DEFS = {
-        "bust":     ("\U000f04bf", True,  "CACHE BUSTED \u2014 cache miss on every turn, 10-20x token cost until session restart"),
-        "expired":  ("\U000f0150", False, "CACHE EXPIRED \u2014 idle timeout, rebuilds automatically on next turn"),
-        "micro":    ("\U000f0456", False, "MICRO COMPACT \u2014 old tool results silently cleared, earlier file reads lost from context"),
-        "bloat":    ("\U000f0cf2", True,  "SYSTEM BLOAT \u2014 system overhead consuming >50% of context window, reduce plugins or MCP servers"),
-        "heavy":    ("\U000f02d1", True,  "HEAVY CONTEXT \u2014 approaching autocompact threshold, conversation will be summarized soon"),
-        "compact":  ("\U000f0520", True,  None),  # dynamic
-        "turns":    ("\U000f0520", False, None),   # dynamic
-        "degraded": ("\U000f04c5", False, "CACHE DEGRADED \u2014 partial cache misses each turn, token efficiency reduced"),
-    }
-
     alert_key = None
     if state.get("cache_busting") is True:
         alert_key = "bust"
@@ -925,7 +925,6 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         alert_key = "degraded"
 
     # Track onset via disk file (script runs once per CC call, no in-memory state)
-    import time as _time
     alert_glyph_str = None
     alert_crit = False
 
@@ -946,7 +945,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             pass
 
     if alert_key:
-        now = _time.time()
+        now = time.time()
         persisted = _load_alert()
         if alert_key != persisted.get("key"):
             persisted = {"key": alert_key, "onset": now}
@@ -964,7 +963,10 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
                 msg = gdef[2]
             state["_alert_banner"] = f"{alert_glyph_str} {msg}"
     else:
-        _save_alert({})
+        # Only write if there's a stale alert to clear (avoid no-op writes per turn)
+        persisted = _load_alert()
+        if persisted:
+            _save_alert({})
 
     if not NO_COLOR:
         pills = []
@@ -1000,10 +1002,6 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
                 return f"\033[1;4;5;{cc}m{text}\033[0m"
 
         # ── Dynamic alert messages ──
-        # Full text shows for 5s on first appearance, then collapses
-        # to a blinking glyph. Onset tracked per alert key.
-        alert_color = "#bf616a"  # nord11 red
-        warn_color_hex = "#ebcb8b"  # nord13 yellow
         # Inline alert glyph (flashing)
         if alert_glyph_str:
             ac = alert_color_hex if alert_crit else warn_color_hex
@@ -1396,7 +1394,7 @@ def save_cache(cache: dict[str, Any]) -> None:
     try:
         # Prune stale _obs sessions before writing
         obs = cache.get("_obs")
-        if isinstance(obs, dict) and len(obs) > 1:
+        if isinstance(obs, dict) and obs:
             now = time.time()
             stale = [
                 sid for sid, sc in obs.items()
@@ -1646,22 +1644,38 @@ def render_tmux(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 # --- Observability Module Renderers ---
 
 
-def render_obs_reads(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_reads")
+def _render_obs_counter(state: dict[str, Any], theme: dict[str, Any],
+                        state_key: str, theme_key: str,
+                        default_glyph: str = "") -> str | None:
+    """Shared renderer for simple obs counter modules."""
+    n = state.get(state_key)
     if not n:
         return None
-    cfg = theme.get("obs_reads", {})
-    glyph = cfg.get("glyph", "\U000f0447 ")  # nf-md-file_document
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    cfg = theme.get(theme_key, {})
+    glyph = cfg.get("glyph", default_glyph)
+    text = f"{glyph}{n}"
+    # Threshold-based coloring if configured
+    warn_t = cfg.get("warn_threshold")
+    crit_t = cfg.get("critical_threshold")
+    if crit_t is not None and n >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+    if warn_t is not None and n >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
+
+
+def render_obs_reads(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    return _render_obs_counter(state, theme, "obs_reads", "obs_reads", "\U000f0447 ")
 
 
 def render_obs_rereads(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Rereads uses percentage as display value, not raw count."""
     rr = state.get("obs_reread_count")
     if not rr:
         return None
-    cfg = theme.get("obs_rereads", {})
     re_pct = state.get("obs_reread_pct", 0)
-    glyph = cfg.get("glyph", "\U000f04e6 ")  # nf-md-compress
+    cfg = theme.get("obs_rereads", {})
+    glyph = cfg.get("glyph", "\U000f04e6 ")
     text = f"{glyph}{re_pct}%"
     crit_t = cfg.get("critical_threshold", 50)
     warn_t = cfg.get("warn_threshold", 30)
@@ -1673,73 +1687,31 @@ def render_obs_rereads(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
 
 def render_obs_writes(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_writes")
-    if not n:
-        return None
-    cfg = theme.get("obs_writes", {})
-    glyph = cfg.get("glyph", "\U000f064f ")  # nf-md-lead_pencil
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_writes", "obs_writes", "\U000f064f ")
 
 
 def render_obs_bash(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_bash")
-    if not n:
-        return None
-    cfg = theme.get("obs_bash", {})
-    glyph = cfg.get("glyph", "\U000f018d ")  # nf-md-console
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_bash", "obs_bash", "\U000f018d ")
 
 
 def render_obs_failures(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_failures")
-    if not n:
-        return None
-    cfg = theme.get("obs_failures", {})
-    glyph = cfg.get("glyph", "\U000f0029 ")  # nf-md-alert
-    text = f"{glyph}{n}"
-    crit_t = cfg.get("critical_threshold", 5)
-    warn_t = cfg.get("warn_threshold", 1)
-    if n >= crit_t:
-        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
-    if n >= warn_t:
-        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
-    return _pill(text, cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_failures", "obs_failures", "\U000f0029 ")
 
 
 def render_obs_subagents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_subagents")
-    if not n:
-        return None
-    cfg = theme.get("obs_subagents", {})
-    glyph = cfg.get("glyph", "\U000f04c1 ")  # nf-md-source_fork
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_subagents", "obs_subagents", "\U000f04c1 ")
 
 
 def render_obs_tasks(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_tasks")
-    if not n:
-        return None
-    cfg = theme.get("obs_tasks", {})
-    glyph = cfg.get("glyph", "\U000f0137 ")  # nf-md-clipboard_check
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_tasks", "obs_tasks", "\U000f0137 ")
 
 
 def render_obs_compactions(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_compactions")
-    if not n:
-        return None
-    cfg = theme.get("obs_compactions", {})
-    glyph = cfg.get("glyph", "\U000f10e7 ")  # nf-md-archive_arrow_down
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_compactions", "obs_compactions", "\U000f10e7 ")
 
 
 def render_obs_prompts(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    n = state.get("obs_prompts")
-    if not n:
-        return None
-    cfg = theme.get("obs_prompts", {})
-    glyph = cfg.get("glyph", "\U000f017a ")  # nf-md-comment_text
-    return _pill(f"{glyph}{n}", cfg, theme=theme)
+    return _render_obs_counter(state, theme, "obs_prompts", "obs_prompts", "\U000f017a ")
 
 
 def render_obs_health(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
