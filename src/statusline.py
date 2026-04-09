@@ -86,18 +86,24 @@ _FAULT_LEDGER_PATH = os.path.join(
 _FAULT_SCAN_BYTES = 32768  # fast reverse scan: read last 32KB
 
 def _get_term_width(theme: dict | None = None) -> int:
-    """Get effective terminal width for wrapping.
+    """Get effective terminal width for module wrapping.
 
-    Priority: layout.max_width config > live terminal detection > 200 fallback.
-    Called on every render (not cached) so window resizes take effect immediately.
+    CC runs the statusline as a piped subprocess with no TTY — shutil.get_terminal_size
+    always returns the fallback. Window resizes are invisible to us. The only way to
+    control width is via layout.max_width in ~/.config/qline.toml.
+
+    Priority: layout.max_width config > COLUMNS env var > 200 fallback.
     """
     if theme:
         cfg_max = theme.get("layout", {}).get("max_width")
         if cfg_max and cfg_max > 0:
             return cfg_max
-    # Live detection — handles terminal resize between renders.
-    # Fallback 200 for headless (CC has no TTY).
-    return shutil.get_terminal_size((200, 24)).columns
+    # COLUMNS env var: some terminals/shells export this on resize.
+    # CC doesn't, but other callers might.
+    cols = os.environ.get("COLUMNS")
+    if cols and cols.isdigit() and int(cols) > 0:
+        return int(cols)
+    return 200
 
 # --- Default Theme (Muted Ocean) ---
 
