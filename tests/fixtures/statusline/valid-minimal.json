@@ -3,5 +3,6 @@
   "model": {
     "id": "claude-opus-4-6",
     "display_name": "Opus"
-  }
+  },
+  "session_id": "test-session-fixture-001"
 }

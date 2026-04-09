@@ -5,7 +5,7 @@
     "display_name": "Opus"
   },
   "workspace": {
-    "current_dir": "/home/q/LAB/qLine"
+    "current_dir": "/workspace/qline"
   },
   "cost": {
     "total_cost_usd": 0.75,
@@ -15,10 +15,13 @@
     "used": 50000,
     "total": 100000
   },
-  "added_dirs": ["/home/q/LAB/qLine/tests"],
+  "added_dirs": [
+    "/workspace/qline/tests"
+  ],
   "worktree": true,
   "current_usage": {
     "percent": 45
   },
-  "agent_id": "agent-xyz-123"
+  "agent_id": "agent-xyz-123",
+  "session_id": "test-session-fixture-001"
 }

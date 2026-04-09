@@ -5,14 +5,15 @@
     "display_name": "Opus"
   },
   "workspace": {
-    "current_dir": "/home/q/LAB/qLine"
+    "current_dir": "/workspace/qline"
   },
   "cost": {
-    "total_cost_usd": 0.50,
+    "total_cost_usd": 0.5,
     "total_duration_ms": 120000
   },
   "context_window": {
     "used": 75000,
     "total": 100000
-  }
+  },
+  "session_id": "test-session-fixture-001"
 }

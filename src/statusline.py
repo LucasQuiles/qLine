@@ -43,12 +43,25 @@ from context_overhead import inject_context_overhead
 
 # --- Observability integration (guarded import) ---
 try:
-    # Look for obs_utils next to this script first, then ~/.claude/scripts/
     _script_dir = os.path.dirname(os.path.abspath(__file__))
-    for _obs_path in [_script_dir, os.path.join(os.path.expanduser("~"), ".claude", "scripts")]:
-        if _obs_path not in sys.path:
+    _claude_dir = os.path.expanduser("~/.claude")
+    # Priority: plugin hooks dir (canonical, symlinked) > script dir > scripts/
+    # The plugin dir contains the repo-managed version; ~/.claude/ may have stale copies.
+    _plugin_hooks = os.path.join(_claude_dir, "plugins", "qline", "hooks")
+    for _obs_path in [_plugin_hooks, _script_dir, os.path.join(_claude_dir, "scripts")]:
+        if os.path.isdir(_obs_path) and _obs_path not in sys.path:
             sys.path.insert(0, _obs_path)
-    from obs_utils import resolve_package_root, update_health, _atomic_jsonl_append
+    from obs_utils import resolve_package_root_env, update_health, _atomic_jsonl_append
+    # Detect stale copies: obs_utils.__version__ was added in 2.1.0.
+    # If it's missing, the import resolved to a pre-2.1.0 copy.
+    import obs_utils as _obs_mod
+    if not hasattr(_obs_mod, "__version__"):
+        import warnings
+        warnings.warn(
+            f"qLine: stale obs_utils.py at {_obs_mod.__file__} — "
+            f"expected version 2.1.0+. Run: cp hooks/obs_utils.py ~/.claude/obs_utils.py",
+            stacklevel=1,
+        )
     _OBS_AVAILABLE = True
 except Exception:
     _OBS_AVAILABLE = False
@@ -90,11 +103,36 @@ def _init_session_paths(session_id: str | None) -> None:
     else:
         CACHE_PATH = os.environ.get("QLINE_CACHE_PATH", _DEFAULT_CACHE_PATH)
         ALERT_FILE = _DEFAULT_ALERT_FILE
+_FAULT_LEDGER_PATH = os.path.join(
+    os.path.expanduser("~"), ".claude", "logs", "lifecycle-hook-faults.jsonl"
+)
+_FAULT_SCAN_BYTES = 32768  # fast reverse scan: read last 32KB
+
+def _get_term_width(theme: dict | None = None) -> int:
+    """Get effective terminal width for module wrapping.
+
+    CC runs the statusline as a piped subprocess with no TTY — shutil.get_terminal_size
+    always returns the fallback. Window resizes are invisible to us. The only way to
+    control width is via layout.max_width in ~/.config/qline.toml.
+
+    Priority: layout.max_width config > COLUMNS env var > 200 fallback.
+    """
+    if theme:
+        cfg_max = theme.get("layout", {}).get("max_width", 0)
+        if cfg_max > 0:
+            return cfg_max
+    # COLUMNS env var: some terminals/shells export this on resize.
+    # CC doesn't, but other callers might.
+    cols = os.environ.get("COLUMNS")
+    if cols and cols.isdigit() and int(cols) > 0:
+        return int(cols)
+    return 120
 
 # --- Default Theme (Muted Ocean) ---
 
 DEFAULT_THEME: dict[str, Any] = {
     "model": {
+        "label": "model",
         "enabled": True,
         "glyph": "\U000f06a9 ",  # nf-md-robot (Supplementary PUA)
         "color": "#d8dee9",
@@ -102,6 +140,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "bold": False,
     },
     "dir": {
+        "label": "dir",
         "enabled": True,
         "glyph": "\U000f0770 ",  # nf-md-folder_open (Supplementary PUA)
         "color": "#9bb8d3",
@@ -109,14 +148,15 @@ DEFAULT_THEME: dict[str, Any] = {
         "worktree_marker": "\u229b",
     },
     "context_bar": {
+        "label": "ctx",
         "enabled": True,
         "glyph": "\U000f02d1 ",  # nf-md-heart (Supplementary PUA)
         "color": "#8fbcbb",     # nord7 — teal (healthy: cohesive with frost bar)
         "bg": "#2e3440",
-        "width": 0,  # 0 = auto (fill available width on its own line)
-        "warn_threshold": 40.0,
+        "width": 10,  # compact bar — every char counts in CC's single-line display
+        "warn_threshold": 75.0,
         "warn_color": "#ebcb8b",   # nord13 — yellow (warn: aurora accent)
-        "critical_threshold": 70.0,
+        "critical_threshold": 90.0,
         "critical_color": "#bf616a", # nord11 — red (critical: aurora danger)
         # Bar segment colors derive from computed severity (see _darken_hex).
         # No sys_color/conv_color config — segments track health state.
@@ -130,17 +170,20 @@ DEFAULT_THEME: dict[str, Any] = {
         "overhead_source": "auto",
     },
     "tokens": {
+        "label": "tok",
         "enabled": True,
         "color": "#a8d4d0",
         "bg": "#2e3440",
     },
     "sys_overhead": {
+        "label": "ovhd",
         "enabled": True,
         "glyph": "\U000f0456 ",  # nf-md-file_alert
         "color": "#81a1c1",      # nord9 blue
         "bg": "#2e3440",
     },
     "cache_writes": {
+        "label": "cw",
         "enabled": True,
         "glyph": "",             # no glyph for normal, spike glyph inline
         "color": "#8fbcbb",      # nord7 teal (normal)
@@ -151,6 +194,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "notable_threshold": 1000,
     },
     "cost": {
+        "label": "cost",
         "enabled": True,
         "glyph": "$",
         "color": "#e0956a",
@@ -161,6 +205,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "duration": {
+        "label": "dur",
         "enabled": True,
         "glyph": "\U000f0954 ",  # nf-md-clock_outline (Supplementary PUA)
         "color": "#8eacb8",
@@ -175,17 +220,25 @@ DEFAULT_THEME: dict[str, Any] = {
         "right": "",
     },
     "layout": {
-        "force_single_line": False,
-        "max_width": 0,  # 0 = auto-detect (COLUMNS env > get_terminal_size > 120)
-        "line1": ["model", "context_bar", "token_in", "token_out",
-                  "cache_rate", "duration"],
-        "line2": ["sys_overhead_pill", "cache_pill",
-                  "obs_reads", "obs_rereads", "obs_writes", "obs_bash",
-                  "obs_prompts", "obs_tasks", "obs_subagents", "obs_health",
-                  "turns_pill", "cost"],
-        "line3": ["dir", "git", "cpu", "memory", "disk"],
+        "force_single_line": True,
+        "max_width": 0,  # 0 = auto (COLUMNS env → 200 fallback)
+        "line1": ["model", "token_counts", "token_out_counts", "context_bar",
+                  "cache_rate", "cost", "duration"],
+        "line2": ["sys_overhead_pill", "cache_read", "cache_delta",
+                  "turns", "obs_reads", "obs_rereads", "obs_writes",
+                  "obs_bash", "obs_failures", "obs_tasks",
+                  "obs_subagents", "obs_health", "obs_compactions",
+                  "obs_hook_faults", "daily_cost", "weekly_cost"],
+        "line3": ["dir", "git", "cpu", "memory", "disk",
+                  "lines_changed", "session_count",
+                  "api_efficiency", "cost_per_ktok",
+                  "io_ratio", "tokens_per_turn",
+                  "free_context", "growth_rate",
+                  "unique_files", "fail_rate", "think_pct",
+                  "cost_per_turn", "burn_trend"],
     },
     "git": {
+        "label": "git",
         "enabled": True,
         "glyph": "\U000f04a9 ",
         "color": "#b48ead",
@@ -193,6 +246,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "dirty_marker": "*",
     },
     "cpu": {
+        "label": "cpu",
         "enabled": True,
         "glyph": "\U000f04cc ",  # nf-md-chip (Supplementary PUA)
         "color": "#a8d4d0",
@@ -205,6 +259,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "memory": {
+        "label": "mem",
         "enabled": True,
         "glyph": "\U000f035b ",  # nf-md-memory (Supplementary PUA)
         "color": "#a8d4d0",
@@ -217,6 +272,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "disk": {
+        "label": "disk",
         "enabled": True,
         "glyph": "\U000f02ca ",  # nf-md-harddisk (Supplementary PUA)
         "color": "#a8d4d0",
@@ -230,6 +286,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "agents": {
+        "label": "agents",
         "enabled": False,
         "glyph": "\U000f04cc ",
         "color": "#b48ead",
@@ -241,6 +298,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "show_threshold": 0,
     },
     "tmux": {
+        "label": "tmux",
         "enabled": False,
         "glyph": "tmux ",
         "color": "#8eacb8",
@@ -248,13 +306,15 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     # --- Obs: I/O group ---
     "obs_reads": {
-        "enabled": False,
+        "label": "reads",
+        "enabled": True,
         "glyph": "\U000f0447 ",  # nf-md-file_document (󰑇)
         "color": "#a5b4fc",
         "bg": "#2e3440",
     },
     "obs_rereads": {
-        "enabled": False,
+        "label": "reread",
+        "enabled": True,
         "glyph": "\u00ae ",  # ® (registered sign)
         "color": "#a5b4fc",
         "bg": "#2e3440",
@@ -264,38 +324,44 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "obs_writes": {
-        "enabled": False,
+        "label": "writes",
+        "enabled": True,
         "glyph": "\U000f064f ",  # nf-md-lead_pencil
         "color": "#86efac",
         "bg": "#2e3440",
     },
     "obs_bash": {
-        "enabled": False,
+        "label": "bash",
+        "enabled": True,
         "glyph": "\U000f018d ",  # nf-md-console
         "color": "#fcd34d",
         "bg": "#2e3440",
     },
     # --- Obs: Work group ---
     "obs_prompts": {
-        "enabled": False,
+        "label": "prompts",
+        "enabled": True,
         "glyph": "\U000f017a ",  # nf-md-comment_text
         "color": "#d8b4fe",
         "bg": "#2e3440",
     },
     "obs_tasks": {
-        "enabled": False,
+        "label": "tasks",
+        "enabled": True,
         "glyph": "\U000f0318 ",  # nf-md-checkbox_marked_circle
         "color": "#67e8f9",
         "bg": "#2e3440",
     },
     "obs_subagents": {
-        "enabled": False,
+        "label": "agents",
+        "enabled": True,
         "glyph": "\U000f0026 ",  # nf-md-account_multiple
         "color": "#c4b5fd",
         "bg": "#2e3440",
     },
     # --- Obs: Health group ---
     "obs_failures": {
+        "label": "fails",
         "enabled": False,
         "glyph": "\U000f0029 ",  # nf-md-alert
         "color": "#fda4af",
@@ -306,18 +372,119 @@ DEFAULT_THEME: dict[str, Any] = {
         "critical_color": "#d06070",
     },
     "obs_compactions": {
-        "enabled": False,
-        "glyph": "\U000f10e7 ",  # nf-md-archive_arrow_down
+        "label": "compact",
+        "enabled": True,
+        "glyph": "\U000f0520 ",  # nf-md-timer (compactions)
         "color": "#a8a29e",
         "bg": "#2e3440",
     },
     "obs_health": {
-        "enabled": False,
+        "label": "health",
+        "enabled": True,
         "glyph": "\U000f0565 ",  # nf-md-shield_check
         "color": "#86efac",
         "bg": "#2e3440",
         "degraded_color": "#f0d399",
         "failed_color": "#d06070",
+    },
+    "obs_hook_faults": {
+        "label": "faults",
+        "enabled": True,
+        "glyph": "\U000f0028 ",  # nf-md-alert_circle (distinct from obs_failures' alert)
+        "color": "#fda4af",
+        "bg": "#2e3440",
+        "warn_threshold": 1,
+        "critical_threshold": 5,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+    },
+    "lines_changed": {
+        "label": "lines",
+        "enabled": True,
+        "color": "#88c0d0",
+    },
+    "api_efficiency": {
+        "label": "api%",
+        "enabled": True,
+        "color": "#a3be8c",
+    },
+    "daily_cost": {
+        "label": "today",
+        "enabled": True,
+        "color": "#e5c890",
+        "warn_threshold": 200,
+        "critical_threshold": 400,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+    },
+    "weekly_cost": {
+        "label": "week",
+        "enabled": True,
+        "color": "#e5c890",
+        "warn_threshold": 1000,
+        "critical_threshold": 2000,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+    },
+    "session_count": {
+        "label": "sess",
+        "enabled": True,
+        "color": "#8fbcbb",
+    },
+    "cost_per_ktok": {
+        "label": "$/kt",
+        "enabled": True,
+        "color": "#e5c890",
+    },
+    "io_ratio": {
+        "label": "io",
+        "enabled": True,
+        "color": "#88c0d0",
+    },
+    "tokens_per_turn": {
+        "label": "t/turn",
+        "enabled": True,
+        "color": "#a3be8c",
+    },
+    "free_context": {
+        "label": "free",
+        "enabled": True,
+        "color": "#8fbcbb",
+    },
+    "growth_rate": {
+        "label": "grow",
+        "enabled": True,
+        "color": "#d08770",
+    },
+    "unique_files": {
+        "label": "files",
+        "enabled": True,
+        "color": "#88c0d0",
+    },
+    "fail_rate": {
+        "label": "fail%",
+        "enabled": True,
+        "color": "#fda4af",
+        "warn_threshold": 5,
+        "critical_threshold": 15,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+    },
+    "think_pct": {
+        "label": "think",
+        "enabled": True,
+        "color": "#c4b5fd",
+    },
+    "cost_per_turn": {
+        "label": "$/turn",
+        "enabled": True,
+        "color": "#e5c890",
+    },
+    "burn_trend": {
+        "label": "burn",
+        "enabled": True,
+        "color": "#a3be8c",
+        "warn_color": "#f0d399",
     },
     "degraded": {
         "enabled": True,
@@ -527,10 +694,46 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(model, dict):
         name = model.get("display_name")
         if isinstance(name, str) and name:
-            # "Opus 4.6 (1M context)" → "Opus 4.6[1M]"
+            # "Claude Opus 4.6 (1M context)" → "Opus4.6[1M]"
+            if name.startswith("Claude "):
+                name = name[7:]
             name = name.replace(" context)", ")")
             name = name.replace(" (", "[").replace(")", "]")
+            # Remove spaces between name parts: "Opus 4.6[1M]" → "Opus4.6[1M]"
+            bracket_idx = name.find("[")
+            if bracket_idx >= 0:
+                prefix = name[:bracket_idx].replace(" ", "")
+                name = prefix + name[bracket_idx:]
+            else:
+                name = name.replace(" ", "")
             state["model_name"] = name
+    elif isinstance(model, str) and model:
+        # String model ID: "claude-opus-4-6" → "Opus4.6[1M]"
+        name = model
+        if name.startswith("claude-"):
+            name = name[7:]
+        # Strip date suffixes: "haiku-4-5-20251001" → "haiku-4-5"
+        parts = name.split("-")
+        clean = []
+        for p in parts:
+            if len(p) >= 8 and p.isdigit():
+                break
+            clean.append(p)
+        if clean:
+            clean[0] = clean[0].capitalize()
+            name = clean[0]
+            for i, p in enumerate(clean[1:]):
+                name += p if i == 0 else f".{p}"
+        # Append context window size if available: "Opus4.6[1M]"
+        ctx_window = payload.get("context_window")
+        if isinstance(ctx_window, dict):
+            ctx_size = ctx_window.get("context_window_size")
+            if isinstance(ctx_size, (int, float)) and ctx_size > 0:
+                if ctx_size >= 1_000_000:
+                    name += f"[{ctx_size // 1_000_000}M]"
+                elif ctx_size >= 1_000:
+                    name += f"[{ctx_size // 1_000}K]"
+        state["model_name"] = name
 
     # Directory — prefer workspace.current_dir, fall back to cwd
     workspace = payload.get("workspace")
@@ -554,7 +757,7 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(style_name, str) and style_name:
             state["output_style"] = style_name
 
-    # Cost fields
+    # Cost fields — check both nested cost dict and top-level keys
     cost = payload.get("cost")
     if isinstance(cost, dict):
         cost_usd = cost.get("total_cost_usd")
@@ -563,6 +766,24 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
         duration_ms = cost.get("total_duration_ms")
         if isinstance(duration_ms, (int, float)):
             state["duration_ms"] = int(duration_ms)
+        api_ms = cost.get("total_api_duration_ms")
+        if isinstance(api_ms, (int, float)):
+            state["api_duration_ms"] = int(api_ms)
+        lines_add = cost.get("total_lines_added")
+        lines_rm = cost.get("total_lines_removed")
+        if isinstance(lines_add, (int, float)):
+            state["lines_added"] = int(lines_add)
+        if isinstance(lines_rm, (int, float)):
+            state["lines_removed"] = int(lines_rm)
+    # Fallback: top-level cost_usd and duration_ms (CC sends these directly)
+    if "cost_usd" not in state:
+        c = payload.get("cost_usd")
+        if isinstance(c, (int, float)):
+            state["cost_usd"] = float(c)
+    if "duration_ms" not in state:
+        d = payload.get("duration_ms")
+        if isinstance(d, (int, float)):
+            state["duration_ms"] = int(d)
 
     # Optional: context window
     ctx_window = payload.get("context_window")
@@ -574,6 +795,7 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
             # Synthesize used/total from percentage and size
             state["context_used"] = int(used_pct * ctx_size / 100)
             state["context_total"] = int(ctx_size)
+            state["raw_used_pct"] = int(used_pct)
         else:
             # Fallback: used/total fields (older payloads, test fixtures)
             used = ctx_window.get("used")
@@ -590,11 +812,14 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
                 state["input_tokens"] = input_tok
                 state["output_tokens"] = output_tok
 
-        # NOTE: CC's used_percentage intentionally excludes output tokens.
-        # Prior outputs are re-ingested as cache_read on subsequent turns,
-        # so they're already counted in the input-side metrics. Adding
-        # output_tokens here would double-count them and inflate the bar
-        # above CC's actual autocompact threshold.
+        # Corrected context usage: CC's used_percentage excludes output tokens
+        # (bug #28167) but the actual context limit DOES include them.
+        # Only apply when used_percentage was the source (not used/total which
+        # may already include output tokens in some payload versions).
+        if used_pct is not None and "context_used" in state and "context_total" in state:
+            out = state.get("output_tokens", 0)
+            if out > 0:
+                state["context_used_corrected"] = state["context_used"] + out
 
     # Optional: added_dirs
     added_dirs = payload.get("added_dirs")
@@ -717,8 +942,8 @@ def _pill(text: str, cfg: dict[str, Any], color: str | None = None,
 
 
 def format_tokens(input_tokens: int, output_tokens: int, theme: dict[str, Any]) -> str:
-    """Format token counts as ▲12.3k ▼4.1k."""
-    text = f"\u25b2 {_abbreviate_count(input_tokens)} \u25bc {_abbreviate_count(output_tokens)}"
+    """Format token counts as ▲71.4k │ ▼484k."""
+    text = f"\u25b2{_abbreviate_count(input_tokens)} \u2502 \u25bc{_abbreviate_count(output_tokens)}"
     tok_cfg = theme.get("tokens", {})
     return _pill(text, tok_cfg, theme=theme)
 
@@ -730,8 +955,8 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
     filled = (pct * width) // 100
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
-    warn_t = cfg.get("warn_threshold", 40.0)
-    crit_t = cfg.get("critical_threshold", 70.0)
+    warn_t = cfg.get("warn_threshold", 75.0)
+    crit_t = cfg.get("critical_threshold", 90.0)
 
     if pct >= crit_t:
         suffix = f" {pct}%!"
@@ -755,13 +980,15 @@ def render_bar(pct: int, theme: dict[str, Any]) -> str:
 
 
 def render_model(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render model name module."""
+    """Render model name module — plain text with glyph, no pill wrapper."""
     model_name = state.get("model_name")
     if not model_name:
         return None
     m_cfg = theme.get("model", {})
-    text = f"{m_cfg.get('glyph', '')}{_sanitize_fragment(model_name)}"
-    return _pill(text, m_cfg, bold=m_cfg.get("bold", False), theme=theme)
+    glyph = m_cfg.get("glyph", "\U000f06a9 ")
+    text = f"{glyph}{_sanitize_fragment(model_name)}"
+    color = m_cfg.get("color", "#d8dee9")
+    return style(text, color, m_cfg.get("bold", False))
 
 
 def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -775,23 +1002,12 @@ def render_dir(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
         marker = d_cfg.get("worktree_marker", "\u229b")
         text += marker
     glyph = d_cfg.get("glyph", "")
-    return _pill(f"{glyph}{text}", d_cfg, theme=theme)
+    is_stale = state.get("git_stale", False)
+    return _pill(f"{glyph}{text}", d_cfg, theme=theme, dim=is_stale)
 
 
 # ── Overhead Monitor: see src/context_overhead.py ───────────────────
 # Constants and functions imported at module top via context_overhead import.
-
-# Alert definitions: (glyph, is_critical, "TITLE — inline description")
-_ALERT_DEFS = {
-    "bust":     ("\U000f04bf", True,  "CACHE BUSTED \u2014 cache miss on every turn, 10-20x token cost until session restart"),
-    "expired":  ("\U000f0150", False, "CACHE EXPIRED \u2014 idle timeout, rebuilds automatically on next turn"),
-    "micro":    ("\U000f0456", False, "MICRO COMPACT \u2014 old tool results silently cleared, earlier file reads lost from context"),
-    "bloat":    ("\U000f0cf2", True,  "SYSTEM BLOAT \u2014 system overhead consuming >50% of context window, reduce plugins or MCP servers"),
-    "heavy":    ("\U000f02d1", True,  "HEAVY CONTEXT \u2014 approaching autocompact threshold, conversation will be summarized soon"),
-    "compact":  ("\U000f0520", True,  None),  # dynamic
-    "turns":    ("\U000f0520", False, None),   # dynamic
-    "degraded": ("\U000f04c5", False, "CACHE DEGRADED \u2014 partial cache misses each turn, token efficiency reduced"),
-}
 
 
 def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -804,15 +1020,20 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     if "context_used" not in state or "context_total" not in state:
         return None
     cfg = theme.get("context_bar", {})
-    ctx_used = state["context_used"]
+    ctx_used = state.get("context_used_corrected", state["context_used"])
     ctx_total = state["context_total"]
     total_pct = (ctx_used * 100) // ctx_total if ctx_total > 0 else 0
+    # CC's raw used_percentage is the authoritative source for both display
+    # and alerts. context_used_corrected adds output tokens which can push
+    # past 100%, creating a bar that visually contradicts the percentage.
+    # Use raw for everything so bar fill matches the number.
+    raw_used_pct = state.get("raw_used_pct", total_pct)
+    display_pct = raw_used_pct
     width = cfg.get("width", 20)
     if width <= 0:
-        import shutil as _shutil
-        term_w = _shutil.get_terminal_size((120, 24)).columns
+        term_w = _get_term_width(theme)
         width = max(10, term_w - 55)
-    filled = (total_pct * width) // 100
+    filled = (display_pct * width) // 100
 
     # Dual-bar: sys overhead vs conversation within filled portion
     has_overhead = "sys_overhead_tokens" in state
@@ -835,17 +1056,21 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         free_blocks = width - filled
 
     # Severity from CC-verified autocompact threshold
+    # Severity thresholds. When the overhead pipeline provides the CC-verified
+    # autocompact percentage, use it (most accurate). Otherwise fall back to
+    # config defaults. The fallback crit of 90% prevents false HEAVY alerts —
+    # the old 70% default fired at normal usage for large context windows.
     cc_compact_pct = state.get("cc_autocompact_pct")
     if cc_compact_pct:
         warn_t = round(cc_compact_pct * 0.80, 1)
         crit_t = cc_compact_pct
     else:
-        warn_t = cfg.get("warn_threshold", 40.0)
-        crit_t = cfg.get("critical_threshold", 70.0)
+        warn_t = cfg.get("warn_threshold", 75.0)
+        crit_t = cfg.get("critical_threshold", 90.0)
     sys_warn_t = cfg.get("sys_warn_threshold", 30.0)
     sys_crit_t = cfg.get("sys_critical_threshold", 50.0)
 
-    total_sev = 2 if total_pct >= crit_t else (1 if total_pct >= warn_t else 0)
+    total_sev = 2 if raw_used_pct >= crit_t else (1 if raw_used_pct >= warn_t else 0)
     sys_sev = 0
     if has_overhead:
         sys_sev = 2 if raw_sys_pct >= sys_crit_t else (1 if raw_sys_pct >= sys_warn_t else 0)
@@ -871,15 +1096,16 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         color = cfg.get("color", "#b5d4a0")
         bold = False
 
-    glyph = cfg.get("glyph", "\U000f02d1")  # 󰋑 heart
+    glyph = cfg.get("glyph", "\U000f02d1").rstrip()  # 󰋑 heart (strip trailing space)
 
     # Percentage suffix
+    # Show CC's raw percentage (not the corrected+capped one)
     if sev == 2:
-        pct_text = f"{total_pct}%!"
+        pct_text = f"{raw_used_pct}%!"
     elif sev == 1:
-        pct_text = f"{total_pct}%~"
+        pct_text = f"{raw_used_pct}%~"
     else:
-        pct_text = f"{total_pct}%"
+        pct_text = f"{raw_used_pct}%"
 
     # ── Render as separate pills ──
 
@@ -908,6 +1134,18 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     warn_color_hex = "#ebcb8b"    # nord13 yellow
     tuc = state.get("turns_until_compact")
 
+    # (glyph, is_critical, "TITLE — inline description")
+    _ALERT_DEFS = {
+        "bust":     ("\U000f04bf", True,  "CACHE BUSTED \u2014 cache miss on every turn, 10-20x token cost until session restart"),
+        "expired":  ("\U000f0150", False, "CACHE EXPIRED \u2014 idle timeout, rebuilds automatically on next turn"),
+        "micro":    ("\U000f0456", False, "MICRO COMPACT \u2014 old tool results silently cleared, earlier file reads lost from context"),
+        "bloat":    ("\U000f0cf2", True,  "SYSTEM BLOAT \u2014 system overhead consuming >50% of context window, reduce plugins or MCP servers"),
+        "heavy":    ("\U000f02d1", True,  "HEAVY CONTEXT \u2014 approaching autocompact threshold, conversation will be summarized soon"),
+        "compact":  ("\U000f0520", True,  None),  # dynamic
+        "turns":    ("\U000f0520", False, None),   # dynamic
+        "degraded": ("\U000f04c5", False, "CACHE DEGRADED \u2014 partial cache misses each turn, token efficiency reduced"),
+    }
+
     alert_key = None
     if state.get("cache_busting") is True:
         alert_key = "bust"
@@ -917,7 +1155,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         alert_key = "micro"
     elif has_overhead and raw_sys_pct >= sys_crit_t:
         alert_key = "bloat"
-    elif total_pct >= crit_t:
+    elif raw_used_pct >= crit_t:
         alert_key = "heavy"
     elif tuc is not None and 0 < tuc <= 10:
         alert_key = "compact"
@@ -929,6 +1167,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     # Track onset via disk file (script runs once per CC call, no in-memory state)
     alert_glyph_str = None
     alert_crit = False
+    _sid = state.get("_session_id", "")
 
     def _load_alert():
         try:
@@ -939,18 +1178,20 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
     def _save_alert(d):
         try:
-            tmp = ALERT_FILE + ".tmp"
-            with open(tmp, "w") as f:
+            with open(ALERT_FILE, "w") as f:
                 json.dump(d, f)
-            os.rename(tmp, ALERT_FILE)
         except Exception:
             pass
 
     if alert_key:
         now = time.time()
         persisted = _load_alert()
+        # Treat stale session alert as new: different session_id means a new CC
+        # process has started; the old onset time is irrelevant.
+        if _sid and persisted.get("session_id", "") != _sid:
+            persisted = {}
         if alert_key != persisted.get("key"):
-            persisted = {"key": alert_key, "onset": now}
+            persisted = {"key": alert_key, "onset": now, "session_id": _sid}
             _save_alert(persisted)
         elapsed = now - persisted.get("onset", now)
         gdef = _ALERT_DEFS.get(alert_key, _ALERT_DEFS["degraded"])
@@ -965,10 +1206,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
                 msg = gdef[2]
             state["_alert_banner"] = f"{alert_glyph_str} {msg}"
     else:
-        # Only write if there's a stale alert to clear (avoid no-op writes per turn)
-        persisted = _load_alert()
-        if persisted:
-            _save_alert({})
+        _save_alert({})
 
     if not NO_COLOR:
         pills = []
@@ -1003,7 +1241,6 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
                 # Bold + underline: visible in Apple Terminal without blink
                 return f"\033[1;4;5;{cc}m{text}\033[0m"
 
-        # ── Dynamic alert messages ──
         # Inline alert glyph (flashing)
         if alert_glyph_str:
             ac = alert_color_hex if alert_crit else warn_color_hex
@@ -1011,7 +1248,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             # Colorize the banner too
             if "_alert_banner" in state:
                 state["_alert_banner"] = _flash(state["_alert_banner"], ac, critical=alert_crit)
-        # [bar 󰋑]
+        # bar (no brackets): █▓░ 󰋑pct%
         bar_styled = ""
         if sys_blocks > 0:
             bar_styled += style("\u2588" * sys_blocks, sys_color_hex, bg_color=bg_hex)
@@ -1019,91 +1256,124 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
             bar_styled += style("\u2593" * conv_blocks, conv_color_hex, bg_color=bg_hex)
         if free_blocks > 0:
             bar_styled += style("\u2591" * free_blocks, free_color_hex, bg_color=bg_hex)
-        bar_inner = bar_styled + style(glyph, color, bold, bg_hex)
-        pills.append(bar_inner)
-        # [pct%]
-        pills.append(_mkpill(pct_text, color, b=bold))
+        pills.append(bar_styled)
+        # 󰋑pct% — glyph directly before percentage, no spaces
+        pills.append(_mkpill(f"{glyph}{pct_text}", color, b=bold))
 
         sep = style(" ", "#4c566a", bg_color=bg_hex)
         return sep.join(pills)
 
-    # NO_COLOR fallback
+    # NO_COLOR fallback — no brackets, 󰋑pct% suffix, tight (no spaces)
     bar = "\u2588" * sys_blocks + "\u2593" * conv_blocks + "\u2591" * free_blocks
     parts = []
     if alert_glyph_str:
-        parts.append(f"[\u26a0]")
-    parts.append(f"[{bar} {glyph}]")
-    parts.append(f"[{pct_text}]")
+        parts.append("\u26a0")
+    parts.append(f"{bar}{glyph}{pct_text}")
     return "".join(parts)
 
 
+def render_tokens(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Legacy stub — tokens now rendered by token_counts/token_out_counts."""
+    return None
+
+
+def render_sys_overhead(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Legacy stub — overhead now rendered by sys_overhead_pill."""
+    return None
+
 
 def render_sys_overhead_pill(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render standalone system overhead pill: [󰑖 38.2k™]."""
+    """Render standalone system overhead: 󰑖17.1k™."""
     if "sys_overhead_tokens" not in state:
         return None
     cfg = theme.get("sys_overhead", {})
     color = cfg.get("color", "#81a1c1")
-    glyph = cfg.get("glyph", "\U000f0456 ")
+    glyph = cfg.get("glyph", "\U000f0456").rstrip()
     source = state.get("sys_overhead_source", "")
     suffix = "\u2248" if source == "estimated" else ""
     text = f"{glyph}{_abbreviate_count(state['sys_overhead_tokens'])}{suffix}\u2122"
     return _pill(text, cfg, color, theme=theme)
 
 
-def render_token_in(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render input token pill: [▲1.1M]."""
+def render_token_counts(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render input token count only: ▲71.4k (output rendered separately)."""
     if "input_tokens" not in state or state["input_tokens"] <= 0:
         return None
     cfg = theme.get("tokens", {})
     color = state.get("_sev_color", cfg.get("color", "#a8d4d0"))
     bold = state.get("_sev_bold", False)
-    return _pill(f"\u25b2 {_abbreviate_count(state['input_tokens'])}", cfg, color, bold, theme)
+    return _pill(f"\u25b2{_abbreviate_count(state['input_tokens'])}", cfg, color, bold, theme)
 
 
-def render_token_out(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render output token pill: [▼ 334k]."""
+def render_token_out_counts(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render output token count: ▼484k."""
     if "output_tokens" not in state or state["output_tokens"] <= 0:
         return None
     cfg = theme.get("tokens", {})
     color = state.get("_sev_color", cfg.get("color", "#a8d4d0"))
     bold = state.get("_sev_bold", False)
-    return _pill(f"\u25bc {_abbreviate_count(state['output_tokens'])}", cfg, color, bold, theme)
+    return _pill(f"\u25bc{_abbreviate_count(state['output_tokens'])}", cfg, color, bold, theme)
+
+
+def render_token_in(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Legacy alias for render_token_counts (layout compat)."""
+    return render_token_counts(state, theme)
+
+
+def render_token_out(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Legacy alias for render_token_out_counts (layout compat)."""
+    return render_token_out_counts(state, theme)
 
 
 def render_cache_pill(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render combined cache pill: [© 521k™ 󰁍 +1.0k™]."""
+    """Legacy stub — cache now rendered by cache_read + cache_delta."""
+    return None
+
+
+def render_cache_read(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render cache read: ©307k™."""
     last_cr = state.get("last_cache_read")
-    last_cc = state.get("last_cache_create")
-    if (not last_cr or last_cr <= 0) and (not last_cc or last_cc <= 0):
+    if not last_cr or last_cr <= 0:
         return None
     cfg = theme.get("cache_writes", {})
     bg_hex = cfg.get("bg")
     if NO_COLOR:
-        parts = []
-        if last_cr and last_cr > 0:
-            parts.append(f"\u00a9 {_abbreviate_count(last_cr)}\u2122")
-        if last_cc and last_cc > 0:
-            parts.append(f"\U000f037b  +{_abbreviate_count(last_cc)}")
-        return " ".join(parts) if parts else None
-    fragments = []
-    if last_cr and last_cr > 0:
-        fragments.append(style(f"\u00a9 {_abbreviate_count(last_cr)}\u2122", "#b48ead", bg_color=bg_hex))
-    if last_cc and last_cc > 0:
-        cw_color = state.get("_cw_color", "#8fbcbb")
-        fragments.append(style(f"\U000f037b  +{_abbreviate_count(last_cc)}", cw_color, bg_color=bg_hex))
-    return " ".join(fragments) if fragments else None
+        return f"\u00a9{_abbreviate_count(last_cr)}\u2122"
+    return style(f"\u00a9{_abbreviate_count(last_cr)}\u2122", "#b48ead", bg_color=bg_hex)
+
+
+def render_cache_delta(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render cache delta: 󰍻 +454™."""
+    last_cc = state.get("last_cache_create")
+    if not last_cc or last_cc <= 0:
+        return None
+    cfg = theme.get("cache_writes", {})
+    bg_hex = cfg.get("bg")
+    cw_color = state.get("_cw_color", "#8fbcbb")
+    if NO_COLOR:
+        return f"\U000f037b +{_abbreviate_count(last_cc)}\u2122"
+    return style(f"\U000f037b +{_abbreviate_count(last_cc)}\u2122", cw_color, bg_color=bg_hex)
 
 
 def render_cache_rate(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render cache hit rate pill: [󰓅 99%]."""
+    """Render cache hit rate: 󰓅99%."""
     hit_rate = state.get("cache_hit_rate")
-    source = state.get("sys_overhead_source", "")
-    if hit_rate is None or source != "measured":
+    if hit_rate is None:
+        # Also check integer percentage form
+        hit_rate_int = state.get("cache_hit_rate_pct")
+        if isinstance(hit_rate_int, (int, float)) and hit_rate_int > 0:
+            cfg = theme.get("context_bar", {})
+            rate_color = "#8fbcbb"  # nord7 teal
+            return _pill(f"\U000f04c5{int(hit_rate_int)}%", cfg, rate_color, theme=theme)
+        return None
+    if not isinstance(hit_rate, (int, float)):
+        return None
+    rate_pct = min(int(hit_rate * 100) if hit_rate <= 1.0 else int(hit_rate), 100)
+    if rate_pct <= 0:
         return None
     cfg = theme.get("context_bar", {})
     rate_color = "#8fbcbb"  # nord7 teal
-    return _pill(f"\U000f04c5 {int(hit_rate * 100)}%", cfg, rate_color, theme=theme)
+    return _pill(f"\U000f04c5{rate_pct}%", cfg, rate_color, theme=theme)
 
 
 def render_turns_pill(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1124,13 +1394,18 @@ def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     cost_val = state["cost_usd"]
     glyph = c_cfg.get("glyph", "$")
 
-    # Compute $/hr from total cost and duration
+    # Compute $/hr — prefer active time (excludes idle/sleep) when available
+    active_s = state.get("active_time_s")
     dur_ms = state.get("duration_ms", 0)
     rate_str = ""
-    if dur_ms > 60000 and cost_val > 0:  # need at least 1 min for meaningful rate
+    if active_s and active_s > 60 and cost_val > 0:
+        hours = active_s / 3600
+        rate = cost_val / hours
+        rate_str = f"|{_format_cost(rate)}/hr"
+    elif dur_ms > 60000 and cost_val > 0:
         hours = dur_ms / 3_600_000
         rate = cost_val / hours
-        rate_str = f" {_format_cost(rate)}/hr"
+        rate_str = f"|{_format_cost(rate)}/hr"
 
     cost_text = f"{glyph}{_format_cost(cost_val)}{rate_str}"
     warn_t = c_cfg.get("warn_threshold", 2.0)
@@ -1143,12 +1418,22 @@ def render_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_duration(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render duration module."""
-    if "duration_ms" not in state:
+    """Render duration — prefer active time when available.
+
+    Shows active time (excluding idle gaps > 15min) to be consistent with
+    the $/hr rate. Falls back to wall time when active_time_s isn't available.
+    """
+    active_s = state.get("active_time_s")
+    if not active_s and "duration_ms" not in state:
         return None
     dur_cfg = theme.get("duration", {})
-    fmt = dur_cfg.get("format", "hm")
-    text = f"{dur_cfg.get('glyph', '')}{_format_duration(state['duration_ms'], fmt)}"
+    fmt = dur_cfg.get("format", "auto")
+    glyph = dur_cfg.get("glyph", "\U000f0954").rstrip()
+    if active_s and active_s > 0:
+        dur_ms = active_s * 1000
+    else:
+        dur_ms = state["duration_ms"]
+    text = f"{glyph}{_format_duration(int(dur_ms), fmt)}"
     return _pill(text, dur_cfg, theme=theme)
 
 
@@ -1646,19 +1931,27 @@ def render_tmux(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 # --- Observability Module Renderers ---
 
 
-def _render_obs_counter(state: dict[str, Any], theme: dict[str, Any],
-                        state_key: str, theme_key: str,
-                        default_glyph: str = "") -> str | None:
-    """Shared renderer for simple obs counter modules."""
+def _render_obs_counter(
+    state: dict[str, Any],
+    theme: dict[str, Any],
+    state_key: str,
+    theme_key: str,
+    *,
+    default_glyph: str = "",
+    prefix: str = "",
+    display_key: str | None = None,
+    suffix: str = "",
+) -> str | None:
+    """Data-driven obs counter renderer."""
     n = state.get(state_key)
     if not n:
         return None
     cfg = theme.get(theme_key, {})
-    glyph = cfg.get("glyph", default_glyph)
-    text = f"{glyph}{n}"
-    # Threshold-based coloring if configured
-    warn_t = cfg.get("warn_threshold")
+    glyph = cfg.get("glyph", default_glyph).rstrip()
+    display = state.get(display_key, n) if display_key else n
+    text = f"{glyph}{prefix}{display}{suffix}"
     crit_t = cfg.get("critical_threshold")
+    warn_t = cfg.get("warn_threshold")
     if crit_t is not None and n >= crit_t:
         return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
     if warn_t is not None and n >= warn_t:
@@ -1667,17 +1960,16 @@ def _render_obs_counter(state: dict[str, Any], theme: dict[str, Any],
 
 
 def render_obs_reads(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    return _render_obs_counter(state, theme, "obs_reads", "obs_reads", "\U000f0447 ")
+    return _render_obs_counter(state, theme, "obs_reads", "obs_reads", default_glyph="\U000f0447")
 
 
 def render_obs_rereads(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Rereads uses percentage as display value, not raw count."""
     rr = state.get("obs_reread_count")
     if not rr:
         return None
-    re_pct = state.get("obs_reread_pct", 0)
     cfg = theme.get("obs_rereads", {})
-    glyph = cfg.get("glyph", "\U000f04e6 ")
+    re_pct = state.get("obs_reread_pct", 0)
+    glyph = cfg.get("glyph", "\u00ae ").rstrip()  # ® registered sign
     text = f"{glyph}{re_pct}%"
     crit_t = cfg.get("critical_threshold", 50)
     warn_t = cfg.get("warn_threshold", 30)
@@ -1689,31 +1981,54 @@ def render_obs_rereads(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
 
 def render_obs_writes(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    return _render_obs_counter(state, theme, "obs_writes", "obs_writes", "\U000f064f ")
+    return _render_obs_counter(state, theme, "obs_writes", "obs_writes", default_glyph="\U000f064f")
 
 
 def render_obs_bash(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    return _render_obs_counter(state, theme, "obs_bash", "obs_bash", "\U000f018d ")
+    return _render_obs_counter(state, theme, "obs_bash", "obs_bash", default_glyph="\U000f018d")
 
 
 def render_obs_failures(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    return _render_obs_counter(state, theme, "obs_failures", "obs_failures", "\U000f0029 ")
+    return _render_obs_counter(state, theme, "obs_failures", "obs_failures", default_glyph="\U000f0029 ")
 
 
 def render_obs_subagents(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    return _render_obs_counter(state, theme, "obs_subagents", "obs_subagents", "\U000f04c1 ")
+    return _render_obs_counter(state, theme, "obs_subagents", "obs_subagents", default_glyph="\U000f0026")
 
 
 def render_obs_tasks(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    return _render_obs_counter(state, theme, "obs_tasks", "obs_tasks", "\U000f0137 ")
+    return _render_obs_counter(state, theme, "obs_tasks", "obs_tasks", default_glyph="\U000f0318")
 
 
 def render_obs_compactions(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    return _render_obs_counter(state, theme, "obs_compactions", "obs_compactions", "\U000f10e7 ")
+    return _render_obs_counter(state, theme, "obs_compactions", "obs_compactions", default_glyph="\U000f0520", prefix="x")
 
 
 def render_obs_prompts(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    return _render_obs_counter(state, theme, "obs_prompts", "obs_prompts", "\U000f017a ")
+    return _render_obs_counter(state, theme, "obs_prompts", "obs_prompts", default_glyph="\U000f017a")
+
+
+def render_obs_hook_faults(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render hook fault count from the lifecycle fault ledger (last hour).
+
+    Warn at 1 fault, critical at 5 — hook crashes are always notable.
+    """
+    return _render_obs_counter(
+        state, theme, "obs_hook_faults", "obs_hook_faults",
+        default_glyph="\U000f0028 ", suffix="",
+    )
+
+
+def render_turns(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render prompt turn count: 󰐕46 (from obs prompt events, not overhead pipeline)."""
+    # Use obs_prompts (actual human prompts) as the authoritative turn count.
+    # session_turn_count only increments on transcript pipeline runs, which
+    # undercounts severely and produces misleading per-turn derived metrics.
+    n = state.get("obs_prompts") or state.get("session_turn_count")
+    if not n or n <= 0:
+        return None
+    cfg = theme.get("tokens", {})
+    return _pill(f"\U000f0415{n}", cfg, theme=theme)
 
 
 def render_obs_health(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1730,6 +2045,201 @@ def render_obs_health(state: dict[str, Any], theme: dict[str, Any]) -> str | Non
     if h == "degraded":
         return _pill(glyph.rstrip(), cfg, cfg.get("degraded_color", "#f0d399"), True, theme)
     return _pill(glyph.rstrip(), cfg, cfg.get("failed_color", "#d06070"), True, theme)
+
+
+def render_lines_changed(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render lines added/removed: +2.5k/-800."""
+    added = state.get("lines_added")
+    removed = state.get("lines_removed")
+    if not added and not removed:
+        return None
+    cfg = theme.get("lines_changed", {})
+    parts = []
+    if added:
+        parts.append(f"+{_abbreviate_count(added)}")
+    if removed:
+        parts.append(f"-{_abbreviate_count(removed)}")
+    text = "/".join(parts)
+    return _pill(text, cfg, theme=theme)
+
+
+def render_api_efficiency(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render API time vs wall time: ⏱53% (API-active ratio)."""
+    api_ms = state.get("api_duration_ms")
+    wall_ms = state.get("duration_ms")
+    if not api_ms or not wall_ms or wall_ms <= 0:
+        return None
+    cfg = theme.get("api_efficiency", {})
+    pct = min(round(api_ms / wall_ms * 100), 100)
+    text = f"{pct}%" if state.get("_show_labels") else f"\u23f1{pct}%"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_daily_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render today's cumulative cost from session snapshot history."""
+    cost = state.get("daily_cost")
+    if cost is None:
+        return None
+    cfg = theme.get("daily_cost", {})
+    warn_t = cfg.get("warn_threshold", 200)
+    crit_t = cfg.get("critical_threshold", 400)
+    text = f"\U000f00ed${cost:.0f}"
+    if cost >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+    if cost >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
+
+
+def render_weekly_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render this week's cumulative cost."""
+    cost = state.get("weekly_cost")
+    if cost is None:
+        return None
+    cfg = theme.get("weekly_cost", {})
+    warn_t = cfg.get("warn_threshold", 1000)
+    crit_t = cfg.get("critical_threshold", 2000)
+    text = f"${cost:.0f}/wk"
+    if cost >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+    if cost >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
+
+
+def render_session_count(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render session count for today: #91."""
+    count = state.get("session_count_today")
+    if not count:
+        return None
+    cfg = theme.get("session_count", {})
+    return _pill(f"#{count}", cfg, theme=theme)
+
+
+def render_cost_per_ktok(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render cost per 1k output tokens: $/k0.15."""
+    cost = state.get("cost_usd")
+    out_tok = state.get("output_tokens")
+    if not cost or not out_tok or out_tok <= 0:
+        return None
+    cfg = theme.get("cost_per_ktok", {})
+    per_k = cost / (out_tok / 1000)
+    if state.get("_show_labels"):
+        text = f"{per_k:.3f}" if per_k < 0.01 else f"{per_k:.2f}"
+    else:
+        text = f"$/k{per_k:.3f}" if per_k < 0.01 else f"$/k{per_k:.2f}"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_io_ratio(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render output:input token ratio: io:6.8x."""
+    in_tok = state.get("input_tokens")
+    out_tok = state.get("output_tokens")
+    if not in_tok or not out_tok or in_tok <= 0:
+        return None
+    cfg = theme.get("io_ratio", {})
+    ratio = out_tok / in_tok
+    text = f"{ratio:.1f}x" if state.get("_show_labels") else f"io:{ratio:.1f}x"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_tokens_per_turn(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render average output tokens per turn: tok/t 1.2k."""
+    out_tok = state.get("output_tokens")
+    turns = state.get("obs_prompts") or state.get("session_turn_count")
+    if not out_tok or not turns or turns <= 0:
+        return None
+    cfg = theme.get("tokens_per_turn", {})
+    avg = out_tok // turns
+    text = f"{_abbreviate_count(avg)}" if state.get("_show_labels") else f"tok/t{_abbreviate_count(avg)}"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_free_context(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render free context tokens: ▼180kfree."""
+    total = state.get("context_total")
+    # Use context_used (from CC raw percentage), NOT context_used_corrected.
+    # The bar uses raw_used_pct for fill; free_context must agree with the bar
+    # or it disappears while the bar still shows free space.
+    used = state.get("context_used")
+    if not total or not used:
+        return None
+    free = max(0, total - used)
+    if free <= 0:
+        return None
+    cfg = theme.get("free_context", {})
+    text = f"{_abbreviate_count(free)}" if state.get("_show_labels") else f"\u25bc{_abbreviate_count(free)}free"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_growth_rate(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render context growth per turn: gro:8.8k/t."""
+    growth = state.get("context_growth_per_turn")
+    if not growth or growth <= 0:
+        return None
+    cfg = theme.get("growth_rate", {})
+    text = f"{_abbreviate_count(growth)}/t" if state.get("_show_labels") else f"gro:{_abbreviate_count(growth)}/t"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_unique_files(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render unique files touched this session."""
+    n = state.get("unique_files")
+    if not n:
+        return None
+    cfg = theme.get("unique_files", {})
+    return _pill(f"\U000f024b{n}", cfg, theme=theme)  # nf-md-file_multiple
+
+
+def render_fail_rate(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render tool failure rate: fail:3.2%."""
+    rate = state.get("fail_rate")
+    if rate is None or rate == 0:
+        return None
+    cfg = theme.get("fail_rate", {})
+    text = f"{rate}%" if state.get("_show_labels") else f"fail:{rate}%"
+    warn_t = cfg.get("warn_threshold", 5)
+    crit_t = cfg.get("critical_threshold", 15)
+    if rate >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
+    if rate >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
+
+
+def render_think_pct(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render human think time percentage: 󰔛71% (waiting vs working)."""
+    pct = state.get("think_pct")
+    if pct is None:
+        return None
+    cfg = theme.get("think_pct", {})
+    text = f"{pct}%" if state.get("_show_labels") else f"\U000f0520{pct}%"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_cost_per_turn(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render cost per turn: $/t0.15."""
+    cost = state.get("cost_usd")
+    turns = state.get("obs_prompts") or state.get("session_turn_count")
+    if not cost or not turns or turns <= 0:
+        return None
+    cfg = theme.get("cost_per_turn", {})
+    cpt = cost / turns
+    text = f"{cpt:.2f}" if state.get("_show_labels") else f"$/t{cpt:.2f}"
+    return _pill(text, cfg, theme=theme)
+
+
+def render_burn_trend(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render cost acceleration: 󰔰↗ accelerating, 󰔳→ steady, 󰔱↘ decelerating."""
+    trend = state.get("burn_trend")
+    if trend is None:
+        return None
+    cfg = theme.get("burn_trend", {})
+    symbols = {"accelerating": "\u2197", "steady": "\u2192", "decelerating": "\u2198"}
+    text = symbols.get(trend, "?")
+    if trend == "accelerating":
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
+    return _pill(text, cfg, theme=theme)
 
 
 def render_degraded(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -1749,12 +2259,19 @@ MODULE_RENDERERS: dict[str, Any] = {
     "model": render_model,
     "dir": render_dir,
     "context_bar": render_context_bar,
+    "tokens": render_tokens,
+    "sys_overhead": render_sys_overhead,
     "sys_overhead_pill": render_sys_overhead_pill,
+    "token_counts": render_token_counts,
+    "token_out_counts": render_token_out_counts,
     "token_in": render_token_in,
     "token_out": render_token_out,
     "cache_pill": render_cache_pill,
+    "cache_read": render_cache_read,
+    "cache_delta": render_cache_delta,
     "cache_rate": render_cache_rate,
     "turns_pill": render_turns_pill,
+    "cache_writes": render_cache_delta,
     "cost": render_cost,
     "duration": render_duration,
     "git": render_git,
@@ -1773,58 +2290,73 @@ MODULE_RENDERERS: dict[str, Any] = {
     "obs_compactions": render_obs_compactions,
     "obs_prompts": render_obs_prompts,
     "obs_health": render_obs_health,
+    "obs_hook_faults": render_obs_hook_faults,
+    "turns": render_turns,
+    "lines_changed": render_lines_changed,
+    "api_efficiency": render_api_efficiency,
+    "daily_cost": render_daily_cost,
+    "weekly_cost": render_weekly_cost,
+    "session_count": render_session_count,
+    "cost_per_ktok": render_cost_per_ktok,
+    "io_ratio": render_io_ratio,
+    "tokens_per_turn": render_tokens_per_turn,
+    "free_context": render_free_context,
+    "growth_rate": render_growth_rate,
+    "unique_files": render_unique_files,
+    "fail_rate": render_fail_rate,
+    "think_pct": render_think_pct,
+    "cost_per_turn": render_cost_per_turn,
+    "burn_trend": render_burn_trend,
     "degraded": render_degraded,
 }
 
-DEFAULT_LINE1 = ["model", "context_bar", "token_in", "token_out",
-                 "cache_rate", "duration", "degraded"]
-DEFAULT_LINE2 = ["sys_overhead_pill", "cache_pill",
-                 "obs_reads", "obs_rereads", "obs_writes", "obs_bash",
-                 "obs_prompts", "obs_tasks", "obs_subagents", "obs_health",
-                 "turns_pill", "cost"]
-DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk"]
+DEFAULT_LINE1 = ["model", "token_counts", "token_out_counts", "context_bar",
+                 "cache_rate", "cost", "duration", "degraded"]
+DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
+                 "turns", "obs_reads", "obs_rereads", "obs_writes",
+                 "obs_bash", "obs_failures", "obs_tasks",
+                 "obs_subagents", "obs_health", "obs_compactions",
+                 "obs_hook_faults", "daily_cost", "weekly_cost"]
+DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk",
+                 "lines_changed", "session_count",
+                 "api_efficiency", "cost_per_ktok",
+                 "io_ratio", "tokens_per_turn",
+                 "free_context", "growth_rate",
+                 "unique_files", "fail_rate", "think_pct",
+                 "cost_per_turn", "burn_trend"]
+
+# PIPE separator positions on line 2 (module names after which a PIPE | is used
+# instead of BOX │).  Only two: after cache_read and within cost (handled by
+# the cost renderer itself).
+LINE2_PIPE_AFTER = {"cache_read"}
 
 
-def render_line(state: dict[str, Any], theme: dict[str, Any],
-                modules: list[str]) -> str:
-    """Render a single line from a list of module names.
-
-    Iterates modules, looks up each in MODULE_RENDERERS, skips unknown
-    or disabled modules, calls each renderer, collects non-None results,
-    and joins with the theme separator.
-    """
-    parts: list[str] = []
-    sep_cfg = theme.get("separator", {})
-    sep_char = sep_cfg.get("char", "\u2502")
-    sep_dim = sep_cfg.get("dim", True)
-    sep = style_dim(sep_char) if sep_dim else sep_char
-
-    for name in modules:
-        renderer = MODULE_RENDERERS.get(name)
-        if renderer is None:
-            continue
-        mod_cfg = theme.get(name, {})
-        if not mod_cfg.get("enabled", True):
-            continue
-        result = renderer(state, theme)
-        if result is not None:
-            parts.append(result)
-
-    if not parts:
-        return ""
-    return sep.join(parts)
+def _apply_label(result: str, mod_cfg: dict, show_labels: bool) -> str:
+    """Prepend a dimmed label prefix if show_labels is on and the module has one."""
+    if not show_labels:
+        return result
+    label = mod_cfg.get("label", "")
+    if not label:
+        return result
+    if NO_COLOR:
+        return f"{label}:{result}"
+    return f"{style_dim(label + ':')}{result}"
 
 
 def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
-                    modules: list[str]) -> str:
+                    modules: list[str], sep_override: str | None = None) -> str:
     """Render modules into auto-wrapped rows that fit terminal width."""
-    sep_cfg = theme.get("separator", {})
-    sep_char = sep_cfg.get("char", "\u2502")
-    sep_dim = sep_cfg.get("dim", True)
-    sep = style_dim(sep_char) if sep_dim else sep_char
+    if sep_override is not None:
+        sep = sep_override
+    else:
+        sep_cfg = theme.get("separator", {})
+        sep_char = sep_cfg.get("char", "\u2502")
+        sep_dim = sep_cfg.get("dim", True)
+        sep = style_dim(sep_char) if sep_dim else sep_char
     sep_width = _visible_len(sep)
 
     # Render all modules, keep only non-None results
+    show_labels = state.get("_show_labels", False)
     parts: list[str] = []
     for name in modules:
         renderer = MODULE_RENDERERS.get(name)
@@ -1835,22 +2367,13 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
             continue
         result = renderer(state, theme)
         if result is not None:
-            parts.append(result)
+            parts.append(_apply_label(result, mod_cfg, show_labels))
 
     if not parts:
         return ""
 
-    # Get terminal width for wrapping.
-    # CC statusline runs as a piped subprocess — no TTY for ioctl.
-    # Priority: COLUMNS env var > layout.max_width config > get_terminal_size > 120 default
     layout_cfg = theme.get("layout", {})
-    columns_env = os.environ.get("COLUMNS")
-    if columns_env and columns_env.isdigit():
-        term_width = int(columns_env)
-    elif layout_cfg.get("max_width"):
-        term_width = layout_cfg["max_width"]
-    else:
-        term_width = shutil.get_terminal_size((120, 24)).columns
+    term_width = _get_term_width(theme)
 
     # Pack modules into rows
     rows: list[list[str]] = []
@@ -1878,6 +2401,122 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
     return "\n".join(sep.join(row) for row in rows)
 
 
+def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
+                       modules: list[str], box_sep: str) -> tuple[str, list[str]]:
+    """Render line 2 with width-aware truncation and PIPE | after cache_read.
+
+    Returns (rendered_line, overflow_module_names). Overflow modules are
+    those that didn't fit within max_width — the caller distributes them
+    to other lines.
+    """
+    show_labels = state.get("_show_labels", False)
+    rendered: list[tuple[str, str]] = []  # (module_name, rendered_text)
+    for name in modules:
+        renderer = MODULE_RENDERERS.get(name)
+        if renderer is None:
+            continue
+        mod_cfg = theme.get(name, {})
+        if not mod_cfg.get("enabled", True):
+            continue
+        result = renderer(state, theme)
+        if result is not None:
+            rendered.append((name, _apply_label(result, mod_cfg, show_labels)))
+
+    if not rendered:
+        return "", []
+
+    pipe = style_dim("|") if not NO_COLOR else "|"
+
+    term_width = _get_term_width(theme)
+
+    # Pack modules into a single row. Overflow names are returned to caller.
+    parts: list[str] = []
+    overflow: list[str] = []
+    current_width = 0
+    prev_name = ""
+    overflowing = False
+
+    for name, text in rendered:
+        if overflowing:
+            overflow.append(name)
+            continue
+
+        if parts:
+            sep = pipe if prev_name in LINE2_PIPE_AFTER else box_sep
+            needed = _visible_len(sep) + _visible_len(text)
+        else:
+            sep = ""
+            needed = _visible_len(text)
+
+        if parts and current_width + needed > term_width:
+            overflowing = True
+            overflow.append(name)
+            continue
+
+        if sep:
+            parts.append(sep)
+            current_width += _visible_len(sep)
+        parts.append(text)
+        current_width += _visible_len(text)
+        prev_name = name
+
+    return "".join(parts), overflow
+
+
+def _check_invariants(state: dict[str, Any]) -> list[str]:
+    """Check metric invariants. Returns list of violations (empty = clean).
+
+    Runs automatically when QLINE_DEBUG=1. Violations are logged to stderr
+    but never crash the statusline.
+    """
+    violations: list[str] = []
+
+    # Bar fill must match displayed percentage
+    raw_pct = state.get("raw_used_pct", 0)
+    ctx_used = state.get("context_used", 0)
+    ctx_total = state.get("context_total", 1)
+    if ctx_total > 0:
+        computed = round(ctx_used * 100 / ctx_total)
+        if abs(computed - raw_pct) > 1:
+            violations.append(f"pct_drift: raw={raw_pct} computed={computed}")
+
+    # free + used == total (within rounding)
+    free = max(0, ctx_total - ctx_used)
+    if free + ctx_used != ctx_total:
+        violations.append(f"free_invariant: free={free}+used={ctx_used}!={ctx_total}")
+
+    # Cumulative counters must be non-negative
+    for key in ("obs_reads", "obs_writes", "obs_bash", "obs_failures",
+                "obs_prompts", "obs_tasks", "obs_subagents", "obs_compactions"):
+        val = state.get(key, 0)
+        if not isinstance(val, int) or val < 0:
+            violations.append(f"{key}_invalid: {val}")
+
+    # Percentages must be 0-100
+    for key in ("raw_used_pct", "obs_reread_pct", "think_pct"):
+        val = state.get(key)
+        if val is not None and not (0 <= val <= 100):
+            violations.append(f"{key}_oob: {val}")
+
+    # daily_cost <= weekly_cost
+    dc = state.get("daily_cost", 0)
+    wc = state.get("weekly_cost", 0)
+    if dc and wc and dc > wc + 1:
+        violations.append(f"daily>weekly: {dc}>{wc}")
+
+    # daily_cost >= session_cost (can't spend more than today's total)
+    sc = state.get("cost_usd", 0)
+    if dc and sc and dc < sc - 1:
+        violations.append(f"session>daily: session={sc} daily={dc}")
+
+    # fail_rate bounded
+    fr = state.get("fail_rate")
+    if fr is not None and not (0 <= fr <= 100):
+        violations.append(f"fail_rate_oob: {fr}")
+
+    return violations
+
+
 def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     """Render status output from normalized state using layout config.
 
@@ -1887,6 +2526,14 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     """
     if theme is None:
         theme = DEFAULT_THEME
+
+    # Invariant checking (QLINE_DEBUG=1 enables)
+    if os.environ.get("QLINE_DEBUG") == "1":
+        violations = _check_invariants(state)
+        if violations:
+            import sys as _sys
+            for v in violations:
+                _sys.stderr.write(f"qline-invariant: {v}\n")
 
     layout = theme.get("layout", {})
     force_single = layout.get("force_single_line", False)
@@ -1908,28 +2555,91 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         layout_lines = [DEFAULT_LINE1, DEFAULT_LINE2, DEFAULT_LINE3]
 
     state["_compact"] = force_single
+    state["_show_labels"] = layout.get("show_labels", False)
 
     if force_single:
-        # Compact: merge all into one auto-wrapped line
+        # Single line: merge ALL modules into one string with no newlines.
+        # CC only shows line 1 — everything must be on that line.
+        # CC handles its own text wrapping/scrolling internally.
         merged: list[str] = []
         for modules in layout_lines:
             merged.extend(modules)
-        return _render_wrapped(state, theme, merged)
+        show_labels = state.get("_show_labels", False)
+        sep_cfg = theme.get("separator", {})
+        sep_char = sep_cfg.get("char", "\u2502")
+        sep_dim = sep_cfg.get("dim", True)
+        sep = style_dim(sep_char) if sep_dim else sep_char
+        parts: list[str] = []
+        for name in merged:
+            renderer = MODULE_RENDERERS.get(name)
+            if renderer is None:
+                continue
+            mod_cfg = theme.get(name, {})
+            if not mod_cfg.get("enabled", True):
+                continue
+            result = renderer(state, theme)
+            if result is not None:
+                parts.append(_apply_label(result, mod_cfg, show_labels))
+        return sep.join(parts)
 
     # Multi-line: render each layout line separately, enforce line breaks
+    # All lines use │ (BOX DRAWING) with NO spaces as the default separator.
+    # Line 2 uses PIPE | after specific modules (cache_read, cost rate).
+    sep_cfg = theme.get("separator", {})
+    sep_char = sep_cfg.get("char", "\u2502")
+    sep_dim = sep_cfg.get("dim", True)
+    box_sep = style_dim(sep_char) if sep_dim else sep_char
+
+    # Render all layout lines. Line 2 may overflow — collect overflow modules.
+    max_lines = layout.get("max_lines", 3)
     rendered_lines: list[str] = []
-    for modules in layout_lines:
-        line = _render_wrapped(state, theme, modules)
+    overflow_modules: list[str] = []  # modules that didn't fit on line 2
+
+    for idx, modules in enumerate(layout_lines):
+        if idx == 1:
+            line, overflow_modules = _render_line2_piped(state, theme, modules, box_sep)
+        else:
+            line = _render_wrapped(state, theme, modules, sep_override=box_sep)
         if line:
             rendered_lines.append(line)
 
     # Alert banner: when active, replace lines 2+ with the banner text.
-    # Line 1 (the health bar with inline glyph) always shows.
     banner = state.get("_alert_banner")
     if banner and rendered_lines:
         return rendered_lines[0] + "\n" + banner
 
-    return "\n".join(rendered_lines)
+    # If line 2 overflowed, merge overflow into the last layout line.
+    # Respect max_width so line 3 doesn't exceed the width limit.
+    term_width = _get_term_width(theme)
+    if overflow_modules and len(rendered_lines) >= 2:
+        # Render overflow modules
+        show_labels = state.get("_show_labels", False)
+        overflow_parts = []
+        for name in overflow_modules:
+            renderer = MODULE_RENDERERS.get(name)
+            if renderer:
+                mod_cfg = theme.get(name, {})
+                result = renderer(state, theme)
+                if result is not None:
+                    overflow_parts.append(_apply_label(result, mod_cfg, show_labels))
+        if overflow_parts:
+            last_line = rendered_lines[-1]
+            current_width = _visible_len(last_line)
+            sep_w = _visible_len(box_sep)
+            for part in overflow_parts:
+                needed = sep_w + _visible_len(part)
+                if current_width + needed > term_width:
+                    break  # stop — line 3 is full
+                last_line = last_line + box_sep + part
+                current_width += needed
+            rendered_lines[-1] = last_line
+
+    # Enforce max output lines
+    output = "\n".join(rendered_lines)
+    output_lines = output.split("\n")
+    if len(output_lines) > max_lines:
+        output_lines = output_lines[:max_lines]
+    return "\n".join(output_lines)
 
 
 # --- Observability snapshot ---
@@ -1988,6 +2698,218 @@ def _read_obs_health(package_root: str) -> str:
         return "unknown"
 
 
+def _count_recent_faults(max_age_s: float = 3600) -> int:
+    """Count fault-level hook fault ledger entries from the last max_age_s seconds.
+
+    Fast reverse scan: reads last _FAULT_SCAN_BYTES of the ledger, parses JSONL
+    lines, counts entries where level == 'fault' and ts is within max_age_s.
+    Returns 0 on any error (never raises).
+    """
+    try:
+        file_size = os.path.getsize(_FAULT_LEDGER_PATH)
+        if file_size == 0:
+            return 0
+        seek_pos = max(0, file_size - _FAULT_SCAN_BYTES)
+        with open(_FAULT_LEDGER_PATH, "rb") as f:
+            f.seek(seek_pos)
+            raw = f.read()
+        # Decode and split into lines; skip partial first line if we sought mid-file
+        lines = raw.decode("utf-8", errors="replace").splitlines()
+        if seek_pos > 0 and lines:
+            lines = lines[1:]  # discard potentially truncated first line
+        cutoff = time.time() - max_age_s
+        count = 0
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if rec.get("level") != "fault":
+                continue
+            ts_str = rec.get("ts", "")
+            if not ts_str:
+                continue
+            try:
+                ts_val = datetime.fromisoformat(ts_str).timestamp()
+                if ts_val >= cutoff:
+                    count += 1
+            except (ValueError, OSError):
+                continue
+        return count
+    except Exception:
+        return 0
+
+
+def _count_parse_errors(package_root: str) -> int:
+    """Count entries in the parse diagnostic sidecar. Returns 0 if file absent or unreadable."""
+    try:
+        diag_path = os.path.join(package_root, "native", "statusline", "diagnostics.jsonl")
+        count = 0
+        with open(diag_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    count += 1
+        return count
+    except Exception:
+        return 0
+
+
+def _compute_session_insights(package_root: str) -> dict:
+    """Compute derived insights from hook_events.jsonl timestamps and data.
+
+    Returns dict with: unique_files, fail_rate, think_time_s, think_pct,
+    cost_per_turn, burn_trend. Never raises.
+    """
+    try:
+        ledger = os.path.join(package_root, "metadata", "hook_events.jsonl")
+        timestamps: list[float] = []
+        unique_files: set[str] = set()
+        total_tool_uses = 0
+        tool_failures = 0
+
+        with open(ledger) as f:
+            for line in f:
+                # Extract timestamp
+                ts_idx = line.find('"ts": "')
+                if ts_idx >= 0:
+                    ts_start = ts_idx + 7
+                    ts_end = line.find('"', ts_start)
+                    if ts_end > ts_start:
+                        try:
+                            timestamps.append(
+                                datetime.fromisoformat(line[ts_start:ts_end]).timestamp()
+                            )
+                        except (ValueError, OSError):
+                            pass
+
+                # Extract event type
+                ev_idx = line.find('"event": "')
+                if ev_idx >= 0:
+                    ev_start = ev_idx + 10
+                    ev_end = line.find('"', ev_start)
+                    if ev_end > ev_start:
+                        event = line[ev_start:ev_end]
+                        if event == "tool.failed":
+                            tool_failures += 1
+                            total_tool_uses += 1
+                        elif event.startswith("file.") or event == "bash.executed":
+                            total_tool_uses += 1
+
+                # Extract file paths from data
+                fp_idx = line.find('"file_path": "')
+                if fp_idx >= 0:
+                    fp_start = fp_idx + 14
+                    fp_end = line.find('"', fp_start)
+                    if fp_end > fp_start:
+                        unique_files.add(line[fp_start:fp_end])
+                else:
+                    # Also check "path" key
+                    p_idx = line.find('"path": "')
+                    if p_idx >= 0:
+                        p_start = p_idx + 9
+                        p_end = line.find('"', p_start)
+                        if p_end > p_start:
+                            unique_files.add(line[p_start:p_end])
+
+        result: dict = {}
+        result["unique_files"] = len(unique_files)
+
+        # Fail rate
+        if total_tool_uses > 0:
+            result["fail_rate"] = round(tool_failures / total_tool_uses * 100, 1)
+
+        # Think time: gaps 30s-15min between events (human thinking).
+        # Gaps > 15min are idle/away/sleep — excluded from think time.
+        _THINK_MIN = 30
+        _THINK_MAX = 900  # 15 minutes
+        if len(timestamps) >= 2:
+            timestamps.sort()
+            think_s = idle_s = 0.0
+            for j in range(len(timestamps) - 1):
+                gap = timestamps[j + 1] - timestamps[j]
+                if gap > _THINK_MAX:
+                    idle_s += gap
+                elif gap > _THINK_MIN:
+                    think_s += gap
+            total_s = timestamps[-1] - timestamps[0]
+            active_s = total_s - idle_s
+            result["think_time_s"] = round(think_s)
+            result["active_time_s"] = round(active_s)
+            if active_s > 0:
+                result["think_pct"] = round(think_s / active_s * 100)
+
+        return result
+    except Exception:
+        return {}
+
+
+def _scan_cost_and_sessions() -> tuple[float, float, int]:
+    """Scan session snapshots for daily cost, weekly cost, and today's session count.
+
+    Returns (daily_cost, weekly_cost, session_count_today). Never raises.
+    """
+    try:
+        from datetime import date, timedelta
+
+        obs_root = os.path.join(os.path.expanduser("~"), ".claude", "observability")
+        sessions_dir = os.path.join(obs_root, "sessions")
+        if not os.path.isdir(sessions_dir):
+            return 0.0, 0.0, 0
+
+        today = date.today()
+        today_str = today.isoformat()
+        week_start = today - timedelta(days=today.weekday())
+
+        daily_cost = 0.0
+        weekly_cost = 0.0
+        session_count = 0
+
+        for date_dir_name in os.listdir(sessions_dir):
+            try:
+                dir_date = date.fromisoformat(date_dir_name)
+            except ValueError:
+                continue
+            if dir_date < week_start:
+                continue
+
+            date_dir = os.path.join(sessions_dir, date_dir_name)
+            is_today = (date_dir_name == today_str)
+
+            for sess_id in os.listdir(date_dir):
+                snap_path = os.path.join(
+                    date_dir, sess_id, "native", "statusline", "snapshots.jsonl"
+                )
+                if not os.path.isfile(snap_path):
+                    continue
+
+                if is_today:
+                    session_count += 1
+
+                # Read last line for final cost
+                try:
+                    with open(snap_path, "rb") as f:
+                        f.seek(max(0, os.path.getsize(snap_path) - 1024))
+                        tail = f.read().decode("utf-8", errors="replace")
+                    lines = tail.strip().splitlines()
+                    if lines:
+                        rec = json.loads(lines[-1])
+                        c = rec.get("cost_usd", 0)
+                        if isinstance(c, (int, float)):
+                            weekly_cost += c
+                            if is_today:
+                                daily_cost += c
+                except Exception:
+                    pass
+
+        return daily_cost, weekly_cost, session_count
+    except Exception:
+        return 0.0, 0.0, 0
+
+
 def _inject_obs_counters(state: dict, payload: dict) -> None:
     """Inject obs event counters into state for module renderers. Never raises."""
     if not _OBS_AVAILABLE:
@@ -1998,9 +2920,7 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
             return
         state["_has_session_id"] = True
 
-        obs_root = os.environ.get("OBS_ROOT")
-        kwargs = {"obs_root": obs_root} if obs_root else {}
-        package_root = resolve_package_root(session_id, **kwargs)
+        package_root = resolve_package_root_env(session_id)
         if package_root is None:
             return
 
@@ -2009,7 +2929,7 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         session_cache = obs_cache.get(session_id, {})
         now = time.time()
 
-        # Refresh counts if stale (>30s)
+        # Refresh counts if stale
         if now - session_cache.get("last_count_ts", 0) >= OBS_CACHE_TTL:
             event_counts = _count_obs_events(package_root)
             total_reads, reread_count = _count_rereads(package_root)
@@ -2025,11 +2945,43 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
 
         # Inject into state from cache
         ec = session_cache.get("event_counts", {})
+
+        # Session resume detection: clear stale overhead/anchor caches
+        reentry_count = ec.get("session.reentry", 0)
+        if reentry_count > session_cache.get("last_known_reentry_count", 0):
+            session_cache.pop("overhead_ts", None)
+            session_cache.pop("turn_1_anchor", None)
+            session_cache["last_known_reentry_count"] = reentry_count
+            session_cache["resume_detected"] = True
+            obs_cache[session_id] = session_cache
+            cache["_obs"] = obs_cache
+            save_cache(cache)
+
+        # Compaction anchor invalidation: clear overhead/anchor caches when
+        # a new compact.anchor_invalidated event has been emitted.
+        anchor_inval_count = ec.get("compact.anchor_invalidated", 0)
+        if anchor_inval_count > session_cache.get("last_known_anchor_inval_count", 0):
+            session_cache.pop("overhead_ts", None)
+            session_cache.pop("turn_1_anchor", None)
+            session_cache["last_known_anchor_inval_count"] = anchor_inval_count
+            obs_cache[session_id] = session_cache
+            cache["_obs"] = obs_cache
+            save_cache(cache)
+
+        # Refresh fault count and parse errors if stale (same TTL as other obs data)
+        if now - session_cache.get("last_fault_ts", 0) >= OBS_CACHE_TTL:
+            session_cache["hook_fault_count"] = _count_recent_faults()
+            session_cache["parse_error_count"] = _count_parse_errors(package_root)
+            session_cache["last_fault_ts"] = now
+            obs_cache[session_id] = session_cache
+            cache["_obs"] = obs_cache
+            save_cache(cache)
+
         tr = session_cache.get("total_reads", 0)
         rr = session_cache.get("reread_count", 0)
         state["obs_reads"] = tr
         state["obs_reread_count"] = rr
-        state["obs_reread_pct"] = round(rr / tr * 100) if tr > 0 else 0
+        state["obs_reread_pct"] = min(round(rr / tr * 100), 100) if tr > 0 else 0
         state["obs_writes"] = ec.get("file.write.diff", 0)
         state["obs_bash"] = ec.get("bash.executed", 0)
         state["obs_failures"] = ec.get("tool.failed", 0)
@@ -2038,6 +2990,97 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         state["obs_compactions"] = ec.get("compact.started", 0)
         state["obs_prompts"] = ec.get("prompt.observed", 0)
         state["obs_health"] = session_cache.get("obs_health", "unknown")
+        hook_faults = session_cache.get("hook_fault_count", 0)
+        if hook_faults > 0:
+            state["obs_hook_faults"] = hook_faults
+
+        # Session insights (30s TTL — heavier scan with timestamp parsing)
+        if now - session_cache.get("last_insights_ts", 0) >= 30:
+            insights = _compute_session_insights(package_root)
+            session_cache["insights"] = insights
+            session_cache["last_insights_ts"] = now
+            obs_cache[session_id] = session_cache
+            cache["_obs"] = obs_cache
+            save_cache(cache)
+
+        insights = session_cache.get("insights", {})
+        if insights.get("unique_files"):
+            state["unique_files"] = insights["unique_files"]
+        if insights.get("fail_rate"):
+            state["fail_rate"] = insights["fail_rate"]
+        if insights.get("think_pct") is not None:
+            state["think_pct"] = insights["think_pct"]
+            state["think_time_s"] = insights.get("think_time_s", 0)
+        if insights.get("active_time_s"):
+            state["active_time_s"] = insights["active_time_s"]
+
+        # Daily/weekly cost + session count (60s TTL — scans all session packages)
+        if now - session_cache.get("last_cost_scan_ts", 0) >= 60:
+            d_cost, w_cost, s_count = _scan_cost_and_sessions()
+            session_cache["daily_cost"] = d_cost
+            session_cache["weekly_cost"] = w_cost
+            session_cache["session_count_today"] = s_count
+            session_cache["last_cost_scan_ts"] = now
+            obs_cache[session_id] = session_cache
+            cache["_obs"] = obs_cache
+            save_cache(cache)
+
+        # Floor daily/weekly cost at current session cost — the snapshot scan
+        # may lag behind the live payload, creating a contradiction where
+        # session cost > daily cost. Clamp to prevent this.
+        session_cost = state.get("cost_usd", 0)
+        d_cost = session_cache.get("daily_cost", 0)
+        if d_cost or session_cost:
+            state["daily_cost"] = max(d_cost, session_cost)
+        w_cost = session_cache.get("weekly_cost", 0)
+        if w_cost or session_cost:
+            state["weekly_cost"] = max(w_cost, session_cost)
+        s_count = session_cache.get("session_count_today")
+        if s_count and s_count > 0:
+            state["session_count_today"] = s_count
+
+        # Burn trend from snapshot history (30s TTL — same as insights)
+        if now - session_cache.get("last_burn_ts", 0) >= 30:
+            try:
+                snap_path = os.path.join(
+                    package_root, "native", "statusline", "snapshots.jsonl"
+                )
+                if os.path.isfile(snap_path):
+                    with open(snap_path, "rb") as f:
+                        f.seek(0, 2)
+                        fsize = f.tell()
+                        f.seek(max(0, fsize - 4096))
+                        tail = f.read().decode("utf-8", errors="replace")
+                    snap_lines = [l for l in tail.strip().splitlines() if l.strip()]
+                    if len(snap_lines) >= 4:
+                        first = json.loads(snap_lines[0])
+                        mid = json.loads(snap_lines[len(snap_lines) // 2])
+                        last = json.loads(snap_lines[-1])
+                        c0 = first.get("cost_usd", 0)
+                        cm = mid.get("cost_usd", 0)
+                        cl = last.get("cost_usd", 0)
+                        first_half = cm - c0
+                        second_half = cl - cm
+                        if first_half > 0.1:
+                            ratio = second_half / first_half
+                            if ratio > 1.2:
+                                session_cache["burn_trend"] = "accelerating"
+                            elif ratio < 0.8:
+                                session_cache["burn_trend"] = "decelerating"
+                            else:
+                                session_cache["burn_trend"] = "steady"
+                session_cache["last_burn_ts"] = now
+                obs_cache[session_id] = session_cache
+                cache["_obs"] = obs_cache
+                save_cache(cache)
+            except Exception:
+                pass
+        bt = session_cache.get("burn_trend")
+        if bt:
+            state["burn_trend"] = bt
+        parse_errors = session_cache.get("parse_error_count", 0)
+        if parse_errors > 0:
+            state["obs_parse_errors"] = parse_errors
     except Exception as exc:
         _capture_diagnostic(state, "obs", str(exc))
 
@@ -2052,9 +3095,7 @@ def _try_obs_snapshot(payload: dict, state: dict) -> None:
         if not isinstance(session_id, str) or not session_id:
             return
 
-        obs_root = os.environ.get("OBS_ROOT")
-        kwargs = {"obs_root": obs_root} if obs_root else {}
-        package_root = resolve_package_root(session_id, **kwargs)
+        package_root = resolve_package_root_env(session_id)
         if package_root is None:
             return
 
@@ -2079,13 +3120,11 @@ def _try_obs_snapshot(payload: dict, state: dict) -> None:
         now = time.time()
         last_ts = session_cache.get("last_snapshot_ts", 0)
 
-        # Content hash (exclude ts — it always changes)
+        # Content hash for dedup — only compute within throttle window
         hash_fields = {k: v for k, v in record.items() if k != "ts"}
         content_hash = hashlib.sha256(
             json.dumps(hash_fields, sort_keys=True, default=str).encode()
         ).hexdigest()[:16]
-
-        # Skip if under throttle AND content unchanged
         if now - last_ts < 30 and content_hash == session_cache.get("last_snapshot_hash", ""):
             return
 
@@ -2137,7 +3176,7 @@ def main() -> None:
         "save_cache": save_cache,
         "cache_max_age": CACHE_MAX_AGE_S,
         "obs_available": _OBS_AVAILABLE,
-        "resolve_package_root": resolve_package_root if _OBS_AVAILABLE else None,
+        "resolve_package_root_env": resolve_package_root_env if _OBS_AVAILABLE else None,
     }
     inject_context_overhead(state, payload, theme, _cache_ctx)
     line = render(state, theme)

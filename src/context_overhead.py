@@ -13,7 +13,47 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any
+
+# ── Parse Diagnostic Sidecar (OPP-14) ───────────────────────────────
+#
+# When transcript JSONL lines fail JSON parsing, write a diagnostic record
+# to {package_root}/native/statusline/diagnostics.jsonl for post-mortem.
+# Max 10 writes per invocation to prevent unbounded growth.
+
+_DIAG_MAX_PER_INVOCATION = 10
+_diag_write_count = 0  # module-level counter, reset per process lifetime
+
+
+def _write_parse_diag(diag_root: str, source: str, error: str, line_preview: str) -> None:
+    """Atomically append one parse-failure record to diagnostics.jsonl.
+
+    Fail-open: any OS/IO error is silently swallowed.
+    Hard cap: at most _DIAG_MAX_PER_INVOCATION writes per process.
+    """
+    global _diag_write_count
+    if _diag_write_count >= _DIAG_MAX_PER_INVOCATION:
+        return
+    try:
+        diag_dir = os.path.join(diag_root, "native", "statusline")
+        os.makedirs(diag_dir, exist_ok=True)
+        diag_path = os.path.join(diag_dir, "diagnostics.jsonl")
+        ts = datetime.now(tz=timezone.utc).isoformat()
+        record = json.dumps({
+            "ts": ts,
+            "source": source,
+            "error": error,
+            "line_preview": line_preview[:100],
+        })
+        fd = os.open(diag_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            os.write(fd, (record + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
+        _diag_write_count += 1
+    except Exception:
+        pass  # Strictly fail-open
 
 # ── Overhead Monitor: Static Estimation (Phase 1) ───────────────────
 #
@@ -102,7 +142,6 @@ def _estimate_static_overhead(
     memory_dir = os.path.expanduser("~/.claude/projects")
     if os.path.isdir(memory_dir):
         # Find the project-specific memory dir for cwd
-        import hashlib as _hashlib
         cwd_hash = os.getcwd().replace("/", "-")
         mem_path = os.path.join(memory_dir, cwd_hash, "memory", "MEMORY.md")
         if not os.path.isfile(mem_path):
@@ -252,13 +291,30 @@ def _estimate_static_overhead(
 _TRANSCRIPT_TAIL_BYTES = 50 * 1024
 
 
+_extract_usage_full = None
+try:
+    # hooks/ dir may already be on sys.path (statusline.py adds it).
+    # If not, add it so obs_utils is importable.
+    import sys as _sys
+    _hooks_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks")
+    if _hooks_dir not in _sys.path:
+        _sys.path.insert(0, _hooks_dir)
+    from obs_utils import extract_usage_full as _extract_usage_full
+except ImportError:
+    pass
+
+
 def _extract_usage(entry: dict) -> tuple[dict | None, str | None]:
     """Extract usage dict and requestId from a transcript entry.
 
-    Handles two paths: message.usage (direct turn) and toolUseResult.usage (subagent).
-    Skips streaming stubs (stop_reason=null) for the message path.
-    Returns (usage_dict, request_id) or (None, None).
+    Delegates to obs_utils.extract_usage_full, returning (usage, request_id).
+    Falls back to inline extraction if obs_utils is unavailable.
     """
+    if _extract_usage_full is not None:
+        usage, _model, request_id, _entry_id = _extract_usage_full(entry)
+        return usage, request_id
+
+    # Inline fallback (obs_utils not importable — e.g. isolated test runner)
     msg = entry.get("message")
     if isinstance(msg, dict):
         stop = msg.get("stop_reason")
@@ -267,14 +323,12 @@ def _extract_usage(entry: dict) -> tuple[dict | None, str | None]:
             if isinstance(usage, dict):
                 req_id = msg.get("requestId") or entry.get("requestId")
                 return usage, req_id
-
     tur = entry.get("toolUseResult")
     if isinstance(tur, dict):
         usage = tur.get("usage")
         if isinstance(usage, dict):
             req_id = tur.get("requestId") or entry.get("requestId")
             return usage, req_id
-
     return None, None
 
 
@@ -285,7 +339,7 @@ def _extract_usage(entry: dict) -> tuple[dict | None, str | None]:
 _CACHE_DECAY = 0.7
 
 
-def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
+def _read_transcript_tail(path: str, window_size: int = 5, diag_root: str | None = None) -> dict | None:
     """Read trailing turns from a session transcript JSONL.
 
     Returns dict with turn_1_anchor, trailing_turns, cache_hit_rate.
@@ -295,6 +349,7 @@ def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
         path: Path to transcript JSONL file.
         window_size: Number of trailing turns for cache hit rate (default 5).
             Adaptive callers scale this with session length.
+        diag_root: Optional package root for parse diagnostic sidecar (OPP-14).
 
     Deduplicates PRELIM entries from extended thinking by requestId —
     multiple entries from the same API call (identical requestId) are
@@ -325,7 +380,9 @@ def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
             continue
         try:
             entry = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError) as exc:
+            if diag_root:
+                _write_parse_diag(diag_root, "transcript_tail", f"JSONDecodeError: {exc}", line)
             continue
 
         # Skip sidechain entries (subagent forks have separate cache state)
@@ -391,7 +448,7 @@ def _read_transcript_tail(path: str, window_size: int = 5) -> dict | None:
     }
 
 
-def _read_transcript_anchor(path: str) -> int | None:
+def _read_transcript_anchor(path: str, diag_root: str | None = None) -> int | None:
     """Read the first-turn cache_creation from the start of a transcript.
 
     Reads first 128KB — transcripts start with metadata entries
@@ -399,6 +456,10 @@ def _read_transcript_anchor(path: str) -> int | None:
     before the first assistant message with usage data appears.
     Attachments alone can be 35KB+, pushing first API response past 64KB.
     Returns cache_creation_input_tokens or None.
+
+    Args:
+        path: Path to transcript JSONL file.
+        diag_root: Optional package root for parse diagnostic sidecar (OPP-14).
     """
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -412,7 +473,9 @@ def _read_transcript_anchor(path: str) -> int | None:
             continue
         try:
             entry = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError) as exc:
+            if diag_root:
+                _write_parse_diag(diag_root, "transcript_anchor", f"JSONDecodeError: {exc}", line)
             continue
         usage, _rid = _extract_usage(entry)
         if usage is None:
@@ -423,13 +486,17 @@ def _read_transcript_anchor(path: str) -> int | None:
     return None
 
 
-def _read_transcript_anchor_with_read(path: str) -> int | None:
+def _read_transcript_anchor_with_read(path: str, diag_root: str | None = None) -> int | None:
     """Read the first-turn system overhead from cache_read on warm restarts.
 
     When a session starts with a warm cache (cache_creation < 5000),
     the real system overhead is in cache_read_input_tokens — that's what
     the API read from the existing cache. Reads first 128KB to find it
     (transcript starts with metadata entries + attachments before first API response).
+
+    Args:
+        path: Path to transcript JSONL file.
+        diag_root: Optional package root for parse diagnostic sidecar (OPP-14).
     """
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -443,7 +510,9 @@ def _read_transcript_anchor_with_read(path: str) -> int | None:
             continue
         try:
             entry = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError) as exc:
+            if diag_root:
+                _write_parse_diag(diag_root, "transcript_anchor_with_read", f"JSONDecodeError: {exc}", line)
             continue
         usage, _rid = _extract_usage(entry)
         if usage is None:
@@ -487,20 +556,23 @@ def _try_phase2_transcript(
     # Middle ground: grow linearly (session_turns // 3).
     prev_turns = session_cache.get("session_turn_count", 0)
     window = min(max(3, prev_turns // 3), 8)
-    result = _read_transcript_tail(path, window_size=window)
+    result = _read_transcript_tail(path, window_size=window, diag_root=package_root)
     if result is None:
         return False
 
-    # Anchor priority: manifest (durable) > file start > tail window
+    # Anchor priority: transcript file start (accurate) > manifest (fallback) > tail window
+    # The transcript's first-turn cache_creation is the real system overhead (~37k-52k).
+    # The manifest's cache_anchor stores per-turn cache_create deltas (~973-2406),
+    # which are far too small — using them poisons overhead computation.
+    if "turn_1_anchor" not in session_cache:
+        file_anchor = _read_transcript_anchor(path, diag_root=package_root)
+        if file_anchor is not None:
+            session_cache["turn_1_anchor"] = file_anchor
+
     if "turn_1_anchor" not in session_cache:
         manifest_anchor = _read_manifest_anchor(package_root)
         if manifest_anchor is not None:
             session_cache["turn_1_anchor"] = manifest_anchor
-
-    if "turn_1_anchor" not in session_cache:
-        file_anchor = _read_transcript_anchor(path)
-        if file_anchor is not None:
-            session_cache["turn_1_anchor"] = file_anchor
 
     if "turn_1_anchor" not in session_cache:
         if result["turn_1_anchor"] is not None and result["turn_1_anchor"] > 0:
@@ -518,7 +590,7 @@ def _try_phase2_transcript(
         # On a warm restart, turn 1's cache_read IS the system overhead.
         path = state.get("transcript_path") or payload.get("transcript_path")
         if path:
-            first_anchor = _read_transcript_anchor_with_read(path)
+            first_anchor = _read_transcript_anchor_with_read(path, diag_root=package_root)
             if first_anchor and first_anchor > _WARM_CACHE_THRESHOLD:
                 anchor = first_anchor
                 session_cache["turn_1_anchor"] = anchor
@@ -580,7 +652,14 @@ def _try_phase2_transcript(
 
     # Context growth rate: average cache_read delta per turn over trailing window.
     # Combined with autocompact threshold, gives "turns until compaction".
-    if len(trailing) >= 2:
+    # Require at least 3 trailing turns before computing — early-session deltas
+    # are inflated by initial context loading and produce absurd estimates
+    # (e.g., "compact in 1 turn" at 4% usage).
+    if len(trailing) < 3:
+        # Not enough data — clear any stale estimate from cache
+        session_cache.pop("turns_until_compact", None)
+        session_cache.pop("context_growth_per_turn", None)
+    if len(trailing) >= 3:
         deltas = []
         for j in range(1, len(trailing)):
             d = trailing[j]["cache_read"] - trailing[j - 1]["cache_read"]
@@ -589,14 +668,17 @@ def _try_phase2_transcript(
         if deltas:
             avg_growth = sum(deltas) // len(deltas)
             session_cache["context_growth_per_turn"] = avg_growth
-            # Estimate turns until autocompact from current usage
+            # Estimate turns until autocompact from current usage.
+            # Use raw context_used (not corrected) — consistent with bar display.
             ctx_total = state.get("context_total", 0)
-            ctx_used = state.get("context_used_corrected", state.get("context_used", 0))
+            ctx_used = state.get("context_used", 0)
             if ctx_total > 0 and avg_growth > 0:
                 thresholds = compute_context_thresholds(ctx_total)
                 remaining = thresholds["autocompact_at"] - ctx_used
                 if remaining > 0:
                     session_cache["turns_until_compact"] = remaining // avg_growth
+                else:
+                    session_cache["turns_until_compact"] = 0
 
     # Monotonic session turn counter (does not saturate like trailing window)
     session_turn = session_cache.get("session_turn_count", 0) + 1
@@ -678,7 +760,7 @@ def compute_context_thresholds(context_window: int) -> dict[str, int]:
         }
     effective = context_window - CC_OUTPUT_RESERVE
     autocompact = effective - CC_AUTOCOMPACT_BUFFER
-    warning = autocompact - CC_WARNING_OFFSET
+    warning = effective - CC_WARNING_OFFSET
     error = autocompact - CC_ERROR_OFFSET
     blocking = effective - CC_BLOCKING_BUFFER
     return {
@@ -700,6 +782,7 @@ def _apply_overhead_from_cache(state: dict[str, Any], session_cache: dict) -> No
         "cache_busting", "cache_degraded", "cache_expired",
         "last_cache_create", "last_cache_read", "prev_cache_create", "microcompact_suspected",
         "calibration_accuracy", "context_growth_per_turn", "turns_until_compact",
+        "session_turn_count",
     )
     for key in _FIELDS:
         if key in session_cache:
@@ -726,7 +809,7 @@ def inject_context_overhead(
         save_cache:          callable(dict) -> None
         cache_max_age:       float (seconds)
         obs_available:       bool
-        resolve_package_root: callable or None
+        resolve_package_root_env: callable or None
     """
     try:
         cfg_source = theme.get("context_bar", {}).get("overhead_source", "auto")
@@ -737,26 +820,27 @@ def inject_context_overhead(
         if not isinstance(session_id, str) or not session_id:
             return
 
+        # Expose session_id to renderers (alert file lifecycle needs it)
+        state["_session_id"] = session_id
+
         load_cache = cache_ctx["load_cache"]
         save_cache = cache_ctx["save_cache"]
         cache_max_age = cache_ctx["cache_max_age"]
         obs_available = cache_ctx["obs_available"]
-        resolve_package_root = cache_ctx.get("resolve_package_root")
+        resolve_package_root_env = cache_ctx.get("resolve_package_root_env")
 
         cache = load_cache()
         obs_cache = cache.get("_obs", {})
         session_cache = obs_cache.get(session_id, {})
         now = time.time()
 
-        if now - session_cache.get("overhead_ts", 0) < 30:
+        if now - session_cache.get("overhead_ts", 0) < 5:
             _apply_overhead_from_cache(state, session_cache)
             return
 
         package_root: str | None = None
-        if obs_available and resolve_package_root is not None:
-            obs_root = os.environ.get("OBS_ROOT")
-            kwargs = {"obs_root": obs_root} if obs_root else {}
-            package_root = resolve_package_root(session_id, **kwargs)
+        if obs_available and resolve_package_root_env is not None:
+            package_root = resolve_package_root_env(session_id)
 
         # Derive transcript path if not in payload (CC's statusline payload
         # built by x05/liY does NOT include transcript_path).
