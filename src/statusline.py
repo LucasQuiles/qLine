@@ -177,7 +177,7 @@ DEFAULT_THEME: dict[str, Any] = {
     "layout": {
         "force_single_line": False,
         "max_width": 200,
-        "line1": ["model", "token_in", "token_out", "context_bar",
+        "line1": ["model", "context_bar", "token_in", "token_out",
                   "cache_rate", "duration"],
         "line2": ["sys_overhead_pill", "cache_pill",
                   "obs_reads", "obs_rereads", "obs_writes", "obs_bash",
@@ -441,6 +441,8 @@ def _check_payload_fingerprint(state: dict, payload: dict) -> None:
         cache["_obs"] = obs
         save_cache(cache)
     elif stored_fp != fp:
+        # Intentionally fires every call after mismatch (persistent warning).
+        # User should restart session after CC update to clear.
         _capture_diagnostic(
             state, "schema",
             f"Payload schema changed (was {stored_fp[:8]}, now {fp[:8]}). "
@@ -1774,7 +1776,7 @@ MODULE_RENDERERS: dict[str, Any] = {
     "degraded": render_degraded,
 }
 
-DEFAULT_LINE1 = ["model", "token_in", "token_out", "context_bar",
+DEFAULT_LINE1 = ["model", "context_bar", "token_in", "token_out",
                  "cache_rate", "duration", "degraded"]
 DEFAULT_LINE2 = ["sys_overhead_pill", "cache_pill",
                  "obs_reads", "obs_rereads", "obs_writes", "obs_bash",

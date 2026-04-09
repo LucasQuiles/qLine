@@ -30,7 +30,7 @@ def _is_pid_alive(pid: int) -> bool:
 
 
 def main():
-    global LIVE_FILE, PID_FILE, PAYLOAD_FILE
+    global LIVE_FILE, PID_FILE
     # PID guard — prevent multiple daemons
     if os.path.exists(PID_FILE):
         try:
@@ -103,7 +103,8 @@ def main():
                     _init_session_paths(sid)
                     h = _session_hash(sid)
                     LIVE_FILE = f"/tmp/qline-{h}-live.txt"
-                    PAYLOAD_FILE = f"/tmp/qline-{h}-payload.json"
+                    # NOTE: PAYLOAD_FILE stays global — it's the input channel
+                    # from CC's shell integration, not session state.
                     new_pid = f"/tmp/qline-{h}-daemon.pid"
                     with open(new_pid, "w") as pf:
                         pf.write(str(os.getpid()))
