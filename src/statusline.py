@@ -197,22 +197,22 @@ DEFAULT_THEME: dict[str, Any] = {
         "right": "",
     },
     "layout": {
-        "force_single_line": True,
+        "force_single_line": False,
         "max_width": 0,  # 0 = auto (COLUMNS env → 200 fallback)
         "line1": ["model", "token_counts", "token_out_counts", "context_bar",
-                  "cache_rate", "duration", "cost"],
+                  "cache_rate", "cost", "duration"],
         "line2": ["sys_overhead_pill", "cache_read", "cache_delta",
                   "turns", "obs_reads", "obs_rereads", "obs_writes",
                   "obs_bash", "obs_failures", "obs_tasks",
                   "obs_subagents", "obs_health", "obs_compactions",
-                  "obs_hook_faults", "lines_changed",
-                  "session_count", "daily_cost", "weekly_cost",
+                  "obs_hook_faults", "daily_cost", "weekly_cost"],
+        "line3": ["dir", "git", "cpu", "memory", "disk",
+                  "lines_changed", "session_count",
                   "api_efficiency", "cost_per_ktok",
                   "io_ratio", "tokens_per_turn",
                   "free_context", "growth_rate",
                   "unique_files", "fail_rate", "think_pct",
                   "cost_per_turn", "burn_trend"],
-        "line3": ["dir", "git", "cpu", "memory", "disk"],
     },
     "git": {
         "label": "git",
@@ -2159,19 +2159,19 @@ MODULE_RENDERERS: dict[str, Any] = {
 }
 
 DEFAULT_LINE1 = ["model", "token_counts", "token_out_counts", "context_bar",
-                 "cache_rate", "duration", "cost"]
+                 "cache_rate", "cost", "duration"]
 DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
                  "turns", "obs_reads", "obs_rereads", "obs_writes",
                  "obs_bash", "obs_failures", "obs_tasks",
                  "obs_subagents", "obs_health", "obs_compactions",
-                 "obs_hook_faults", "lines_changed",
-                 "session_count", "daily_cost", "weekly_cost",
+                 "obs_hook_faults", "daily_cost", "weekly_cost"]
+DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk",
+                 "lines_changed", "session_count",
                  "api_efficiency", "cost_per_ktok",
                  "io_ratio", "tokens_per_turn",
                  "free_context", "growth_rate",
                  "unique_files", "fail_rate", "think_pct",
                  "cost_per_turn", "burn_trend"]
-DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk"]
 
 # PIPE separator positions on line 2 (module names after which a PIPE | is used
 # instead of BOX │).  Only two: after cache_read and within cost (handled by
