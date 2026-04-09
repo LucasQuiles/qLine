@@ -130,7 +130,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "glyph": "\U000f02d1 ",  # nf-md-heart (Supplementary PUA)
         "color": "#8fbcbb",     # nord7 — teal (healthy: cohesive with frost bar)
         "bg": "#2e3440",
-        "width": 20,  # fixed width — 0 auto-expands and eats all available space
+        "width": 10,  # compact bar — every char counts in CC's single-line display
         "warn_threshold": 75.0,
         "warn_color": "#ebcb8b",   # nord13 — yellow (warn: aurora accent)
         "critical_threshold": 90.0,
@@ -197,7 +197,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "right": "",
     },
     "layout": {
-        "force_single_line": False,
+        "force_single_line": True,
         "max_width": 0,  # 0 = auto (COLUMNS env → 200 fallback)
         "line1": ["model", "token_counts", "token_out_counts", "context_bar",
                   "cache_rate", "cost", "duration"],
