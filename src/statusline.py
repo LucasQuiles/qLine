@@ -197,7 +197,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "right": "",
     },
     "layout": {
-        "force_single_line": False,
+        "force_single_line": True,
         "max_width": 0,  # 0 = auto (COLUMNS env → 200 fallback)
         "line1": ["model", "token_counts", "token_out_counts", "context_bar",
                   "cache_rate", "duration"],
@@ -2406,11 +2406,29 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     state["_show_labels"] = layout.get("show_labels", False)
 
     if force_single:
-        # Compact: merge all into one auto-wrapped line
+        # Single line: merge ALL modules into one string with no newlines.
+        # CC only shows line 1 — everything must be on that line.
+        # CC handles its own text wrapping/scrolling internally.
         merged: list[str] = []
         for modules in layout_lines:
             merged.extend(modules)
-        return _render_wrapped(state, theme, merged)
+        show_labels = state.get("_show_labels", False)
+        sep_cfg = theme.get("separator", {})
+        sep_char = sep_cfg.get("char", "\u2502")
+        sep_dim = sep_cfg.get("dim", True)
+        sep = style_dim(sep_char) if sep_dim else sep_char
+        parts: list[str] = []
+        for name in merged:
+            renderer = MODULE_RENDERERS.get(name)
+            if renderer is None:
+                continue
+            mod_cfg = theme.get(name, {})
+            if not mod_cfg.get("enabled", True):
+                continue
+            result = renderer(state, theme)
+            if result is not None:
+                parts.append(_apply_label(result, mod_cfg, show_labels))
+        return sep.join(parts)
 
     # Multi-line: render each layout line separately, enforce line breaks
     # All lines use │ (BOX DRAWING) with NO spaces as the default separator.
