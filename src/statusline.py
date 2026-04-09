@@ -1201,14 +1201,13 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         gdef = _ALERT_DEFS.get(alert_key, _ALERT_DEFS["degraded"])
         alert_glyph_str, alert_crit = gdef[0], gdef[1]
 
-        if elapsed < 5.0:
+        if elapsed < 5.0 and alert_crit:
             if alert_key == "compact":
-                msg = f"COMPACT IN ~{tuc} TURNS \u2014 autocompact imminent, context will be summarized"
-            elif alert_key == "turns":
-                msg = f"~{tuc} TURNS LEFT \u2014 approaching autocompact threshold"
+                msg = f"COMPACT IN ~{tuc} TURNS"
             else:
                 msg = gdef[2]
-            state["_alert_banner"] = f"{alert_glyph_str} {msg}"
+            if msg:
+                state["_alert_banner"] = f"{alert_glyph_str} {msg}"
     else:
         _save_alert({})
 
@@ -2607,10 +2606,10 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
         if line:
             rendered_lines.append(line)
 
-    # Alert banner: when active, replace lines 2+ with the banner text.
+    # Alert banner: append as inline suffix to line 1 (don't replace lines 2+).
     banner = state.get("_alert_banner")
     if banner and rendered_lines:
-        return rendered_lines[0] + "\n" + banner
+        rendered_lines[0] = rendered_lines[0] + " " + banner
 
     # If line 2 overflowed, merge overflow into the last layout line.
     # Respect max_width so line 3 doesn't exceed the width limit.
