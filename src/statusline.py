@@ -398,6 +398,56 @@ def _capture_diagnostic(state: dict, module: str, message: str) -> None:
     diags.append({"module": module, "message": message, "ts": time.time()})
 
 
+def _payload_fingerprint(payload: dict) -> str:
+    """Schema-only fingerprint of the payload structure.
+
+    Hashes the sorted top-level keys and the type/keys of their values.
+    Value changes don't affect the fingerprint — only structural changes do.
+    Used to detect CC payload format changes across updates.
+    """
+    schema_parts = []
+    for key in sorted(payload.keys()):
+        val = payload[key]
+        if isinstance(val, dict):
+            sub_keys = ",".join(sorted(val.keys()))
+            schema_parts.append(f"{key}:dict({sub_keys})")
+        elif isinstance(val, list):
+            schema_parts.append(f"{key}:list")
+        else:
+            schema_parts.append(f"{key}:{type(val).__name__}")
+    schema_str = "|".join(schema_parts)
+    return hashlib.sha256(schema_str.encode()).hexdigest()[:16]
+
+
+def _check_payload_fingerprint(state: dict, payload: dict) -> None:
+    """Compare payload schema to cached fingerprint. Captures diagnostic on mismatch.
+
+    On first invocation per session, stores the fingerprint.
+    On subsequent invocations, compares. Mismatch means CC updated its
+    payload format — overhead/obs parsing may be silently wrong.
+    """
+    session_id = payload.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return
+    fp = _payload_fingerprint(payload)
+    cache = load_cache()
+    obs = cache.get("_obs", {})
+    sc = obs.get(session_id, {})
+    stored_fp = sc.get("payload_fingerprint")
+    if stored_fp is None:
+        # First invocation — store fingerprint
+        sc["payload_fingerprint"] = fp
+        obs[session_id] = sc
+        cache["_obs"] = obs
+        save_cache(cache)
+    elif stored_fp != fp:
+        _capture_diagnostic(
+            state, "schema",
+            f"Payload schema changed (was {stored_fp[:8]}, now {fp[:8]}). "
+            "CC may have updated — overhead estimates could be stale."
+        )
+
+
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 
@@ -2094,6 +2144,7 @@ def main() -> None:
     if isinstance(session_id, str) and session_id:
         _init_session_paths(session_id)
     state = normalize(payload)
+    _check_payload_fingerprint(state, payload)
     collect_system_data(state, theme)
     _inject_obs_counters(state, payload)
     _cache_ctx = {

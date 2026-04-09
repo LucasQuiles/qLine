@@ -1497,6 +1497,69 @@ print('OK')
 ")
 assert_equals "DIAG-03: registry" "$OUT" "OK"
 
+echo "  FINGER-01: payload fingerprint detects schema change"
+OUT=$(run_py "
+from statusline import _payload_fingerprint
+
+# Same schema → same fingerprint
+fp1 = _payload_fingerprint({'model': {'id': 'opus'}, 'cost': {'total': 1}, 'context_window': {'used': 50}})
+fp2 = _payload_fingerprint({'model': {'id': 'opus'}, 'cost': {'total': 1}, 'context_window': {'used': 50}})
+assert fp1 == fp2, f'same schema should match: {fp1} vs {fp2}'
+
+# Different schema → different fingerprint (new top-level key)
+fp3 = _payload_fingerprint({'model': {'id': 'opus'}, 'cost': {'total': 1}, 'context_window': {'used': 50}, 'new_field': {}})
+assert fp1 != fp3, f'different schema should differ: {fp1} vs {fp3}'
+
+# Value changes don't affect fingerprint (schema-only)
+fp4 = _payload_fingerprint({'model': {'id': 'sonnet'}, 'cost': {'total': 99}, 'context_window': {'used': 1}})
+assert fp1 == fp4, f'value changes should not affect fingerprint: {fp1} vs {fp4}'
+
+# Nested structure changes DO affect fingerprint (new sub-key)
+fp5 = _payload_fingerprint({'model': {'id': 'x', 'new_nested': 'y'}, 'cost': {'total': 1}, 'context_window': {'used': 50}})
+assert fp1 != fp5, f'nested structure changes should differ: {fp1} vs {fp5}'
+print('OK')
+")
+assert_equals "FINGER-01: schema fingerprint" "$OUT" "OK"
+
+echo "  FINGER-02: schema mismatch triggers diagnostic"
+OUT=$(run_py "
+import time, os
+os.environ['NO_COLOR'] = '1'
+import statusline
+from statusline import _init_session_paths, _payload_fingerprint, _check_payload_fingerprint, save_cache
+
+_init_session_paths('finger-test')
+
+# Simulate a stored fingerprint from a previous CC version
+old_fp = _payload_fingerprint({'model': {}, 'cost': {}})
+cache = {'_obs': {'finger-test': {'payload_fingerprint': old_fp, 'overhead_ts': time.time()}}}
+save_cache(cache)
+
+# New payload has different schema (CC updated)
+new_payload = {'session_id': 'finger-test', 'model': {}, 'cost': {}, 'context_window': {}, 'new_v3_field': {}}
+state = {}
+_check_payload_fingerprint(state, new_payload)
+diags = state.get('_diagnostics', [])
+assert len(diags) == 1, f'expected 1 diagnostic, got {diags}'
+assert 'schema' in diags[0]['message'].lower() or 'schema' in diags[0]['module'].lower(), f'should mention schema: {diags[0]}'
+
+# Same schema → no diagnostic
+state2 = {}
+old_payload = {'session_id': 'finger-test', 'model': {}, 'cost': {}}
+# Reset the stored fingerprint to match old_payload
+cache2 = {'_obs': {'finger-test': {'payload_fingerprint': _payload_fingerprint(old_payload), 'overhead_ts': time.time()}}}
+save_cache(cache2)
+_check_payload_fingerprint(state2, old_payload)
+assert not state2.get('_diagnostics'), f'matching schema should not trigger diagnostic: {state2.get(\"_diagnostics\")}'
+
+# Cleanup
+try: os.unlink(statusline.CACHE_PATH)
+except: pass
+_init_session_paths(None)
+print('OK')
+")
+assert_equals "FINGER-02: schema mismatch diagnostic" "$OUT" "OK"
+
 echo ""
 fi
 
