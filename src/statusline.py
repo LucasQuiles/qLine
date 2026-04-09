@@ -80,6 +80,16 @@ _alert_state: dict[str, Any] = {}  # in-process cache (reset per invocation)
 # must be loaded from / saved to the disk cache for persistence.
 # The load/save happens in inject_context_overhead via cache_ctx.
 CACHE_VERSION = 1
+
+# --- Platform Detection ---
+
+_IS_WSL = False
+try:
+    with open("/proc/version") as _f:
+        _IS_WSL = "microsoft" in _f.read().lower()
+except Exception:
+    pass
+
 _FAULT_LEDGER_PATH = os.path.join(
     os.path.expanduser("~"), ".claude", "logs", "lifecycle-hook-faults.jsonl"
 )
@@ -206,7 +216,9 @@ DEFAULT_THEME: dict[str, Any] = {
                   "obs_bash", "obs_failures", "obs_tasks",
                   "obs_subagents", "obs_health", "obs_compactions",
                   "obs_hook_faults", "daily_cost", "weekly_cost"],
-        "line3": ["dir", "git", "cpu", "memory", "disk",
+        "line3": ["dir", "git", "cpu", "cpu_temp", "memory",
+                  "gpu_util", "gpu_mem", "gpu_temp", "gpu_power",
+                  "disk", "local_models",
                   "lines_changed", "session_count",
                   "api_efficiency", "cost_per_ktok",
                   "io_ratio", "tokens_per_turn",
@@ -223,7 +235,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "dirty_marker": "*",
     },
     "cpu": {
-        "label": "cpu",
+        "label": "CPU",
         "enabled": True,
         "glyph": "\U000f04cc ",  # nf-md-chip (Supplementary PUA)
         "color": "#a8d4d0",
@@ -234,9 +246,10 @@ DEFAULT_THEME: dict[str, Any] = {
         "warn_color": "#f0d399",
         "critical_color": "#d06070",
         "show_threshold": 0,
+        "display_mode": "",
     },
     "memory": {
-        "label": "mem",
+        "label": "MEM",
         "enabled": True,
         "glyph": "\U000f035b ",  # nf-md-memory (Supplementary PUA)
         "color": "#a8d4d0",
@@ -247,9 +260,10 @@ DEFAULT_THEME: dict[str, Any] = {
         "warn_color": "#f0d399",
         "critical_color": "#d06070",
         "show_threshold": 0,
+        "display_mode": "",
     },
     "disk": {
-        "label": "disk",
+        "label": "DSK",
         "enabled": True,
         "glyph": "\U000f02ca ",  # nf-md-harddisk (Supplementary PUA)
         "color": "#a8d4d0",
@@ -261,6 +275,7 @@ DEFAULT_THEME: dict[str, Any] = {
         "warn_color": "#f0d399",
         "critical_color": "#d06070",
         "show_threshold": 0,
+        "display_mode": "",
     },
     "agents": {
         "label": "agents",
@@ -280,6 +295,83 @@ DEFAULT_THEME: dict[str, Any] = {
         "glyph": "tmux ",
         "color": "#8eacb8",
         "bg": "#2e3440",
+    },
+    # --- GPU Modules ---
+    "gpu_util": {
+        "enabled": True,
+        "glyph": "\U000f1b52 ",  # nf-md-expansion_card (Supplementary PUA)
+        "label": "GPU",
+        "color": "#c0c060",
+        "bg": "#2e3440",
+        "width": 5,
+        "warn_threshold": 80.0,
+        "critical_threshold": 95.0,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+        "show_threshold": 0,
+        "display_mode": "",  # "" = use global layout.display_mode
+    },
+    "gpu_mem": {
+        "enabled": True,
+        "glyph": "\U000f05dc ",  # nf-md-memory (Supplementary PUA)
+        "label": "VRAM",
+        "color": "#c0c060",
+        "bg": "#2e3440",
+        "width": 5,
+        "warn_threshold": 80.0,
+        "critical_threshold": 95.0,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+        "show_threshold": 0,
+        "display_mode": "",
+    },
+    "gpu_temp": {
+        "enabled": False,
+        "glyph": "\U000f050f ",  # nf-md-thermometer (Supplementary PUA)
+        "label": "GT",
+        "color": "#c0c060",
+        "bg": "#2e3440",
+        "warn_threshold": 75,
+        "critical_threshold": 90,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+        "display_mode": "",
+    },
+    "gpu_power": {
+        "enabled": False,
+        "glyph": "\U000f0425 ",  # nf-md-flash (Supplementary PUA)
+        "label": "PWR",
+        "color": "#c0c060",
+        "bg": "#2e3440",
+        "warn_threshold": 200,
+        "critical_threshold": 300,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+        "display_mode": "",
+    },
+    # --- Temperature Module ---
+    "cpu_temp": {
+        "enabled": False,
+        "glyph": "\U000f050f ",  # nf-md-thermometer (Supplementary PUA)
+        "label": "TEMP",
+        "color": "#e8a87c",
+        "bg": "#2e3440",
+        "warn_threshold": 70,
+        "critical_threshold": 90,
+        "warn_color": "#f0d399",
+        "critical_color": "#d06070",
+        "display_mode": "",
+    },
+    # --- Local Models Module ---
+    "local_models": {
+        "enabled": True,
+        "glyph": "\U000f0322 ",  # nf-md-layers (Supplementary PUA)
+        "label": "LM",
+        "color": "#8ec07c",
+        "bg": "#2e3440",
+        "inner_separator": " \u2502 ",
+        "show_threshold": 0,
+        "display_mode": "",
     },
     # --- Obs: I/O group ---
     "obs_reads": {
@@ -1563,6 +1655,208 @@ def collect_tmux(state: dict[str, Any]) -> None:
         state["tmux_panes"] = 0
 
 
+# --- GPU Collectors ---
+
+
+def _parse_nvidia_smi(state: dict[str, Any], output: str) -> None:
+    """Parse nvidia-smi CSV output for first GPU."""
+    lines = [l.strip() for l in output.strip().splitlines() if l.strip()]
+    if not lines:
+        return
+    parts = [p.strip() for p in lines[0].split(",")]
+    if len(parts) < 7:
+        return
+    try:
+        state["gpu_util_percent"] = max(0, min(100, int(float(parts[0]))))
+        mem_used = int(float(parts[1]))
+        mem_total = int(float(parts[2]))
+        state["gpu_mem_used_mb"] = mem_used
+        state["gpu_mem_total_mb"] = mem_total
+        if mem_total > 0:
+            state["gpu_mem_percent"] = max(0, min(100, round(mem_used * 100 / mem_total)))
+        state["gpu_temp_celsius"] = int(float(parts[3]))
+        state["gpu_power_watts"] = round(float(parts[4]), 1)
+        state["gpu_power_limit_watts"] = round(float(parts[5]), 1)
+        state["gpu_name"] = parts[6].strip()
+    except (ValueError, IndexError):
+        pass
+
+
+def _parse_rocm_smi(state: dict[str, Any], output: str) -> None:
+    """Parse rocm-smi JSON output for first GPU."""
+    try:
+        data = json.loads(output)
+    except (json.JSONDecodeError, TypeError):
+        return
+    # Find first card entry
+    card = None
+    for key in sorted(data.keys()):
+        if key.startswith("card"):
+            card = data[key]
+            break
+    if not isinstance(card, dict):
+        return
+    # Extract metrics — field names vary across rocm-smi versions
+    for key, val in card.items():
+        key_l = key.lower()
+        try:
+            if "gpu use" in key_l and "%" in key_l:
+                state["gpu_util_percent"] = max(0, min(100, int(float(str(val)))))
+            elif "gpu memory use" in key_l and "%" in key_l:
+                state["gpu_mem_percent"] = max(0, min(100, int(float(str(val)))))
+            elif "temperature" in key_l and "edge" in key_l:
+                state["gpu_temp_celsius"] = int(float(str(val)))
+            elif "power" in key_l and "average" in key_l:
+                state["gpu_power_watts"] = round(float(str(val)), 1)
+        except (ValueError, TypeError):
+            continue
+    # Try to get power limit from separate field
+    for key, val in card.items():
+        if "power cap" in key.lower():
+            try:
+                state["gpu_power_limit_watts"] = round(float(str(val)), 1)
+            except (ValueError, TypeError):
+                pass
+            break
+
+
+def collect_gpu(state: dict[str, Any]) -> None:
+    """Collect GPU metrics via nvidia-smi or rocm-smi.
+
+    Single subprocess call populates all gpu_* state keys.
+    Uses a sentinel to avoid redundant collection when multiple
+    GPU modules are in the layout.
+    """
+    if state.get("_gpu_collected"):
+        return
+    state["_gpu_collected"] = True
+
+    # Try NVIDIA (works natively on Linux, macOS, and WSL2)
+    out = _run_cmd([
+        "nvidia-smi",
+        "--query-gpu=utilization.gpu,memory.used,memory.total,"
+        "temperature.gpu,power.draw,power.limit,name",
+        "--format=csv,noheader,nounits",
+    ], timeout=0.05)
+    if out is not None:
+        _parse_nvidia_smi(state, out)
+        return
+
+    # Try AMD ROCm
+    out = _run_cmd([
+        "rocm-smi", "--showgpuuse", "--showmemuse",
+        "--showtemp", "--showpower", "--json",
+    ], timeout=0.05)
+    if out is not None:
+        _parse_rocm_smi(state, out)
+
+
+# --- CPU Temperature Collector ---
+
+
+def _collect_cpu_temp_linux(state: dict[str, Any]) -> bool:
+    """Read CPU temp from /sys/class/thermal (Linux/WSL2). Returns True on success."""
+    if PROC_DIR != "/proc":
+        # Test override — use PROC_DIR parent
+        thermal_base = os.path.join(os.path.dirname(PROC_DIR), "sys", "class", "thermal")
+    else:
+        thermal_base = "/sys/class/thermal"
+    try:
+        zones = sorted(os.listdir(thermal_base))
+    except OSError:
+        return False
+    # First pass: prefer CPU-related zones
+    for zone in zones:
+        if not zone.startswith("thermal_zone"):
+            continue
+        type_path = os.path.join(thermal_base, zone, "type")
+        temp_path = os.path.join(thermal_base, zone, "temp")
+        try:
+            with open(type_path) as f:
+                zone_type = f.read().strip().lower()
+            if any(t in zone_type for t in ("x86_pkg", "cpu", "coretemp", "soc", "acpitz")):
+                with open(temp_path) as f:
+                    temp_mc = int(f.read().strip())
+                state["cpu_temp_celsius"] = round(temp_mc / 1000)
+                return True
+        except Exception:
+            continue
+    # Second pass: use first readable zone
+    for zone in zones:
+        if not zone.startswith("thermal_zone"):
+            continue
+        temp_path = os.path.join(thermal_base, zone, "temp")
+        try:
+            with open(temp_path) as f:
+                temp_mc = int(f.read().strip())
+            state["cpu_temp_celsius"] = round(temp_mc / 1000)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _collect_cpu_temp_macos(state: dict[str, Any]) -> bool:
+    """Read CPU temp via macOS osx-cpu-temp. Returns True on success."""
+    # osx-cpu-temp is a lightweight third-party tool (brew install osx-cpu-temp)
+    out = _run_cmd(["osx-cpu-temp", "-C"], timeout=0.05)
+    if out is not None:
+        try:
+            temp = float(out.strip().replace("\u00b0C", "").strip())
+            state["cpu_temp_celsius"] = round(temp)
+            return True
+        except (ValueError, TypeError):
+            pass
+    return False
+
+
+def collect_cpu_temp(state: dict[str, Any]) -> None:
+    """Collect CPU temperature. Tries sysfs (Linux), falls back to macOS tools."""
+    try:
+        if not _collect_cpu_temp_linux(state):
+            _collect_cpu_temp_macos(state)
+    except Exception:
+        return
+
+
+# --- Local Models Collector ---
+
+
+def collect_local_models(state: dict[str, Any]) -> None:
+    """Detect running local model inference servers via process table scan."""
+    out = _run_cmd(["ps", "-eo", "comm=,args="], timeout=0.05)
+    if out is None:
+        return
+
+    counts: dict[str, int] = {}
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        comm = parts[0].rsplit("/", 1)[-1] if parts else ""
+        args = parts[1] if len(parts) > 1 else ""
+
+        name = None
+        if comm == "ollama" and "serve" in args:
+            name = "Ollama"
+        elif comm in ("llama-server", "llama_server", "llama-serv"):
+            name = "Llama"
+        elif "vllm" in args and ("serve" in args or "api_server" in args):
+            name = "vLLM"
+        elif "text-generation-launcher" in args or "text_generation_launcher" in args:
+            name = "TGI"
+        elif "lmstudio" in comm.lower():
+            name = "LMStudio"
+
+        if name:
+            counts[name] = counts.get(name, 0) + 1
+
+    if counts:
+        state["local_models"] = counts
+        state["local_models_total"] = sum(counts.values())
+
+
 # --- Cache Layer ---
 
 
@@ -1608,6 +1902,11 @@ _CACHE_KEYS: dict[str, list[str]] = {
     "cpu": ["cpu_percent"],
     "memory": ["memory_percent"],
     "disk": ["disk_percent"],
+    "gpu": ["gpu_util_percent", "gpu_mem_percent", "gpu_mem_used_mb",
+            "gpu_mem_total_mb", "gpu_temp_celsius", "gpu_power_watts",
+            "gpu_power_limit_watts", "gpu_name"],
+    "cpu_temp": ["cpu_temp_celsius"],
+    "local_models": ["local_models", "local_models_total"],
     "agents": ["agent_count"],
     "tmux": ["tmux_sessions", "tmux_panes"],
 }
@@ -1653,22 +1952,35 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
     if "_obs" in cache:
         new_cache["_obs"] = cache["_obs"]
 
-    collectors = [
+    # GPU modules share a single collector — run if any gpu_* module is enabled
+    _any_gpu = any(theme.get(m, {}).get("enabled", True)
+                   for m in ("gpu_util", "gpu_mem", "gpu_temp", "gpu_power"))
+
+    collectors: list[tuple[str, Any]] = [
         ("git", collect_git),
         ("cpu", collect_cpu),
         ("memory", collect_memory),
         ("disk", collect_disk),
+        ("gpu", collect_gpu),
+        ("cpu_temp", collect_cpu_temp),
+        ("local_models", collect_local_models),
         ("agents", collect_agents),
         ("tmux", collect_tmux),
     ]
 
     for name, fn in collectors:
-        cfg = theme.get(name, {})
-        if not cfg.get("enabled", True):
-            continue
-        if name == "disk":
-            collect_disk._path = cfg.get("path", "/")
+        # GPU uses shared enabled check
+        if name == "gpu":
+            if not _any_gpu:
+                continue
+        else:
+            cfg = theme.get(name, {})
+            if not cfg.get("enabled", True):
+                continue
         try:
+            if name == "disk":
+                cfg = theme.get(name, {})
+                collect_disk._path = cfg.get("path", "/")
             fn(state)
             _cache_module(new_cache, state, name, now)
         except Exception:
@@ -1680,12 +1992,30 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
 # --- Module Renderers (system) ---
 
 
+def _resolve_display_mode(theme: dict[str, Any], module_key: str) -> str:
+    """Resolve display_mode for a module: module-level overrides global layout setting.
+
+    Returns "icon", "text", or "both".
+    """
+    cfg = theme.get(module_key, {})
+    mode = cfg.get("display_mode", "")
+    if mode in ("icon", "text", "both"):
+        return mode
+    # Fall back to global layout.display_mode
+    layout = theme.get("layout", {})
+    global_mode = layout.get("display_mode", "both")
+    if global_mode in ("icon", "text", "both"):
+        return global_mode
+    return "both"
+
+
 def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
                           state_key: str, theme_key: str,
                           compact_label: str = "") -> str | None:
-    """Shared renderer for system metric modules (cpu, memory, disk).
+    """Shared renderer for system metric modules (cpu, memory, disk, gpu_util).
 
     Renders a mini progress bar with percentage, e.g. '󰓬 ███░░ 64%'
+    Respects display_mode: "icon" (glyph only), "text" (label only), "both".
     """
     if state_key not in state:
         return None
@@ -1699,15 +2029,22 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
 
     # Mini progress bar
     width = cfg.get("width", 5)
-    filled = (pct * width) // 100
+    filled = min(width, max(0, round(pct * width / 100)))
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
     if state.get("_compact") and compact_label:
-        text = f"{compact_label}{bar}{pct}%"
+        text = f"{compact_label}{bar} {pct}%"
     else:
+        mode = _resolve_display_mode(theme, theme_key)
         glyph = cfg.get("glyph", "")
-        # Preserve trailing space in glyph (e.g. "󰓌 " → "󰓌 ░░░7%")
-        text = f"{glyph}{bar}{pct}%"
+        label = cfg.get("label", "")
+        if mode == "icon":
+            prefix = glyph
+        elif mode == "text":
+            prefix = f"{label} " if label else ""
+        else:  # "both"
+            prefix = f"{glyph}{label} " if label else glyph
+        text = f"{prefix}{bar} {pct}%"
 
     is_stale = state.get(f"{theme_key}_stale", False)
     if pct >= crit_t:
@@ -1787,6 +2124,206 @@ def render_tmux(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     else:
         text = f"{cfg.get('glyph', 'tmux ')}{sessions}s"
     is_stale = state.get("tmux_stale", False)
+    return _pill(text, cfg, theme=theme, dim=is_stale)
+
+
+# --- GPU Module Renderers ---
+
+
+def render_gpu_util(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render GPU utilization module with mini bar.
+
+    Display modes: "icon" -> glyph + bar, "text" -> GPU + bar, "both" -> glyph GPU + bar.
+    """
+    return _render_system_metric(state, theme, "gpu_util_percent", "gpu_util", compact_label="G:")
+
+
+def render_gpu_mem(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render GPU memory usage module with mini bar.
+
+    Shows used/total in compact form alongside percentage bar.
+    """
+    if "gpu_mem_percent" not in state:
+        return None
+    cfg = theme.get("gpu_mem", {})
+    pct = state["gpu_mem_percent"]
+    show_t = cfg.get("show_threshold", 0)
+    if pct < show_t:
+        return None
+    warn_t = cfg.get("warn_threshold", 80.0)
+    crit_t = cfg.get("critical_threshold", 95.0)
+
+    width = cfg.get("width", 5)
+    filled = min(width, max(0, round(pct * width / 100)))
+    bar = "\u2588" * filled + "\u2591" * (width - filled)
+
+    # Show used/total in GB if available
+    mem_suffix = ""
+    used = state.get("gpu_mem_used_mb")
+    total = state.get("gpu_mem_total_mb")
+    if isinstance(used, (int, float)) and isinstance(total, (int, float)) and total > 0:
+        mem_suffix = f" {used // 1024}/{total // 1024}G"
+
+    if state.get("_compact"):
+        text = f"VM:{bar} {pct}%{mem_suffix}"
+    else:
+        mode = _resolve_display_mode(theme, "gpu_mem")
+        glyph = cfg.get("glyph", "")
+        label = cfg.get("label", "VRAM")
+        if mode == "icon":
+            prefix = glyph
+        elif mode == "text":
+            prefix = f"{label} " if label else ""
+        else:
+            prefix = f"{glyph}{label} " if label else glyph
+        text = f"{prefix}{bar} {pct}%{mem_suffix}"
+
+    is_stale = state.get("gpu_stale", False)
+    if pct >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme, dim=is_stale)
+    if pct >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme, dim=is_stale)
+    return _pill(text, cfg, theme=theme, dim=is_stale)
+
+
+def render_gpu_temp(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render GPU temperature module.
+
+    Display modes: "icon" -> glyph + value, "text" -> GT + value, "both" -> glyph GT + value.
+    """
+    if "gpu_temp_celsius" not in state:
+        return None
+    cfg = theme.get("gpu_temp", {})
+    temp = state["gpu_temp_celsius"]
+    warn_t = cfg.get("warn_threshold", 75)
+    crit_t = cfg.get("critical_threshold", 90)
+
+    mode = _resolve_display_mode(theme, "gpu_temp")
+    glyph = cfg.get("glyph", "")
+    label = cfg.get("label", "GT")
+    if mode == "icon":
+        prefix = glyph
+    elif mode == "text":
+        prefix = f"{label} " if label else ""
+    else:
+        prefix = f"{glyph}{label} " if label else glyph
+    text = f"{prefix}{temp}\u00b0C"
+
+    is_stale = state.get("gpu_stale", False)
+    if temp >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme, dim=is_stale)
+    if temp >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme, dim=is_stale)
+    return _pill(text, cfg, theme=theme, dim=is_stale)
+
+
+def render_gpu_power(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render GPU power draw module.
+
+    Display modes: "icon" -> glyph + value, "text" -> PWR + value, "both" -> glyph PWR + value.
+    """
+    if "gpu_power_watts" not in state:
+        return None
+    cfg = theme.get("gpu_power", {})
+    watts = state["gpu_power_watts"]
+    warn_t = cfg.get("warn_threshold", 200)
+    crit_t = cfg.get("critical_threshold", 300)
+
+    mode = _resolve_display_mode(theme, "gpu_power")
+    glyph = cfg.get("glyph", "")
+    label = cfg.get("label", "PWR")
+    if mode == "icon":
+        prefix = glyph
+    elif mode == "text":
+        prefix = f"{label} " if label else ""
+    else:
+        prefix = f"{glyph}{label} " if label else glyph
+    limit = state.get("gpu_power_limit_watts")
+    if limit and limit > 0:
+        text = f"{prefix}{int(watts)}/{int(limit)}W"
+    else:
+        text = f"{prefix}{int(watts)}W"
+
+    is_stale = state.get("gpu_stale", False)
+    if watts >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme, dim=is_stale)
+    if watts >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme, dim=is_stale)
+    return _pill(text, cfg, theme=theme, dim=is_stale)
+
+
+# --- CPU Temperature Renderer ---
+
+
+def render_cpu_temp(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render CPU temperature module.
+
+    Display modes: "icon" -> glyph + value, "text" -> TEMP + value, "both" -> glyph TEMP + value.
+    """
+    if "cpu_temp_celsius" not in state:
+        return None
+    cfg = theme.get("cpu_temp", {})
+    temp = state["cpu_temp_celsius"]
+    warn_t = cfg.get("warn_threshold", 70)
+    crit_t = cfg.get("critical_threshold", 90)
+
+    mode = _resolve_display_mode(theme, "cpu_temp")
+    glyph = cfg.get("glyph", "")
+    label = cfg.get("label", "TEMP")
+    if mode == "icon":
+        prefix = glyph
+    elif mode == "text":
+        prefix = f"{label} " if label else ""
+    else:
+        prefix = f"{glyph}{label} " if label else glyph
+    text = f"{prefix}{temp}\u00b0C"
+
+    is_stale = state.get("cpu_temp_stale", False)
+    if temp >= crit_t:
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme, dim=is_stale)
+    if temp >= warn_t:
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme, dim=is_stale)
+    return _pill(text, cfg, theme=theme, dim=is_stale)
+
+
+# --- Local Models Renderer ---
+
+
+def render_local_models(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render running local model servers.
+
+    Display modes: "icon" -> glyph + names, "text" -> LM names, "both" -> glyph LM names.
+    """
+    models = state.get("local_models")
+    if not isinstance(models, dict) or not models:
+        return None
+    cfg = theme.get("local_models", {})
+    total = state.get("local_models_total", sum(models.values()))
+    show_t = cfg.get("show_threshold", 0)
+    if total <= show_t:
+        return None
+
+    mode = _resolve_display_mode(theme, "local_models")
+    glyph = cfg.get("glyph", "")
+    label = cfg.get("label", "LM")
+
+    inner_sep = cfg.get("inner_separator", " \u2502 ")
+    segments: list[str] = []
+    for name, count in sorted(models.items()):
+        if count > 1:
+            segments.append(f"{name} {count}")
+        else:
+            segments.append(name)
+
+    body = inner_sep.join(segments)
+    if mode == "icon":
+        text = f"{glyph}{body}"
+    elif mode == "text":
+        text = f"{label} {body}"
+    else:  # "both"
+        text = f"{glyph}{label} {body}"
+
+    is_stale = state.get("local_models_stale", False)
     return _pill(text, cfg, theme=theme, dim=is_stale)
 
 
@@ -2127,6 +2664,12 @@ MODULE_RENDERERS: dict[str, Any] = {
     "cpu": render_cpu,
     "memory": render_memory,
     "disk": render_disk,
+    "gpu_util": render_gpu_util,
+    "gpu_mem": render_gpu_mem,
+    "gpu_temp": render_gpu_temp,
+    "gpu_power": render_gpu_power,
+    "cpu_temp": render_cpu_temp,
+    "local_models": render_local_models,
     "agents": render_agents,
     "tmux": render_tmux,
     "obs_reads": render_obs_reads,
@@ -2165,7 +2708,9 @@ DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
                  "obs_bash", "obs_failures", "obs_tasks",
                  "obs_subagents", "obs_health", "obs_compactions",
                  "obs_hook_faults", "daily_cost", "weekly_cost"]
-DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk",
+DEFAULT_LINE3 = ["dir", "git", "cpu", "cpu_temp", "memory",
+                 "gpu_util", "gpu_mem", "gpu_temp", "gpu_power",
+                 "disk", "local_models",
                  "lines_changed", "session_count",
                  "api_efficiency", "cost_per_ktok",
                  "io_ratio", "tokens_per_turn",
