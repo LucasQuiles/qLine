@@ -200,12 +200,12 @@ DEFAULT_THEME: dict[str, Any] = {
         "force_single_line": True,
         "max_width": 0,  # 0 = auto (COLUMNS env → 200 fallback)
         "line1": ["model", "token_counts", "token_out_counts", "context_bar",
-                  "cache_rate", "duration"],
+                  "cache_rate", "duration", "cost"],
         "line2": ["sys_overhead_pill", "cache_read", "cache_delta",
                   "turns", "obs_reads", "obs_rereads", "obs_writes",
                   "obs_bash", "obs_failures", "obs_tasks",
                   "obs_subagents", "obs_health", "obs_compactions",
-                  "obs_hook_faults", "cost", "lines_changed",
+                  "obs_hook_faults", "lines_changed",
                   "session_count", "daily_cost", "weekly_cost",
                   "api_efficiency", "cost_per_ktok",
                   "io_ratio", "tokens_per_turn",
@@ -2159,12 +2159,12 @@ MODULE_RENDERERS: dict[str, Any] = {
 }
 
 DEFAULT_LINE1 = ["model", "token_counts", "token_out_counts", "context_bar",
-                 "cache_rate", "duration"]
+                 "cache_rate", "duration", "cost"]
 DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
                  "turns", "obs_reads", "obs_rereads", "obs_writes",
                  "obs_bash", "obs_failures", "obs_tasks",
                  "obs_subagents", "obs_health", "obs_compactions",
-                 "obs_hook_faults", "cost", "lines_changed",
+                 "obs_hook_faults", "lines_changed",
                  "session_count", "daily_cost", "weekly_cost",
                  "api_efficiency", "cost_per_ktok",
                  "io_ratio", "tokens_per_turn",
