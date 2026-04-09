@@ -1449,6 +1449,54 @@ print('OK')
 ")
 assert_equals "FRESH-02: metric with age" "$OUT" "OK"
 
+echo "  DIAG-01: _capture_diagnostic adds to buffer"
+OUT=$(run_py "
+from statusline import _capture_diagnostic
+
+state = {}
+_capture_diagnostic(state, 'test_module', 'something went wrong')
+diags = state.get('_diagnostics', [])
+assert len(diags) == 1, f'expected 1 diagnostic, got {len(diags)}'
+assert diags[0]['module'] == 'test_module'
+assert diags[0]['message'] == 'something went wrong'
+
+# Multiple diagnostics accumulate
+_capture_diagnostic(state, 'other', 'also broke')
+assert len(state['_diagnostics']) == 2
+print('OK')
+")
+assert_equals "DIAG-01: capture diagnostic" "$OUT" "OK"
+
+echo "  DIAG-02: render_degraded shows pill when diagnostics present"
+OUT=$(run_py "
+import os
+os.environ['NO_COLOR'] = '1'
+from statusline import render_degraded, DEFAULT_THEME
+
+# No diagnostics → None
+assert render_degraded({}, DEFAULT_THEME) is None
+
+# With diagnostics → visible pill
+state = {'_diagnostics': [
+    {'module': 'cpu', 'message': 'sysctl failed', 'ts': 0},
+    {'module': 'obs', 'message': 'package not found', 'ts': 0},
+]}
+result = render_degraded(state, DEFAULT_THEME)
+assert result is not None, 'should render pill'
+assert '2' in result, f'should show count: {result}'
+assert 'cpu' in result, f'should list module: {result}'
+print('OK')
+")
+assert_equals "DIAG-02: degraded pill" "$OUT" "OK"
+
+echo "  DIAG-03: degraded pill in MODULE_RENDERERS"
+OUT=$(run_py "
+from statusline import MODULE_RENDERERS
+assert 'degraded' in MODULE_RENDERERS, 'degraded not in MODULE_RENDERERS'
+print('OK')
+")
+assert_equals "DIAG-03: registry" "$OUT" "OK"
+
 echo ""
 fi
 

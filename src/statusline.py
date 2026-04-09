@@ -319,6 +319,11 @@ DEFAULT_THEME: dict[str, Any] = {
         "degraded_color": "#f0d399",
         "failed_color": "#d06070",
     },
+    "degraded": {
+        "enabled": True,
+        "color": "#bf616a",
+        "bg": "#3b4252",
+    },
 }
 
 
@@ -381,6 +386,16 @@ def style_dim(text: str) -> str:
     if NO_COLOR:
         return text
     return f"\033[2m{text}\033[0m"
+
+
+def _capture_diagnostic(state: dict, module: str, message: str) -> None:
+    """Record a diagnostic event for degraded-mode rendering.
+
+    When components catch errors, they call this instead of silently passing.
+    The degraded pill renders these so the user sees something instead of nothing.
+    """
+    diags = state.setdefault("_diagnostics", [])
+    diags.append({"module": module, "message": message, "ts": time.time()})
 
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
@@ -1441,7 +1456,8 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
         try:
             fn(state)
             _cache_module(new_cache, state, name, now)
-        except Exception:
+        except Exception as exc:
+            _capture_diagnostic(state, name, str(exc))
             _apply_cached(state, cache, name, now)
 
     save_cache(new_cache)
@@ -1689,6 +1705,19 @@ def render_obs_health(state: dict[str, Any], theme: dict[str, Any]) -> str | Non
     return _pill(glyph.rstrip(), cfg, cfg.get("failed_color", "#d06070"), True, theme)
 
 
+def render_degraded(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render degraded-mode pill when diagnostics are captured."""
+    diags = state.get("_diagnostics", [])
+    if not diags:
+        return None
+    count = len(diags)
+    modules = sorted(set(d["module"] for d in diags))
+    text = f"\u26a0 {count} err: {','.join(modules)}"
+    if NO_COLOR:
+        return f"[{text}]"
+    return style(f" {text} ", "#bf616a", True, "#3b4252")
+
+
 MODULE_RENDERERS: dict[str, Any] = {
     "model": render_model,
     "dir": render_dir,
@@ -1717,10 +1746,11 @@ MODULE_RENDERERS: dict[str, Any] = {
     "obs_compactions": render_obs_compactions,
     "obs_prompts": render_obs_prompts,
     "obs_health": render_obs_health,
+    "degraded": render_degraded,
 }
 
 DEFAULT_LINE1 = ["model", "token_in", "token_out", "context_bar",
-                 "cache_rate", "duration"]
+                 "cache_rate", "duration", "degraded"]
 DEFAULT_LINE2 = ["sys_overhead_pill", "cache_pill",
                  "obs_reads", "obs_rereads", "obs_writes", "obs_bash",
                  "obs_prompts", "obs_tasks", "obs_subagents", "obs_health",
@@ -1974,8 +2004,8 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         state["obs_compactions"] = ec.get("compact.started", 0)
         state["obs_prompts"] = ec.get("prompt.observed", 0)
         state["obs_health"] = session_cache.get("obs_health", "unknown")
-    except Exception:
-        pass
+    except Exception as exc:
+        _capture_diagnostic(state, "obs", str(exc))
 
 
 def _try_obs_snapshot(payload: dict, state: dict) -> None:
@@ -2075,6 +2105,9 @@ def main() -> None:
     }
     inject_context_overhead(state, payload, theme, _cache_ctx)
     line = render(state, theme)
+    if not line and state.get("_diagnostics"):
+        # Total failure — at minimum show the degraded pill
+        line = render_degraded(state, theme) or ""
     _try_obs_snapshot(payload, state)
     if line:
         # Trailing reset prevents bg color bleeding into CC's UI
