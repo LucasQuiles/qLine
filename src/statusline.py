@@ -66,7 +66,9 @@ _DEFAULT_CACHE_PATH = "/tmp/qline-cache.json"
 _DEFAULT_ALERT_FILE = "/tmp/qline-alert.json"
 CACHE_PATH = os.environ.get("QLINE_CACHE_PATH", _DEFAULT_CACHE_PATH)
 ALERT_FILE = _DEFAULT_ALERT_FILE
-CACHE_MAX_AGE_S = 60.0
+CACHE_MAX_AGE_S = 30.0    # Overhead data refresh interval
+OBS_CACHE_TTL = 5.0        # Obs counters: refresh every 5s (change every turn)
+SYSTEM_CACHE_TTL = 60.0    # System metrics: refresh every 60s (CPU/memory/disk)
 CACHE_VERSION = 1
 
 
@@ -1382,7 +1384,7 @@ def _apply_cached(state: dict, cache: dict, name: str, now: float) -> None:
     if not isinstance(entry, dict):
         return
     ts = entry.get("timestamp", 0)
-    if now - ts > CACHE_MAX_AGE_S:
+    if now - ts > SYSTEM_CACHE_TTL:
         return
     values = entry.get("value", {})
     if isinstance(values, dict):
@@ -1420,6 +1422,15 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
     for name, fn in collectors:
         cfg = theme.get(name, {})
         if not cfg.get("enabled", True):
+            continue
+        # Check if cached data is still fresh under SYSTEM_CACHE_TTL
+        existing = cache.get(name)
+        if isinstance(existing, dict) and now - existing.get("timestamp", 0) < SYSTEM_CACHE_TTL:
+            new_cache[name] = existing
+            values = existing.get("value", {})
+            if isinstance(values, dict):
+                state.update(values)
+                state[f"{name}_stale"] = True
             continue
         if name == "disk":
             collect_disk._path = cfg.get("path", "/")
@@ -1916,7 +1927,7 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         now = time.time()
 
         # Refresh counts if stale (>30s)
-        if now - session_cache.get("last_count_ts", 0) >= 30:
+        if now - session_cache.get("last_count_ts", 0) >= OBS_CACHE_TTL:
             event_counts = _count_obs_events(package_root)
             total_reads, reread_count = _count_rereads(package_root)
             obs_health = _read_obs_health(package_root)

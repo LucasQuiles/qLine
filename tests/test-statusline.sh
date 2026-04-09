@@ -1352,6 +1352,51 @@ print('OK')
 ")
 assert_equals "SESSION-02: concurrent isolation" "$OUT" "OK"
 
+echo "  TIERED-01: tiered TTL constants exist and have correct values"
+OUT=$(run_py "
+import statusline
+assert hasattr(statusline, 'OBS_CACHE_TTL'), 'OBS_CACHE_TTL not defined'
+assert hasattr(statusline, 'SYSTEM_CACHE_TTL'), 'SYSTEM_CACHE_TTL not defined'
+assert statusline.OBS_CACHE_TTL == 5, f'OBS_CACHE_TTL should be 5, got {statusline.OBS_CACHE_TTL}'
+assert statusline.SYSTEM_CACHE_TTL == 60, f'SYSTEM_CACHE_TTL should be 60, got {statusline.SYSTEM_CACHE_TTL}'
+assert statusline.CACHE_MAX_AGE_S == 30, f'CACHE_MAX_AGE_S (overhead) should be 30, got {statusline.CACHE_MAX_AGE_S}'
+print('OK')
+")
+assert_equals "TIERED-01: TTL constants" "$OUT" "OK"
+
+echo "  TIERED-02: system collectors respect SYSTEM_CACHE_TTL"
+OUT=$(run_py "
+import time, os, statusline
+from statusline import collect_system_data, load_cache, save_cache, load_config, _init_session_paths
+
+os.environ['QLINE_NO_COLLECT'] = '0'
+_init_session_paths('tiered-test')
+theme = load_config()
+
+# Pre-populate cache with fresh system data (< 60s old)
+fresh_cache = {
+    'cpu': {'value': {'cpu_percent': 42}, 'timestamp': time.time() - 10},
+    'memory': {'value': {'memory_percent': 55}, 'timestamp': time.time() - 10},
+}
+save_cache(fresh_cache)
+
+# collect_system_data should use cached data (10s < 60s SYSTEM_CACHE_TTL)
+state = {}
+collect_system_data(state, theme)
+
+# Should have the cached values (42% cpu, 55% memory) without re-collecting
+# The cpu_stale flag indicates cached data was used
+assert state.get('cpu_stale') == True or state.get('cpu_percent') == 42, f'should use cached cpu: {state}'
+
+# Cleanup
+try: os.unlink(statusline.CACHE_PATH)
+except: pass
+_init_session_paths(None)
+os.environ['QLINE_NO_COLLECT'] = '1'
+print('OK')
+")
+assert_equals "TIERED-02: system TTL respected" "$OUT" "OK"
+
 echo ""
 fi
 
