@@ -176,7 +176,7 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     "layout": {
         "force_single_line": False,
-        "max_width": 200,
+        "max_width": 0,  # 0 = auto-detect (COLUMNS env > get_terminal_size > 120)
         "line1": ["model", "context_bar", "token_in", "token_out",
                   "cache_rate", "duration"],
         "line2": ["sys_overhead_pill", "cache_pill",
@@ -1840,10 +1840,17 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
     if not parts:
         return ""
 
-    # Get terminal width — layout.max_width overrides auto-detection
-    # (Claude Code runs without a TTY, so auto-detect falls back to 80)
+    # Get terminal width for wrapping.
+    # CC statusline runs as a piped subprocess — no TTY for ioctl.
+    # Priority: COLUMNS env var > layout.max_width config > get_terminal_size > 120 default
     layout_cfg = theme.get("layout", {})
-    term_width = layout_cfg.get("max_width") or shutil.get_terminal_size((200, 24)).columns
+    columns_env = os.environ.get("COLUMNS")
+    if columns_env and columns_env.isdigit():
+        term_width = int(columns_env)
+    elif layout_cfg.get("max_width"):
+        term_width = layout_cfg["max_width"]
+    else:
+        term_width = shutil.get_terminal_size((120, 24)).columns
 
     # Pack modules into rows
     rows: list[list[str]] = []
