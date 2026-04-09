@@ -111,34 +111,26 @@ _FAULT_SCAN_BYTES = 32768  # fast reverse scan: read last 32KB
 def _get_term_width(theme: dict | None = None) -> int:
     """Get effective terminal width for module wrapping.
 
-    CC runs the statusline as a piped subprocess with no TTY, so
-    shutil.get_terminal_size and stty fail. Detection priority:
+    CC runs the statusline as a piped subprocess with no TTY.
+    Neither shutil.get_terminal_size, stty, nor tput can reliably
+    detect the real terminal width from a pipe. tput returns the
+    terminfo default (80) which causes aggressive truncation.
 
-    1. layout.max_width from TOML config (explicit user override)
-    2. COLUMNS env var (set by some shells on resize)
-    3. tput cols subprocess (queries terminfo — works without TTY)
-    4. 120 fallback
+    Priority: layout.max_width config > COLUMNS env var > 200 default.
+    The 200 default is intentionally wide — in multi-line mode, each
+    layout line renders its modules up to this width and the terminal
+    handles visual wrapping. This ensures no modules are silently
+    dropped by the renderer.
     """
     if theme:
         cfg_max = theme.get("layout", {}).get("max_width", 0)
         if cfg_max > 0:
             return cfg_max
-    # COLUMNS env var
+    # COLUMNS env var: set by some shells on resize. CC doesn't set it.
     cols = os.environ.get("COLUMNS")
     if cols and cols.isdigit() and int(cols) > 0:
         return int(cols)
-    # tput cols — works in piped subprocesses if TERM is set
-    try:
-        result = subprocess.run(
-            ["tput", "cols"], capture_output=True, text=True, timeout=0.1,
-        )
-        if result.returncode == 0:
-            val = result.stdout.strip()
-            if val.isdigit() and int(val) > 0:
-                return int(val)
-    except Exception:
-        pass
-    return 120
+    return 200
 
 # --- Default Theme (Muted Ocean) ---
 
