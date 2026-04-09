@@ -1560,6 +1560,64 @@ print('OK')
 ")
 assert_equals "FINGER-02: schema mismatch diagnostic" "$OUT" "OK"
 
+echo "  INTEG-01: full pipeline with session isolation + diagnostics"
+OUT=$(run_py "
+import os, json
+os.environ['NO_COLOR'] = '1'
+os.environ['QLINE_NO_COLLECT'] = '1'
+import statusline
+from statusline import (normalize, load_config, render, _init_session_paths,
+                        _inject_obs_counters, _check_payload_fingerprint,
+                        render_degraded)
+from context_overhead import inject_context_overhead
+
+payload = {
+    'session_id': 'integ-test-001',
+    'model': {'id': 'claude-opus-4-6', 'display_name': 'Opus 4.6 (1M context)'},
+    'cost': {'total_cost_usd': 1.50, 'total_duration_ms': 120000},
+    'context_window': {
+        'used_percentage': 35,
+        'context_window_size': 1000000,
+        'total_input_tokens': 350000,
+        'total_output_tokens': 50000,
+    },
+}
+
+# Init session
+sid = payload['session_id']
+_init_session_paths(sid)
+theme = load_config()
+state = normalize(payload)
+_check_payload_fingerprint(state, payload)
+_inject_obs_counters(state, payload)
+
+cache_ctx = {
+    'load_cache': statusline.load_cache,
+    'save_cache': statusline.save_cache,
+    'cache_max_age': statusline.CACHE_MAX_AGE_S,
+    'obs_available': False,
+    'resolve_package_root': None,
+}
+inject_context_overhead(state, payload, theme, cache_ctx)
+
+output = render(state, theme)
+assert output, 'should produce output'
+assert 'Opus' in output, f'model missing: {output[:100]}'
+assert '35%' in output, f'context pct missing: {output[:200]}'
+# No diagnostics → no degraded pill
+assert 'err' not in output.lower(), f'unexpected degraded pill: {output}'
+
+# Session isolation check: path is scoped
+assert 'integ-test' not in statusline.CACHE_PATH or statusline._session_hash('integ-test-001') in statusline.CACHE_PATH
+
+# Cleanup
+try: os.unlink(statusline.CACHE_PATH)
+except: pass
+_init_session_paths(None)
+print('OK')
+")
+assert_equals "INTEG-01: full pipeline" "$OUT" "OK"
+
 echo ""
 fi
 
