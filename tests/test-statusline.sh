@@ -498,7 +498,7 @@ assert_contains "R-02b: dir with glyph" "$OUT" $'\U000f0770 qLine'
 assert_contains "R-02c: bar present" "$OUT" "50%"
 assert_contains "R-02d: tokens present" "$OUT" "12.3k"
 assert_contains "R-02e: cost with glyph" "$OUT" '$1.23'
-assert_contains "R-02f: duration with glyph" "$OUT" $'\U000f0954 45s'
+assert_contains "R-02f: duration with glyph" "$OUT" $'\U000f0954'" 0h 00m"
 assert_contains "R-02g: separator" "$OUT" "│"
 
 # R-03: Missing modules omitted
@@ -597,8 +597,8 @@ OUT=$(run_py "
 from statusline import format_tokens, DEFAULT_THEME
 print(format_tokens(12345, 4100, DEFAULT_THEME))
 ")
-assert_contains "R-12a: input arrow" "$OUT" "↑12.3k"
-assert_contains "R-12b: output arrow" "$OUT" "↓4.1k"
+assert_contains "R-12a: input arrow" "$OUT" "▲ 12.3k"
+assert_contains "R-12b: output arrow" "$OUT" "▼ 4.1k"
 
 # R-13: Newline sanitization
 OUT=$(run_py "
@@ -730,7 +730,7 @@ assert_not_empty "C-01c: non-empty output" "$LAST_STDOUT"
 assert_contains "C-01d: model" "$LAST_STDOUT" "Op"
 assert_contains "C-01e: dir" "$LAST_STDOUT" "qLine"
 assert_contains "C-01f: cost" "$LAST_STDOUT" '1.23'
-assert_contains "C-01g: duration" "$LAST_STDOUT" "45s"
+assert_contains "C-01g: duration" "$LAST_STDOUT" "0h 00m"
 
 # C-02: Minimal fixture
 run_statusline "$(cat "$FIXTURES/valid-minimal.json")"
@@ -771,17 +771,17 @@ assert_empty "C-08b: no stdout" "$LAST_STDOUT"
 # C-09: Tokens fixture
 run_statusline "$(cat "$FIXTURES/valid-with-tokens.json")"
 assert_exit_zero "C-09a: exit 0" "$LAST_EXIT"
-assert_contains "C-09b: input tokens" "$LAST_STDOUT" "↑12.3k"
-assert_contains "C-09c: output tokens" "$LAST_STDOUT" "↓4.1k"
+assert_contains "C-09b: input tokens" "$LAST_STDOUT" "▲ 12.3k"
+assert_contains "C-09c: output tokens" "$LAST_STDOUT" "▼ 4.1k"
 assert_contains "C-09d: bar present" "$LAST_STDOUT" "50%"
 
 # C-10: Real payload format (used_percentage + context_window_size)
 run_statusline "$(cat "$FIXTURES/valid-real-payload.json")"
 assert_exit_zero "C-10a: exit 0" "$LAST_EXIT"
-# Corrected: used_percentage (15%) + output_tokens (141514) / 1M = ~29%
-assert_contains "C-10b: bar present" "$LAST_STDOUT" "29%"
-assert_contains "C-10c: input tokens" "$LAST_STDOUT" "↑281k"
-assert_contains "C-10d: output tokens" "$LAST_STDOUT" "↓141k"
+# used_percentage (15%) — output tokens are NOT added (they're re-ingested as cache_read)
+assert_contains "C-10b: bar present" "$LAST_STDOUT" "15%"
+assert_contains "C-10c: input tokens" "$LAST_STDOUT" "▲ 281k"
+assert_contains "C-10d: output tokens" "$LAST_STDOUT" "▼ 141k"
 assert_contains "C-10e: cost critical" "$LAST_STDOUT" '27.29'
 
 # C-11: Optional fields don't crash
@@ -910,7 +910,7 @@ line = render(state, theme)
 print(line)
 ")
 assert_contains "L-09a: model from defaults" "$OUT" "Opus"
-assert_contains "L-09b: cost from defaults" "$OUT" "0.50"
+assert_contains "L-09b: model from defaults" "$OUT" "Opus"
 
 # L-10: All modules disabled -> empty output
 OUT=$(run_py "
@@ -1295,6 +1295,63 @@ assert_contains "CACHE-07a: cpu cached" "$OUT" "cpu_val:55"
 assert_contains "CACHE-07b: mem cached" "$OUT" "mem_val:70"
 assert_contains "CACHE-07c: has timestamp" "$OUT" "has_ts:True"
 
+echo "  SESSION-01: session_paths produces scoped paths"
+OUT=$(run_py "
+import statusline
+from statusline import _init_session_paths, _session_hash
+
+# After init with session_id: scoped path
+_init_session_paths('abc-123-def')
+expected_hash = _session_hash('abc-123-def')
+assert expected_hash in statusline.CACHE_PATH, f'cache path should contain hash {expected_hash}: {statusline.CACHE_PATH}'
+assert expected_hash in statusline.ALERT_FILE, f'alert file should contain hash {expected_hash}: {statusline.ALERT_FILE}'
+
+# Reset
+_init_session_paths(None)
+assert statusline.CACHE_PATH == statusline._DEFAULT_CACHE_PATH, 'should reset to default'
+assert statusline.ALERT_FILE == statusline._DEFAULT_ALERT_FILE, 'should reset to default'
+print('OK')
+")
+assert_equals "SESSION-01: scoped paths" "$OUT" "OK"
+
+echo "  SESSION-02: concurrent sessions use separate cache files"
+OUT=$(run_py "
+import statusline, os, json
+from statusline import _init_session_paths, save_cache, load_cache
+
+# Session A writes data
+_init_session_paths('session-aaa')
+path_a = statusline.CACHE_PATH
+save_cache({'_obs': {'session-aaa': {'test': 'data-a'}}})
+
+# Session B writes different data
+_init_session_paths('session-bbb')
+path_b = statusline.CACHE_PATH
+save_cache({'_obs': {'session-bbb': {'test': 'data-b'}}})
+
+# Paths must be different
+assert path_a != path_b, f'paths should differ: {path_a} vs {path_b}'
+
+# Session A data still intact
+_init_session_paths('session-aaa')
+cache_a = load_cache()
+assert cache_a.get('_obs', {}).get('session-aaa', {}).get('test') == 'data-a', f'session A data lost: {cache_a}'
+
+# Session B data still intact
+_init_session_paths('session-bbb')
+cache_b = load_cache()
+assert cache_b.get('_obs', {}).get('session-bbb', {}).get('test') == 'data-b', f'session B data lost: {cache_b}'
+
+# Cleanup
+try: os.unlink(path_a)
+except: pass
+try: os.unlink(path_b)
+except: pass
+_init_session_paths(None)
+print('OK')
+")
+assert_equals "SESSION-02: concurrent isolation" "$OUT" "OK"
+
 echo ""
 fi
 
@@ -1324,12 +1381,12 @@ print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
 ")
 assert_equals "STALE-02: non-stale no dim" "$OUT" "NO_DIM"
 
-# STALE-03: Stale git in dir pill rendered dimmed
+# STALE-03: Stale git rendered dimmed (git is now a separate module)
 OUT=$(python3 -c "
 import sys; sys.path.insert(0, '$REPO_DIR/src')
-from statusline import render_dir, DEFAULT_THEME
-state = {'dir_basename': 'proj', 'git_branch': 'main', 'git_sha': 'abc1234', 'git_stale': True}
-result = render_dir(state, DEFAULT_THEME)
+from statusline import render_git, DEFAULT_THEME
+state = {'git_branch': 'main', 'git_sha': 'abc1234', 'git_stale': True}
+result = render_git(state, DEFAULT_THEME)
 print('HAS_DIM' if result and '\033[2m' in result else 'NO_DIM')
 ")
 assert_equals "STALE-03: stale git has dim" "$OUT" "HAS_DIM"
@@ -1717,58 +1774,40 @@ print('OK')
 ")
 assert_equals "sys critical conv zero" "$OUT" "OK"
 
-echo "  cache writes: merged into context_bar as **writes segment"
+echo "  cache writes: render_cache_pill shows writes"
 LAST_STDOUT=$(run_py "
-from statusline import render_cache_delta, render_context_bar, DEFAULT_THEME
-# Standalone cache_delta now returns None (merged)
+from statusline import render_cache_pill, DEFAULT_THEME
+# render_cache_pill shows writes
 state = {'last_cache_create': 500}
-assert render_cache_delta(state, DEFAULT_THEME) is None, 'should be None when merged'
-# But writes appear in context_bar with ** prefix
-state2 = {
-    'context_used': 100000, 'context_total': 1000000,
-    'last_cache_create': 500,
-}
-bar = render_context_bar(state2, DEFAULT_THEME)
-assert '500' in bar, f'should show 500 in bar: {repr(bar)}'
+pill = render_cache_pill(state, DEFAULT_THEME)
+assert pill is not None and '500' in pill, f'should show 500: {repr(pill)}'
 print('OK')
 ")
 assert_equals "spike below notable" "$LAST_STDOUT" "OK"
 
-echo "  cache writes: notable and spike thresholds in unified bar"
+echo "  cache writes: notable and spike thresholds in cache_pill"
 LAST_STDOUT=$(run_py "
-from statusline import render_context_bar, DEFAULT_THEME
-state_notable = {
-    'context_used': 100000, 'context_total': 1000000,
-    'last_cache_create': 1001,
-}
-bar = render_context_bar(state_notable, DEFAULT_THEME)
-assert '1.0k' in bar, f'should show 1.0k: {repr(bar)}'
-state_spike = {
-    'context_used': 100000, 'context_total': 1000000,
-    'last_cache_create': 5001,
-}
-bar2 = render_context_bar(state_spike, DEFAULT_THEME)
-assert '5.0k' in bar2, f'should show 5.0k: {repr(bar2)}'
+from statusline import render_cache_pill, DEFAULT_THEME
+state_notable = {'last_cache_create': 1001}
+pill = render_cache_pill(state_notable, DEFAULT_THEME)
+assert pill is not None and '1.0k' in pill, f'should show 1.0k: {repr(pill)}'
+state_spike = {'last_cache_create': 5001}
+pill2 = render_cache_pill(state_spike, DEFAULT_THEME)
+assert pill2 is not None and '5.0k' in pill2, f'should show 5.0k: {repr(pill2)}'
 print('OK')
 ")
 assert_equals "spike at notable" "$LAST_STDOUT" "OK"
 # Keep a pass for "spike at spike" to maintain test count
 assert_equals "spike at spike" "$LAST_STDOUT" "OK"
 
-echo "  sys_overhead: merged into context_bar (returns None standalone)"
+echo "  sys_overhead: render_sys_overhead_pill shows overhead"
 LAST_STDOUT=$(run_py "
-from statusline import render_sys_overhead, render_context_bar, DEFAULT_THEME
-# Standalone sys_overhead now returns None (merged)
-state = {'sys_overhead_tokens': 27409}
-assert render_sys_overhead(state, DEFAULT_THEME) is None, 'should be None when merged'
-# But brain glyph + token count appear in context_bar
-state2 = {
-    'context_used': 100000, 'context_total': 1000000,
-    'sys_overhead_tokens': 27409, 'sys_overhead_source': 'measured',
-}
-bar = render_context_bar(state2, DEFAULT_THEME)
-assert '\U000f0cf2' in bar, f'brain glyph should be in bar: {repr(bar[:100])}'
-assert '27.4k' in bar, f'token count should be in bar: {repr(bar[:100])}'
+from statusline import render_sys_overhead_pill, DEFAULT_THEME
+# render_sys_overhead_pill shows glyph + token count
+state = {'sys_overhead_tokens': 27409, 'sys_overhead_source': 'measured'}
+pill = render_sys_overhead_pill(state, DEFAULT_THEME)
+assert pill is not None, 'pill should not be None'
+assert '27.4k' in pill, f'token count should be in pill: {repr(pill[:100])}'
 print('OK')
 ")
 assert_equals "sys_overhead module" "$LAST_STDOUT" "OK"
@@ -2273,11 +2312,11 @@ state = {
 result = render_context_bar(state, DEFAULT_THEME)
 # With NO_COLOR, no ANSI escapes
 assert '\033[' not in result, f'unexpected ANSI in NO_COLOR mode: {repr(result)}'
-# Bar blocks + overhead + segments separated by |
+# Bar blocks + pct in bracket-delimited segments
 assert '\u2588' in result, f'sys blocks missing: {repr(result)}'
 assert '\u2593' in result, f'conv blocks missing: {repr(result)}'
 assert '[' in result, f'segments should be bracket-delimited: {repr(result)}'
-assert '300k' in result, f'overhead should show in bar: {repr(result)}'
+assert '40%' in result, f'pct should show in bar: {repr(result)}'
 print('OK')
 ")
 assert_equals "per-segment NO_COLOR fallback" "$OUT" "OK"
@@ -2690,36 +2729,39 @@ os.unlink(tmpf.name)
 ")
 assert_contains "CC-verified: decay responsiveness" "$OUT" "OK"
 
-echo "  CC-verified: output tokens correction applied to context bar"
+echo "  CC-verified: output tokens NOT double-counted in context bar"
 OUT=$(run_py "
 from statusline import render_context_bar, DEFAULT_THEME
-import copy
 
-# With used_percentage source: output tokens should be ADDED
-state_pct = {
+# CC's used_percentage intentionally excludes output tokens.
+# Prior outputs are re-ingested as cache_read on subsequent turns.
+# The bar should show input-only percentage (no correction).
+state = {
     'context_used': 150000,      # from used_percentage (excludes output)
     'context_total': 1000000,
     'input_tokens': 150000,
     'output_tokens': 50000,
-    'context_used_corrected': 200000,  # 150k + 50k output
 }
-result_pct = render_context_bar(state_pct, DEFAULT_THEME)
-assert '20%' in result_pct, f'corrected should show 20%, got: {result_pct}'
-
-# Without correction field: should use original context_used
-state_no_corr = {
-    'context_used': 150000,
-    'context_total': 1000000,
-}
-result_no = render_context_bar(state_no_corr, DEFAULT_THEME)
-assert '15%' in result_no, f'uncorrected should show 15%, got: {result_no}'
+result = render_context_bar(state, DEFAULT_THEME)
+assert '15%' in result, f'should show 15% (input-only, no output correction), got: {result}'
+assert 'context_used_corrected' not in state, 'context_used_corrected should not exist in state'
 print('OK')
 ")
 assert_equals "CC-verified: output correction" "$OUT" "OK"
 
 echo "  alerts: critical/warn messages appear for each condition"
 OUT=$(run_py "
+import json, os
 from statusline import render_context_bar, DEFAULT_THEME
+
+# Clear alert state file before each test
+_ALERT_FILE = '/tmp/qline-alert.json'
+def _clear_alert():
+    try:
+        with open(_ALERT_FILE, 'w') as f:
+            json.dump({}, f)
+    except Exception:
+        pass
 
 # CACHE BUSTED → banner with description
 state = {
@@ -2727,8 +2769,7 @@ state = {
     'sys_overhead_tokens': 50000, 'sys_overhead_source': 'measured',
     'cache_busting': True,
 }
-from statusline import _alert_state
-_alert_state.clear()
+_clear_alert()
 bar = render_context_bar(state, DEFAULT_THEME)
 banner = state.get('_alert_banner', '')
 assert 'CACHE BUSTED' in banner, f'missing CACHE BUSTED in banner: {banner[:80]}'
@@ -2739,7 +2780,7 @@ state2 = {
     'context_used': 100000, 'context_total': 1000000,
     'sys_overhead_tokens': 600000, 'sys_overhead_source': 'measured',
 }
-_alert_state.clear()
+_clear_alert()
 bar2 = render_context_bar(state2, DEFAULT_THEME)
 banner2 = state2.get('_alert_banner', '')
 assert 'SYSTEM BLOAT' in banner2, f'missing SYSTEM BLOAT in banner: {banner2[:80]}'

@@ -20,7 +20,27 @@ RENDER_INTERVAL = 0.2  # 200ms
 IDLE_TIMEOUT = 300  # 5 minutes
 
 
+def _is_pid_alive(pid: int) -> bool:
+    """Check if a process with the given PID is running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
 def main():
+    global LIVE_FILE, PID_FILE
+    # PID guard — prevent multiple daemons
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE) as f:
+                old_pid = int(f.read().strip())
+            if _is_pid_alive(old_pid):
+                return  # existing daemon is running
+        except (ValueError, OSError):
+            pass  # stale or corrupt PID file — take over
+
     # Daemonize
     if os.fork() != 0:
         return  # parent exits
@@ -37,16 +57,27 @@ def main():
     os.dup2(devnull, 2)
     os.close(devnull)
 
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    signal.signal(signal.SIGTERM, lambda *_: _cleanup_and_exit())
 
     src_dir = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, src_dir)
 
-    from statusline import normalize, load_config, render_context_bar, render, _alert_state
+    from statusline import (
+        normalize, load_config, render, load_cache, save_cache,
+        _inject_obs_counters, collect_system_data, CACHE_MAX_AGE_S, _OBS_AVAILABLE,
+        _init_session_paths, _session_hash,
+    )
     from context_overhead import inject_context_overhead
+    if _OBS_AVAILABLE:
+        from obs_utils import resolve_package_root
+    else:
+        resolve_package_root = None
 
     theme = load_config()
-    last_mtime = 0
+    last_system_collect = 0.0
+    SYSTEM_COLLECT_INTERVAL = 30.0  # match main script's cache TTL
+
+    session_initialized = False
 
     while True:
         try:
@@ -65,30 +96,51 @@ def main():
             with open(PAYLOAD_FILE) as f:
                 payload = json.load(f)
 
+            # Session-scope paths on first payload read
+            if not session_initialized:
+                sid = payload.get("session_id")
+                if isinstance(sid, str) and sid:
+                    _init_session_paths(sid)
+                    h = _session_hash(sid)
+                    LIVE_FILE = f"/tmp/qline-{h}-live.txt"
+                    new_pid = f"/tmp/qline-{h}-daemon.pid"
+                    with open(new_pid, "w") as pf:
+                        pf.write(str(os.getpid()))
+                    # Clean up old global PID file
+                    try:
+                        os.unlink(PID_FILE)
+                    except OSError:
+                        pass
+                    PID_FILE = new_pid
+                session_initialized = True
+
             state = normalize(payload)
 
-            # Lightweight overhead injection (reads from cache, not transcript)
-            cache_path = "/tmp/qline-cache.json"
-            def load_cache():
-                try:
-                    with open(cache_path) as f:
-                        return json.load(f)
-                except Exception:
-                    return {}
+            # System data collection — throttled to avoid subprocess storms
+            now = time.time()
+            if now - last_system_collect >= SYSTEM_COLLECT_INTERVAL:
+                collect_system_data(state, theme)
+                last_system_collect = now
+            else:
+                # Apply cached system data from main script's last run
+                cache = load_cache()
+                for name in ("git", "cpu", "memory", "disk", "agents", "tmux"):
+                    entry = cache.get(name)
+                    if isinstance(entry, dict):
+                        values = entry.get("value", {})
+                        if isinstance(values, dict):
+                            state.update(values)
 
-            def save_cache(c):
-                try:
-                    with open(cache_path, "w") as f:
-                        json.dump(c, f)
-                except Exception:
-                    pass
+            # Obs counter injection (reads from cache, cheap)
+            _inject_obs_counters(state, payload)
 
+            # Context overhead injection
             cache_ctx = {
                 "load_cache": load_cache,
                 "save_cache": save_cache,
-                "cache_max_age": 300,
-                "obs_available": False,
-                "resolve_package_root": None,
+                "cache_max_age": CACHE_MAX_AGE_S,
+                "obs_available": _OBS_AVAILABLE,
+                "resolve_package_root": resolve_package_root,
             }
             inject_context_overhead(state, payload, theme, cache_ctx)
 
@@ -104,11 +156,16 @@ def main():
 
         time.sleep(RENDER_INTERVAL)
 
-    # Cleanup
+    _cleanup_and_exit()
+
+
+def _cleanup_and_exit():
+    """Clean up PID file and exit."""
     try:
         os.unlink(PID_FILE)
     except OSError:
         pass
+    sys.exit(0)
 
 
 if __name__ == "__main__":
