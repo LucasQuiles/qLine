@@ -30,7 +30,7 @@ def _is_pid_alive(pid: int) -> bool:
 
 
 def main():
-    global LIVE_FILE, PID_FILE
+    global LIVE_FILE, PID_FILE, PAYLOAD_FILE
     # PID guard — prevent multiple daemons
     if os.path.exists(PID_FILE):
         try:
@@ -65,7 +65,7 @@ def main():
     from statusline import (
         normalize, load_config, render, load_cache, save_cache,
         _inject_obs_counters, collect_system_data, CACHE_MAX_AGE_S, _OBS_AVAILABLE,
-        _init_session_paths, _session_hash,
+        _init_session_paths, _session_hash, SYSTEM_CACHE_TTL,
     )
     from context_overhead import inject_context_overhead
     if _OBS_AVAILABLE:
@@ -75,7 +75,7 @@ def main():
 
     theme = load_config()
     last_system_collect = 0.0
-    SYSTEM_COLLECT_INTERVAL = 30.0  # match main script's cache TTL
+    SYSTEM_COLLECT_INTERVAL = SYSTEM_CACHE_TTL  # 60s — match tiered TTL
 
     session_initialized = False
 
@@ -103,6 +103,7 @@ def main():
                     _init_session_paths(sid)
                     h = _session_hash(sid)
                     LIVE_FILE = f"/tmp/qline-{h}-live.txt"
+                    PAYLOAD_FILE = f"/tmp/qline-{h}-payload.json"
                     new_pid = f"/tmp/qline-{h}-daemon.pid"
                     with open(new_pid, "w") as pf:
                         pf.write(str(os.getpid()))

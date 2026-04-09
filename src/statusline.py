@@ -85,7 +85,7 @@ def _init_session_paths(session_id: str | None) -> None:
     global CACHE_PATH, ALERT_FILE
     if session_id:
         h = _session_hash(session_id)
-        CACHE_PATH = os.environ.get("QLINE_CACHE_PATH", f"/tmp/qline-{h}-cache.json")
+        CACHE_PATH = f"/tmp/qline-{h}-cache.json"  # env var ignored when session-scoped
         ALERT_FILE = f"/tmp/qline-{h}-alert.json"
     else:
         CACHE_PATH = os.environ.get("QLINE_CACHE_PATH", _DEFAULT_CACHE_PATH)
@@ -938,8 +938,10 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
 
     def _save_alert(d):
         try:
-            with open(ALERT_FILE, "w") as f:
+            tmp = ALERT_FILE + ".tmp"
+            with open(tmp, "w") as f:
                 json.dump(d, f)
+            os.rename(tmp, ALERT_FILE)
         except Exception:
             pass
 
@@ -1587,7 +1589,8 @@ def render_git(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     else:
         text = f"{branch}{dirty_marker}"
     is_stale = state.get("git_stale", False)
-    return _pill(text, g_cfg, theme=theme, dim=is_stale)
+    age = _freshness_suffix(state, "git")
+    return _pill(text, g_cfg, theme=theme, dim=is_stale) + age
 
 
 def render_cpu(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -2122,7 +2125,8 @@ def _try_obs_snapshot(payload: dict, state: dict) -> None:
             update_health(package_root, "statusline_capture", "degraded",
                          warning={"code": "STATUSLINE_APPEND_FAILED"})
 
-    except Exception:
+    except Exception as exc:
+        _capture_diagnostic(state, "snapshot", str(exc))
         try:
             if package_root:
                 update_health(package_root, "statusline_capture", "degraded",
