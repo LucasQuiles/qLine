@@ -95,8 +95,8 @@ def _get_term_width(theme: dict | None = None) -> int:
     Priority: layout.max_width config > COLUMNS env var > 200 fallback.
     """
     if theme:
-        cfg_max = theme.get("layout", {}).get("max_width")
-        if cfg_max and cfg_max > 0:
+        cfg_max = theme.get("layout", {}).get("max_width", 0)
+        if cfg_max > 0:
             return cfg_max
     # COLUMNS env var: some terminals/shells export this on resize.
     # CC doesn't, but other callers might.
@@ -198,7 +198,7 @@ DEFAULT_THEME: dict[str, Any] = {
     },
     "layout": {
         "force_single_line": False,
-        "max_width": 200,
+        "max_width": 0,  # 0 = auto (COLUMNS env → 200 fallback)
         "line1": ["model", "token_counts", "token_out_counts", "context_bar",
                   "cache_rate", "duration"],
         "line2": ["sys_overhead_pill", "cache_read", "cache_delta",
