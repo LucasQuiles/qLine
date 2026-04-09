@@ -1390,6 +1390,8 @@ def _apply_cached(state: dict, cache: dict, name: str, now: float) -> None:
     if isinstance(values, dict):
         state.update(values)
         state[f"{name}_stale"] = True
+        ts_map = state.setdefault("_cache_timestamps", {})
+        ts_map[name] = ts
 
 
 # --- System Data Orchestrator ---
@@ -1431,6 +1433,8 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
             if isinstance(values, dict):
                 state.update(values)
                 state[f"{name}_stale"] = True
+                ts_map = state.setdefault("_cache_timestamps", {})
+                ts_map[name] = existing.get("timestamp", 0)
             continue
         if name == "disk":
             collect_disk._path = cfg.get("path", "/")
@@ -1444,6 +1448,20 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
 
 
 # --- Module Renderers (system) ---
+
+
+def _freshness_suffix(state: dict, cache_key: str) -> str:
+    """Return dim age suffix like ' 42s' for stale cached data, or '' if fresh."""
+    if not state.get(f"{cache_key}_stale"):
+        return ""
+    ts_map = state.get("_cache_timestamps", {})
+    ts = ts_map.get(cache_key)
+    if ts is None:
+        return ""
+    age = int(time.time() - ts)
+    if age < 5:
+        return ""  # Fresh enough — no suffix
+    return style_dim(f" {age}s") if not NO_COLOR else f" {age}s"
 
 
 def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
@@ -1475,11 +1493,12 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
         text = f"{glyph}{bar} {pct}%"
 
     is_stale = state.get(f"{theme_key}_stale", False)
+    age = _freshness_suffix(state, theme_key)
     if pct >= crit_t:
-        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme, dim=is_stale)
+        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme, dim=is_stale) + age
     if pct >= warn_t:
-        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme, dim=is_stale)
-    return _pill(text, cfg, theme=theme, dim=is_stale)
+        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme, dim=is_stale) + age
+    return _pill(text, cfg, theme=theme, dim=is_stale) + age
 
 
 # --- Subprocess-based module renderers ---
