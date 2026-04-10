@@ -1,5 +1,7 @@
 # qLine Hardening: Session Isolation, Freshness, Diagnostics
 
+> **STALE:** References to `src/qline-daemon.py` are obsolete — the daemon was deleted in commit `11b05f2` (2026-04-09), replaced by CC's native `refreshInterval`. Steps 7-8 in Task 1 no longer apply.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix three real-world pain points — concurrent session collision, invisible data staleness, and silent total failure after CC updates.

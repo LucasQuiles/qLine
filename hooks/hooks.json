@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-session-start.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-session-start.py\"",
             "timeout": 5
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-pretool-read.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-pretool-read.py\"",
             "timeout": 5
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-posttool-write.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-posttool-write.py\"",
             "timeout": 5
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-posttool-bash.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-posttool-bash.py\"",
             "timeout": 5
           }
         ]
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-posttool-edit.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-posttool-edit.py\"",
             "timeout": 5
           }
         ]
@@ -60,7 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-prompt-submit.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-prompt-submit.py\"",
             "timeout": 5
           }
         ]
@@ -71,7 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-stop-cache.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-stop-cache.py\"",
             "timeout": 2
           }
         ]
@@ -82,12 +82,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-precompact.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-precompact.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/precompact-preserve.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/precompact-preserve.py\"",
             "timeout": 5
           }
         ]
@@ -98,12 +98,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-subagent-stop.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-subagent-stop.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/subagent-stop-gate.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/subagent-stop-gate.py\"",
             "timeout": 5
           }
         ]
@@ -114,12 +114,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-session-end.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-session-end.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session-end-summary.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/session-end-summary.py\"",
             "timeout": 5
           }
         ]
@@ -130,12 +130,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-task-completed.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-task-completed.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/task-completed-gate.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/task-completed-gate.py\"",
             "timeout": 5
           }
         ]
@@ -146,7 +146,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-posttool-failure.py\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook\" \"${CLAUDE_PLUGIN_ROOT}/hooks/obs-posttool-failure.py\"",
             "timeout": 5
           }
         ]

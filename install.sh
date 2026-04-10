@@ -162,7 +162,8 @@ if [ "$WITH_OBS" = true ]; then
                  "$SCRIPT_DIR/hooks/subagent-stop-gate.py" \
                  "$SCRIPT_DIR/hooks/task-completed-gate.py" \
                  "$SCRIPT_DIR/hooks/hook_utils.py" \
-                 "$SCRIPT_DIR/hooks/obs_utils.py"; do
+                 "$SCRIPT_DIR/hooks/obs_utils.py" \
+                 "$SCRIPT_DIR/hooks/run-hook"; do
             [ -f "$f" ] || continue
             cp "$f" "$HOOKS_DIR/"
             chmod +x "$HOOKS_DIR/$(basename "$f")"

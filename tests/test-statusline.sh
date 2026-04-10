@@ -25,6 +25,22 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 SRC="$REPO_DIR/src/statusline.py"
 FIXTURES="$SCRIPT_DIR/fixtures/statusline"
 
+# Resolve Python 3.10+ using the same priority as install.sh / run-hook
+PYTHON=""
+for _candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
+    if command -v "$_candidate" > /dev/null 2>&1; then
+        read _major _minor <<< $("$_candidate" -c 'import sys; print(sys.version_info.major, sys.version_info.minor)' 2>/dev/null || echo "0 0")
+        if [ "$_major" -eq 3 ] && [ "$_minor" -ge 10 ]; then
+            PYTHON="$_candidate"
+            break
+        fi
+    fi
+done
+if [ -z "$PYTHON" ]; then
+    echo "FATAL: No Python 3.10+ found in PATH" >&2
+    exit 1
+fi
+
 PASS=0
 FAIL=0
 TOTAL=0
@@ -130,7 +146,7 @@ run_statusline() {
     local tmpout tmpderr
     tmpout=$(mktemp)
     tmpderr=$(mktemp)
-    printf '%s' "$input" | NO_COLOR=1 QLINE_NO_COLLECT=1 python3 "$SRC" >"$tmpout" 2>"$tmpderr"
+    printf '%s' "$input" | NO_COLOR=1 QLINE_NO_COLLECT=1 "$PYTHON" "$SRC" >"$tmpout" 2>"$tmpderr"
     local exit_code=$?
     LAST_STDOUT=$(cat "$tmpout")
     LAST_STDERR=$(cat "$tmpderr")
@@ -144,7 +160,7 @@ run_statusline_color() {
     local tmpout tmpderr
     tmpout=$(mktemp)
     tmpderr=$(mktemp)
-    printf '%s' "$input" | env -u NO_COLOR QLINE_NO_COLLECT=1 python3 "$SRC" >"$tmpout" 2>"$tmpderr"
+    printf '%s' "$input" | env -u NO_COLOR QLINE_NO_COLLECT=1 "$PYTHON" "$SRC" >"$tmpout" 2>"$tmpderr"
     local exit_code=$?
     LAST_STDOUT=$(cat "$tmpout")
     LAST_STDERR=$(cat "$tmpderr")
@@ -154,7 +170,7 @@ run_statusline_color() {
 
 # Helper: run a Python snippet importing from statusline
 run_py() {
-    NO_COLOR=1 python3 -c "
+    NO_COLOR=1 "$PYTHON" -c "
 import sys; sys.path.insert(0, '$REPO_DIR/src')
 $1
 " 2>&1
@@ -162,14 +178,14 @@ $1
 
 # Helper: run a Python snippet with ANSI colors enabled (NO_COLOR not set)
 run_py_color() {
-    env -u NO_COLOR python3 -c "
+    env -u NO_COLOR "$PYTHON" -c "
 import sys; sys.path.insert(0, '$REPO_DIR/src')
 $1
 " 2>&1
 }
 
 # Helper: emit a Unicode codepoint as UTF-8 (works on any bash version)
-uc() { python3 -c "import sys; sys.stdout.write('$1')"; }
+uc() { "$PYTHON" -c "import sys; sys.stdout.write('$1')"; }
 
 # Determine which sections to run
 RUN_SECTION="${2:-all}"
@@ -1375,20 +1391,20 @@ OBS_TEST_ROOT=$(mktemp -d)
 OBS_TEST_CACHE=$(mktemp)
 
 OBS_SESSION_ID="test-obs-session-$(date +%s)"
-python3 -c "
+"$PYTHON" -c "
 import sys; sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package
 create_package('$OBS_SESSION_ID', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$OBS_TEST_ROOT')
 "
 
-OBS_PKG_ROOT=$(python3 -c "
+OBS_PKG_ROOT=$("$PYTHON" -c "
 import sys; sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import resolve_package_root
 print(resolve_package_root('$OBS_SESSION_ID', obs_root='$OBS_TEST_ROOT'))
 ")
 
 # Build a test payload with session_id matching our package
-OBS_PAYLOAD=$(python3 -c "
+OBS_PAYLOAD=$("$PYTHON" -c "
 import json
 d = {
     'session_id': '$OBS_SESSION_ID',
@@ -1409,7 +1425,7 @@ print(json.dumps(d))
 # T-obs-1: snapshot appended on first invocation
 echo ""
 echo "--- T-obs-1: snapshot appended ---"
-printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
+printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" "$PYTHON" "$SRC" > /dev/null 2>&1
 SNAP_FILE="$OBS_PKG_ROOT/native/statusline/snapshots.jsonl"
 SNAP_COUNT=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-1: snapshot appended" "$SNAP_COUNT" "1"
@@ -1417,7 +1433,7 @@ assert_equals "T-obs-1: snapshot appended" "$SNAP_COUNT" "1"
 # T-obs-2: snapshot has correct fields
 echo ""
 echo "--- T-obs-2: correct fields ---"
-FIELDS_CHECK=$(python3 -c "
+FIELDS_CHECK=$("$PYTHON" -c "
 import json
 with open('$SNAP_FILE') as f:
     r = json.loads(f.readline())
@@ -1437,14 +1453,14 @@ assert_equals "T-obs-2: correct fields" "$FIELDS_CHECK" "OK"
 # T-obs-3: throttle skips duplicate within 30s
 echo ""
 echo "--- T-obs-3: throttle ---"
-printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
+printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" "$PYTHON" "$SRC" > /dev/null 2>&1
 SNAP_COUNT2=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-3: throttle skips duplicate" "$SNAP_COUNT2" "1"
 
 # T-obs-4: meaningful change bypasses throttle
 echo ""
 echo "--- T-obs-4: meaningful change ---"
-OBS_PAYLOAD_CHANGED=$(python3 -c "
+OBS_PAYLOAD_CHANGED=$("$PYTHON" -c "
 import json
 d = {
     'session_id': '$OBS_SESSION_ID',
@@ -1461,14 +1477,14 @@ d = {
 }
 print(json.dumps(d))
 ")
-printf '%s' "$OBS_PAYLOAD_CHANGED" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" python3 "$SRC" > /dev/null 2>&1
+printf '%s' "$OBS_PAYLOAD_CHANGED" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" "$PYTHON" "$SRC" > /dev/null 2>&1
 SNAP_COUNT3=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-4: meaningful change bypasses throttle" "$SNAP_COUNT3" "2"
 
 # T-obs-5: statusline_capture health
 echo ""
 echo "--- T-obs-5: health ---"
-HEALTH_CHECK=$(python3 -c "
+HEALTH_CHECK=$("$PYTHON" -c "
 import json
 with open('$OBS_PKG_ROOT/manifest.json') as f:
     m = json.load(f)
@@ -1482,7 +1498,7 @@ echo ""
 echo "--- T-obs-6: missing session_id ---"
 OBS_TEST_ROOT_6=$(mktemp -d)
 NO_SID_PAYLOAD='{"model": {"id": "test"}, "cost": {"total_cost_usd": 1}}'
-printf '%s' "$NO_SID_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT_6" QLINE_CACHE_PATH="$(mktemp)" python3 "$SRC" > /dev/null 2>&1
+printf '%s' "$NO_SID_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT_6" QLINE_CACHE_PATH="$(mktemp)" "$PYTHON" "$SRC" > /dev/null 2>&1
 NO_SID_SNAP=$(find "$OBS_TEST_ROOT_6" -name "snapshots.jsonl" 2>/dev/null | wc -l | tr -d ' ')
 assert_equals "T-obs-6: no snapshot without session_id" "$NO_SID_SNAP" "0"
 rm -rf "$OBS_TEST_ROOT_6"
@@ -1490,12 +1506,12 @@ rm -rf "$OBS_TEST_ROOT_6"
 # T-obs-7: no package
 echo ""
 echo "--- T-obs-7: no package ---"
-NO_PKG_PAYLOAD=$(python3 -c "
+NO_PKG_PAYLOAD=$("$PYTHON" -c "
 import json
 d = {'session_id': 'nonexistent-session', 'model': {'id': 'test'}}
 print(json.dumps(d))
 ")
-printf '%s' "$NO_PKG_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$(mktemp)" python3 "$SRC" > /dev/null 2>&1
+printf '%s' "$NO_PKG_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$(mktemp)" "$PYTHON" "$SRC" > /dev/null 2>&1
 # Should not crash — test that it exited 0
 assert_equals "T-obs-7: no crash without package" "$?" "0"
 
@@ -1504,27 +1520,27 @@ echo ""
 echo "--- T-obs-8: cache survival ---"
 OBS_TEST_CACHE_8=$(mktemp)
 OBS_SESSION_8="test-obs-cache-$(date +%s)"
-python3 -c "
+"$PYTHON" -c "
 import sys; sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package
 create_package('$OBS_SESSION_8', '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$OBS_TEST_ROOT')
 "
 # Seed the cache with _obs data
-python3 -c "
+"$PYTHON" -c "
 import json
 cache = {'version': 1, 'modules': {'_obs': {'$OBS_SESSION_8': {'last_snapshot_ts': 0, 'last_snapshot_hash': 'seed'}}}}
 with open('$OBS_TEST_CACHE_8', 'w') as f:
     json.dump(cache, f)
 "
 # Run full invocation (real collectors run — no QLINE_NO_COLLECT)
-OBS_PAYLOAD_8=$(python3 -c "
+OBS_PAYLOAD_8=$("$PYTHON" -c "
 import json
 d = {'session_id': '$OBS_SESSION_8', 'model': {'id': 'test', 'display_name': 'Test'}, 'cost': {'total_cost_usd': 1, 'total_duration_ms': 1000}, 'context_window': {'total_input_tokens': 1000, 'total_output_tokens': 500, 'context_window_size': 100000, 'used_percentage': 1, 'remaining_percentage': 99}}
 print(json.dumps(d))
 ")
-printf '%s' "$OBS_PAYLOAD_8" | NO_COLOR=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE_8" python3 "$SRC" > /dev/null 2>&1
+printf '%s' "$OBS_PAYLOAD_8" | NO_COLOR=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE_8" "$PYTHON" "$SRC" > /dev/null 2>&1
 # Verify _obs survived the cache rebuild
-CACHE_SURVIVAL=$(python3 -c "
+CACHE_SURVIVAL=$("$PYTHON" -c "
 import json
 with open('$OBS_TEST_CACHE_8') as f:
     d = json.load(f)
@@ -1539,7 +1555,7 @@ echo ""
 echo "--- T-obs-9: fail-silent ---"
 OBS_READONLY=$(mktemp -d)
 chmod 444 "$OBS_READONLY"
-OUTPUT_9=$(printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_READONLY" QLINE_CACHE_PATH="$(mktemp)" python3 "$SRC" 2>/dev/null)
+OUTPUT_9=$(printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_READONLY" QLINE_CACHE_PATH="$(mktemp)" "$PYTHON" "$SRC" 2>/dev/null)
 chmod 755 "$OBS_READONLY"
 rm -rf "$OBS_READONLY"
 # Statusline should still produce output even when obs fails
@@ -2185,7 +2201,7 @@ assert_equals "forensics report" "$LAST_STDOUT" "OK"
 
 echo "  integration: full pipeline with transcript produces dual-bar"
 INTEGRATION_TRANSCRIPT="/tmp/qline-integration-test-$$.jsonl"
-python3 -c "
+"$PYTHON" -c "
 import json
 with open('$INTEGRATION_TRANSCRIPT', 'w') as f:
     json.dump({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'usage': {
@@ -2222,7 +2238,7 @@ INPUT=$(cat <<ENDJSON
 ENDJSON
 )
 
-LAST_STDOUT=$(printf '%s' "$INPUT" | NO_COLOR=1 QLINE_NO_COLLECT=1 python3 "$SRC" 2>/dev/null)
+LAST_STDOUT=$(printf '%s' "$INPUT" | NO_COLOR=1 QLINE_NO_COLLECT=1 "$PYTHON" "$SRC" 2>/dev/null)
 LAST_EXIT=$?
 assert_exit_zero "integration pipeline" "$LAST_EXIT"
 assert_not_empty "integration output" "$LAST_STDOUT"
@@ -2456,7 +2472,7 @@ echo "=== Section: schema_version ==="
 echo ""
 echo "--- T-sv-1: schema_version present in manifest ---"
 SV_TEST_ROOT=$(mktemp -d)
-SV_RESULT=$(python3 -c "
+SV_RESULT=$("$PYTHON" -c "
 import sys, json, tempfile
 sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package
@@ -2473,7 +2489,7 @@ rm -rf "$SV_TEST_ROOT"
 echo ""
 echo "--- T-sv-2: schema_version value is 1.0.0 ---"
 SV_TEST_ROOT2=$(mktemp -d)
-SV_RESULT2=$(python3 -c "
+SV_RESULT2=$("$PYTHON" -c "
 import sys, json
 sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package
@@ -2500,7 +2516,7 @@ echo "=== Section: anchor_invalidated ==="
 echo ""
 echo "--- T-ai-1: compact.anchor_invalidated event emitted ---"
 AI_TEST_ROOT=$(mktemp -d)
-AI_RESULT=$(python3 -c "
+AI_RESULT=$("$PYTHON" -c "
 import sys, json, os
 sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package
@@ -2535,7 +2551,7 @@ AI_TEST_ROOT2=$(mktemp -d)
 AI_CACHE2=$(mktemp)
 AI_SESSION_2="ai-cache-session-$(date +%s)"
 # Create package and emit anchor_invalidated event
-python3 -c "
+"$PYTHON" -c "
 import sys, json, time
 sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package, append_event
@@ -2544,7 +2560,7 @@ pkg = create_package(session_id, '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$A
 append_event(pkg, 'compact.anchor_invalidated', session_id, {'trigger': 'manual', 'compact_seq': 1}, origin_type='native_snapshot', hook='obs-precompact')
 " 2>/dev/null
 # Seed cache with overhead_ts and turn_1_anchor to simulate warm state
-python3 -c "
+"$PYTHON" -c "
 import json, time
 cache = {
     'version': 1,
@@ -2563,15 +2579,15 @@ with open('$AI_CACHE2', 'w') as f:
     json.dump(cache, f)
 "
 # Run full statusline invocation with env vars set for the subprocess
-AI_PAYLOAD2=$(python3 -c "
+AI_PAYLOAD2=$("$PYTHON" -c "
 import json
 d = {'session_id': '$AI_SESSION_2', 'model': {'id': 'test', 'display_name': 'Test'}, 'cost': {'total_cost_usd': 1, 'total_duration_ms': 1000}, 'context_window': {'total_input_tokens': 1000, 'total_output_tokens': 500, 'context_window_size': 100000, 'used_percentage': 1, 'remaining_percentage': 99}}
 print(json.dumps(d))
 ")
-printf '%s' "$AI_PAYLOAD2" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$AI_TEST_ROOT2" QLINE_CACHE_PATH="$AI_CACHE2" python3 "$SRC" > /dev/null 2>&1
+printf '%s' "$AI_PAYLOAD2" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$AI_TEST_ROOT2" QLINE_CACHE_PATH="$AI_CACHE2" "$PYTHON" "$SRC" > /dev/null 2>&1
 # Check that turn_1_anchor was cleared and invalidation counter incremented.
 # Note: overhead_ts may be re-set by the overhead estimator in the same run.
-AI_RESULT2=$(python3 -c "
+AI_RESULT2=$("$PYTHON" -c "
 import json
 with open('$AI_CACHE2') as f:
     updated = json.load(f)
@@ -2601,7 +2617,7 @@ REPLAY_DIR="$SCRIPT_DIR/replay/transcripts"
 # T-ts-1: _read_transcript_tail returns dict with expected keys on cold-start-simple
 echo ""
 echo "--- T-ts-1: _read_transcript_tail keys on cold-start-simple ---"
-TS_RESULT1=$(python3 -c "
+TS_RESULT1=$("$PYTHON" -c "
 import sys
 sys.path.insert(0, '$(dirname $SRC)')
 from context_overhead import _read_transcript_tail
@@ -2617,7 +2633,7 @@ assert_equals "T-ts-1: _read_transcript_tail has expected keys" "$TS_RESULT1" "O
 # T-ts-2: _read_transcript_tail returns valid types on warm-start-varied
 echo ""
 echo "--- T-ts-2: _read_transcript_tail types on warm-start-varied ---"
-TS_RESULT2=$(python3 -c "
+TS_RESULT2=$("$PYTHON" -c "
 import sys
 sys.path.insert(0, '$(dirname $SRC)')
 from context_overhead import _read_transcript_tail
@@ -2636,7 +2652,7 @@ assert_equals "T-ts-2: _read_transcript_tail valid types" "$TS_RESULT2" "OK"
 # T-ts-3: extract_usage_full returns 4-tuple with correct structure on real entries
 echo ""
 echo "--- T-ts-3: extract_usage_full tuple shape on real transcript ---"
-TS_RESULT3=$(python3 -c "
+TS_RESULT3=$("$PYTHON" -c "
 import sys, json
 sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import extract_usage_full
@@ -2680,7 +2696,7 @@ echo "=== Section: opp18 (OPP-18 hook fault surfacing) ==="
 # T-opp18-1: _count_recent_faults returns 0 on non-existent ledger
 echo ""
 echo "--- T-opp18-1: zero count for missing ledger ---"
-OPP18_RESULT1=$(python3 -c "
+OPP18_RESULT1=$("$PYTHON" -c "
 import sys, os, tempfile
 sys.path.insert(0, '$REPO_DIR/src')
 import statusline
@@ -2694,7 +2710,7 @@ assert_equals "T-opp18-1: zero count for missing ledger" "$OPP18_RESULT1" "OK"
 # T-opp18-2: _count_recent_faults counts recent fault entries
 echo ""
 echo "--- T-opp18-2: counts recent fault entries ---"
-OPP18_RESULT2=$(python3 -c "
+OPP18_RESULT2=$("$PYTHON" -c "
 import sys, os, json, tempfile, time
 from datetime import datetime, timezone
 sys.path.insert(0, '$REPO_DIR/src')
@@ -2725,7 +2741,7 @@ assert_equals "T-opp18-2: counts recent fault entries" "$OPP18_RESULT2" "OK"
 # T-opp18-3: _count_recent_faults is fail-open on corrupt ledger
 echo ""
 echo "--- T-opp18-3: fail-open on corrupt ledger ---"
-OPP18_RESULT3=$(python3 -c "
+OPP18_RESULT3=$("$PYTHON" -c "
 import sys, os, tempfile
 sys.path.insert(0, '$REPO_DIR/src')
 import statusline
@@ -2742,7 +2758,7 @@ assert_equals "T-opp18-3: fail-open on corrupt ledger" "$OPP18_RESULT3" "OK"
 # T-opp18-4: render_obs_hook_faults returns None when no faults
 echo ""
 echo "--- T-opp18-4: render returns None when no faults ---"
-OPP18_RESULT4=$(python3 -c "
+OPP18_RESULT4=$("$PYTHON" -c "
 import sys
 sys.path.insert(0, '$REPO_DIR/src')
 import os; os.environ['NO_COLOR'] = '1'
@@ -2757,7 +2773,7 @@ assert_equals "T-opp18-4: render returns None when no faults" "$OPP18_RESULT4" "
 # T-opp18-5: render_obs_hook_faults renders non-zero fault count
 echo ""
 echo "--- T-opp18-5: render returns pill for fault count ---"
-OPP18_RESULT5=$(python3 -c "
+OPP18_RESULT5=$("$PYTHON" -c "
 import sys
 sys.path.insert(0, '$REPO_DIR/src')
 import os; os.environ['NO_COLOR'] = '1'
@@ -2772,7 +2788,7 @@ assert_equals "T-opp18-5: render returns pill for fault count" "$OPP18_RESULT5" 
 # T-opp18-6: render_obs_hook_faults in MODULE_RENDERERS
 echo ""
 echo "--- T-opp18-6: obs_hook_faults in MODULE_RENDERERS ---"
-OPP18_RESULT6=$(python3 -c "
+OPP18_RESULT6=$("$PYTHON" -c "
 import sys
 sys.path.insert(0, '$REPO_DIR/src')
 import statusline
@@ -2792,7 +2808,7 @@ echo "=== Section: opp12 (OPP-12 hook perf sidecar) ==="
 # T-opp12-1: run_fail_open is backward compatible (no session_id)
 echo ""
 echo "--- T-opp12-1: backward compat (no session_id) ---"
-OPP12_RESULT1=$(python3 -c "
+OPP12_RESULT1=$("$PYTHON" -c "
 import sys
 sys.path.insert(0, '$REPO_DIR/hooks')
 import hook_utils
@@ -2810,7 +2826,7 @@ assert_equals "T-opp12-1: backward compat (no session_id)" "$OPP12_RESULT1" "OK"
 # T-opp12-2: _write_hook_perf is fail-open when obs_utils unavailable
 echo ""
 echo "--- T-opp12-2: _write_hook_perf fail-open ---"
-OPP12_RESULT2=$(python3 -c "
+OPP12_RESULT2=$("$PYTHON" -c "
 import sys
 sys.path.insert(0, '$REPO_DIR/hooks')
 import hook_utils
@@ -2826,7 +2842,7 @@ assert_equals "T-opp12-2: _write_hook_perf fail-open" "$OPP12_RESULT2" "OK"
 # T-opp12-3: run_fail_open with session_id writes timing record
 echo ""
 echo "--- T-opp12-3: perf record written with session_id ---"
-OPP12_RESULT3=$(python3 -c "
+OPP12_RESULT3=$("$PYTHON" -c "
 import sys, os, json, tempfile
 # Insert hooks dir first so obs_utils is the collocated hooks version
 sys.path.insert(0, '$REPO_DIR/hooks')
@@ -2880,7 +2896,7 @@ assert_equals "T-opp12-3: perf record written with session_id" "$OPP12_RESULT3" 
 # T-opp12-4: run_fail_open timing applies even when main_fn raises
 echo ""
 echo "--- T-opp12-4: timing still writes on main_fn exception ---"
-OPP12_RESULT4=$(python3 -c "
+OPP12_RESULT4=$("$PYTHON" -c "
 import sys, os, json, tempfile
 # Insert hooks dir first so obs_utils is the collocated hooks version
 sys.path.insert(0, '$REPO_DIR/hooks')
@@ -2929,7 +2945,7 @@ echo "=== Section: opp14 (OPP-14 parse diagnostic sidecar) ==="
 # T-opp14-1: _write_parse_diag writes a record to diagnostics.jsonl
 echo ""
 echo "--- T-opp14-1: _write_parse_diag writes record ---"
-OPP14_RESULT1=$(python3 -c "
+OPP14_RESULT1=$("$PYTHON" -c "
 import sys, os, json, tempfile
 sys.path.insert(0, '$REPO_DIR/src')
 import context_overhead
@@ -2963,7 +2979,7 @@ assert_equals "T-opp14-1: _write_parse_diag writes record" "$OPP14_RESULT1" "OK"
 # T-opp14-2: cap at _DIAG_MAX_PER_INVOCATION (10)
 echo ""
 echo "--- T-opp14-2: diagnostic write cap at 10 ---"
-OPP14_RESULT2=$(python3 -c "
+OPP14_RESULT2=$("$PYTHON" -c "
 import sys, os, json, tempfile
 sys.path.insert(0, '$REPO_DIR/src')
 import context_overhead
@@ -2985,7 +3001,7 @@ assert_equals "T-opp14-2: diagnostic write cap at 10" "$OPP14_RESULT2" "OK"
 # T-opp14-3: line_preview is capped at 100 chars
 echo ""
 echo "--- T-opp14-3: line_preview capped at 100 chars ---"
-OPP14_RESULT3=$(python3 -c "
+OPP14_RESULT3=$("$PYTHON" -c "
 import sys, os, json, tempfile
 sys.path.insert(0, '$REPO_DIR/src')
 import context_overhead
@@ -3008,7 +3024,7 @@ assert_equals "T-opp14-3: line_preview capped at 100 chars" "$OPP14_RESULT3" "OK
 # T-opp14-4: fail-open when diag_root is invalid path
 echo ""
 echo "--- T-opp14-4: fail-open on invalid diag_root ---"
-OPP14_RESULT4=$(python3 -c "
+OPP14_RESULT4=$("$PYTHON" -c "
 import sys, os
 sys.path.insert(0, '$REPO_DIR/src')
 import context_overhead
@@ -3026,7 +3042,7 @@ assert_equals "T-opp14-4: fail-open on invalid diag_root" "$OPP14_RESULT4" "OK"
 # T-opp14-5: _read_transcript_tail logs parse failures when diag_root given
 echo ""
 echo "--- T-opp14-5: _read_transcript_tail logs parse failures ---"
-OPP14_RESULT5=$(python3 -c "
+OPP14_RESULT5=$("$PYTHON" -c "
 import sys, os, json, tempfile
 sys.path.insert(0, '$REPO_DIR/src')
 import context_overhead
@@ -3058,7 +3074,7 @@ assert_equals "T-opp14-5: _read_transcript_tail logs parse failures" "$OPP14_RES
 # T-opp14-6: _count_parse_errors returns 0 for missing file
 echo ""
 echo "--- T-opp14-6: _count_parse_errors returns 0 for missing file ---"
-OPP14_RESULT6=$(python3 -c "
+OPP14_RESULT6=$("$PYTHON" -c "
 import sys, os, tempfile
 sys.path.insert(0, '$REPO_DIR/src')
 import statusline
@@ -3075,7 +3091,7 @@ assert_equals "T-opp14-6: _count_parse_errors returns 0 for missing file" "$OPP1
 # T-opp14-7: _count_parse_errors counts non-empty lines
 echo ""
 echo "--- T-opp14-7: _count_parse_errors counts entries ---"
-OPP14_RESULT7=$(python3 -c "
+OPP14_RESULT7=$("$PYTHON" -c "
 import sys, os, json, tempfile
 sys.path.insert(0, '$REPO_DIR/src')
 import statusline
@@ -3107,7 +3123,7 @@ echo "=== Section: opp17 (OPP-17 hook coverage report) ==="
 # T-opp17-1: hook_coverage written to session_inventory.json
 echo ""
 echo "--- T-opp17-1: hook_coverage written to inventory ---"
-OPP17_RESULT1=$(python3 -c "
+OPP17_RESULT1=$("$PYTHON" -c "
 import sys, os, json, tempfile
 sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package
@@ -3161,7 +3177,7 @@ assert_equals "T-opp17-1: hook_coverage written to inventory" "$OPP17_RESULT1" "
 # T-opp17-2: missing hooks detected correctly
 echo ""
 echo "--- T-opp17-2: missing hooks detected ---"
-OPP17_RESULT2=$(python3 -c "
+OPP17_RESULT2=$("$PYTHON" -c "
 import sys, os, json, tempfile
 sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package
@@ -3205,7 +3221,7 @@ assert_equals "T-opp17-2: missing hooks detected" "$OPP17_RESULT2" "OK"
 # T-opp17-3: fail-open when settings.json unreadable
 echo ""
 echo "--- T-opp17-3: fail-open when settings unreadable ---"
-OPP17_RESULT3=$(python3 -c "
+OPP17_RESULT3=$("$PYTHON" -c "
 import sys, os, json, tempfile
 sys.path.insert(0, '$REPO_DIR/hooks')
 from obs_utils import create_package

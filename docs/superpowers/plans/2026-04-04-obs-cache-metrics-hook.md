@@ -1,5 +1,7 @@
 # Obs Cache Metrics Hook — Implementation Plan
 
+> **STALE:** This plan uses pre-plugin paths (`~/.claude/hooks/`, `~/.claude/scripts/`). Since the plugin migration, hooks live under `hooks/` in the repo and are registered via `hooks/hooks.json`, not `settings.json`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a Stop hook that captures per-turn cache metrics to the session package, plus a write-once manifest function for anchor persistence.

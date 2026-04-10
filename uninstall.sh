@@ -79,7 +79,7 @@ fi
 
 # --- Remove installed files ---
 
-for f in "$DEST_DIR/statusline.py" "$DEST_DIR/obs_utils.py" "$DEST_DIR/context_overhead.py"; do
+for f in "$DEST_DIR/statusline.py" "$DEST_DIR/obs_utils.py" "$DEST_DIR/context_overhead.py" "$DEST_DIR/hook_utils.py"; do
     if [ -f "$f" ]; then
         rm "$f"
         echo "Removed: $f"
@@ -95,7 +95,8 @@ for hook in "$HOOKS_DIR/obs-"*.py \
             "$HOOKS_DIR/subagent-stop-gate.py" \
             "$HOOKS_DIR/task-completed-gate.py" \
             "$HOOKS_DIR/hook_utils.py" \
-            "$HOOKS_DIR/obs_utils.py"; do
+            "$HOOKS_DIR/obs_utils.py" \
+            "$HOOKS_DIR/run-hook"; do
     [ -f "$hook" ] || continue
     rm -f "$hook"
     HOOKS_REMOVED=$((HOOKS_REMOVED + 1))

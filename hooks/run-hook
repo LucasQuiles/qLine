@@ -1,0 +1,31 @@
+#!/bin/bash
+# Resolve Python 3.10+ using the same priority as install.sh, then exec.
+# Caches the resolved interpreter in $CLAUDE_PLUGIN_ROOT/.python-interp
+# to avoid re-probing on every hook invocation.
+set -euo pipefail
+
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+CACHE="$PLUGIN_ROOT/.python-interp"
+
+# Fast path: cached absolute interpreter path
+if [ -f "$CACHE" ]; then
+    read -r PYTHON < "$CACHE"
+    if [ -x "$PYTHON" ]; then
+        exec "$PYTHON" "$@"
+    fi
+    rm -f "$CACHE"
+fi
+
+# Probe in descending order, same priority as install.sh
+for candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        read major minor <<< $("$candidate" -c 'import sys; print(sys.version_info.major, sys.version_info.minor)' 2>/dev/null || echo "0 0")
+        if [ "$major" -eq 3 ] && [ "$minor" -ge 10 ]; then
+            command -v "$candidate" > "$CACHE" 2>/dev/null || true
+            exec "$candidate" "$@"
+        fi
+    fi
+done
+
+echo "qline: no Python 3.10+ found in PATH" >&2
+exit 1
