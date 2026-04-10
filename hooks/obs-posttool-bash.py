@@ -7,16 +7,13 @@ Privacy: Previews are intentionally unsanitized and bounded. This creates
 acceptable bounded duplication of transcript-level information. No full
 stdout/stderr capture. No secret scrubbing in v1.
 
-Per-call steps:
-  1. Read stdin payload via read_hook_input()
-  2. Exit 0 if: empty stdin, no session_id, tool_name != "Bash"
-  3. Resolve package_root via resolve_package_root(session_id). Exit 0 if None.
-  4. Extract command, stdout, stderr from tool_input/tool_response
-  5. Compute hashes, byte counts, bounded previews
-  6. Emit bash.executed event via append_event()
-  7. Append detail record to custom/bash_commands.jsonl
-  8. Update bash_capture health subsystem
-  9. Exit 0 always
+Per-call steps (preamble handled by run_obs_hook):
+  1. Exit early if tool_name != "Bash"
+  2. Extract command, stdout, stderr from tool_input/tool_response
+  3. Compute hashes, byte counts, bounded previews
+  4. Emit bash.executed event via append_event()
+  5. Append detail record to custom/bash_commands.jsonl
+  6. Update bash_capture health subsystem
 """
 import json
 import os

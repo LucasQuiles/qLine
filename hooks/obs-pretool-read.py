@@ -3,16 +3,13 @@
 
 Scope: Read tool only. Exits 0 immediately for any other tool_name.
 
-Per-call steps:
-  1. Read stdin payload via read_hook_input()
-  2. Exit 0 if: empty stdin, no session_id, tool_name != "Read"
-  3. Resolve package_root via resolve_package_root(session_id). Exit 0 if None.
-  4. Build read record with fields: tool, tool_ref, path, offset, limit
-  5. Compute reread detection using custom/.read_state.json sidecar
-  6. Append to custom/reads.jsonl (O_APPEND — atomic)
-  7. Append file.read event to event ledger via append_event()
-  8. Update read_state with the seq from the event
-  9. Exit 0 always
+Per-call steps (preamble handled by run_obs_hook):
+  1. Exit early if tool_name != "Read"
+  2. Build read record with fields: tool, tool_ref, path, offset, limit
+  3. Compute reread detection using custom/.read_state.json sidecar
+  4. Append to custom/reads.jsonl (O_APPEND — atomic)
+  5. Append file.read event to event ledger via append_event()
+  6. Update read_state with the seq from the event
 """
 import json
 import os

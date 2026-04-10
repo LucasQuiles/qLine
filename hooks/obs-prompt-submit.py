@@ -4,16 +4,13 @@
 Privacy contract: full prompt text is NEVER written to any file.
 Only a truncated hash and length are stored.
 
-Per-call steps:
-  1. Read stdin payload via read_hook_input()
-  2. Exit 0 if: empty stdin, no session_id
-  3. Resolve package_root via resolve_package_root(session_id). Exit 0 if None.
-  4. Extract prompt from input_data.get("prompt", "") (top-level field)
-  5. Hash the prompt: sha256(prompt)[:16] — do NOT store full prompt text
-  6. Compute prompt_length
-  7. Detect plan mode: check if prompt contains "/plan", "enterplanmode", "plan mode"
-  8. Emit prompt.observed event via append_event()
-  9. Exit 0 always. Do NOT write to stdout (no hookSpecificOutput).
+Per-call steps (preamble handled by run_obs_hook):
+  1. Extract prompt from input_data.get("prompt", "") (top-level field)
+  2. Hash the prompt: sha256(prompt)[:16] — do NOT store full prompt text
+  3. Compute prompt_length
+  4. Detect plan mode: check if prompt contains "/plan", "enterplanmode", "plan mode"
+  5. Emit prompt.observed event via append_event()
+  6. Do NOT write to stdout (no hookSpecificOutput).
 """
 import os
 

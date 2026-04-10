@@ -3,19 +3,16 @@
 
 Scope: Write tool only. Exits 0 immediately for any other tool_name.
 
-Per-call steps:
-  1. Read stdin payload via read_hook_input()
-  2. Exit 0 if: empty stdin, no session_id, tool_name != "Write"
-  3. Resolve package_root via resolve_package_root(session_id). Exit 0 if None.
-  4. Extract file_path and content from tool_input
-  5. Compute line count: added = len(content.splitlines()), removed = 0
-  6. Build patch content (unified-diff-like, first 100 lines)
-  7. Emit file.write.diff event via append_event() — returns seq
-  8. Name patch file: custom/write_diffs/<seq>-<tool_use_id[:12]>.patch
-  9. Write patch file to disk
-  10. Register artifact via register_artifact()
-  11. Update custom/.read_state.json with last_write_seq for this file
-  12. Exit 0 always
+Per-call steps (preamble handled by run_obs_hook):
+  1. Exit early if tool_name != "Write"
+  2. Extract file_path and content from tool_input
+  3. Compute line count: added = len(content.splitlines()), removed = 0
+  4. Build patch content (unified-diff-like, first 100 lines)
+  5. Emit file.write.diff event via append_event() — returns seq
+  6. Name patch file: custom/write_diffs/<seq>-<tool_use_id[:12]>.patch
+  7. Write patch file to disk
+  8. Register artifact via register_artifact()
+  9. Update custom/.read_state.json with last_write_seq for this file
 """
 import json
 import os
