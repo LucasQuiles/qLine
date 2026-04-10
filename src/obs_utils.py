@@ -23,6 +23,8 @@ Directory layout produced by create_package():
 
 from __future__ import annotations
 
+__version__ = "2.1.0"
+
 import fcntl
 import json
 import os
@@ -209,6 +211,12 @@ def resolve_package_root(
         return pkg if isinstance(pkg, str) else None
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
+
+
+def resolve_package_root_env(session_id: str) -> str | None:
+    """Convenience wrapper — reads OBS_ROOT from env automatically."""
+    obs_root = os.environ.get("OBS_ROOT", _DEFAULT_OBS_ROOT)
+    return resolve_package_root(session_id, obs_root=obs_root)
 
 
 # ---------------------------------------------------------------------------
