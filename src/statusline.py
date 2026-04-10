@@ -2147,7 +2147,7 @@ def render_tokens_per_turn(state: dict[str, Any], theme: dict[str, Any]) -> str 
         return None
     cfg = theme.get("tokens_per_turn", {})
     avg = out_tok // turns
-    text = f"{_abbreviate_count(avg)}" if state.get("_show_labels") else f"\U000f04cc {_abbreviate_count(avg)}/t"  # nf-md-chip (tokens per turn)
+    text = f"{_abbreviate_count(avg)}" if state.get("_show_labels") else f"\U000f0b75 {_abbreviate_count(avg)}/t"  # nf-md-text_box_outline (tokens per turn)
     return _pill(text, cfg, theme=theme)
 
 
@@ -2209,7 +2209,7 @@ def render_think_pct(state: dict[str, Any], theme: dict[str, Any]) -> str | None
     if pct is None:
         return None
     cfg = theme.get("think_pct", {})
-    text = f"{pct}%" if state.get("_show_labels") else f"\U000f0954 {pct}%"  # nf-md-clock_outline (think/wait time)
+    text = f"{pct}%" if state.get("_show_labels") else f"\U000f051b {pct}%"  # nf-md-pause_circle (think/wait time)
     return _pill(text, cfg, theme=theme)
 
 
