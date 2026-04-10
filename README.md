@@ -3,18 +3,14 @@
 A styled status-line renderer for [Claude Code](https://docs.anthropic.com/en/docs/build-with-claude/computer-use). Reads Claude's status JSON on stdin and emits styled output with ANSI truecolor, Nerd Font glyphs, and TOML-configurable theming.
 
 ```
-↑150k↓50.0k 󰋑 ██▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 20% │ 󰳲 27.4k │ 3.0k
- 󰚩 Op4.6[1M] │ 󰝰 myproject main@a3f │ $1.50 │ 󰥔 2m30s
+󰚩 Opus4.6[1M]│▓▓▓▓░░░░░░ 󰋑41%│ ▲9.0k │ ▼300k │ 󰓅99% │ 󰥔3h10m
+ 󰑖37.1k™ │©408k™|󰍻 +1.0k™│ 󰅺34 │ 󰑇376 │ ®93% │ 󰙏110 │ 󰆍404 │ 󰀩33 │ 󰌘17 │ 󰀦31 │ 󰕥 │ $83.88|26.44/hr
+ 󰝰 qline │ main@bca0083  10s│ 󰓌 ░░░░░ 10%  10s│ 󰍛 ██░░░ 57%  10s│ 󰋊 █░░░░ 25%  10s│...
 ```
 
-**Line 1** — Full-width context health bar with system overhead and cache write tracking:
-- `██` System overhead (darker shade of health color)
-- `▓▓▓` Conversation content (health color)
-- `░░░` Free context (muted gray)
-- `󰳲 27.4k` System overhead anchor (brain glyph)
-- `3.0k` / `8.0k󰒿` Cache writes per turn (with spike detection)
-
-**Line 2** — Model, project, cost, duration
+**Line 1** — Model, context bar, tokens in/out, cache hit rate, cost, duration
+**Line 2** — System overhead, cache read/write, obs counters (prompts, reads, rereads, writes, bash, failures, tasks, subagents, health), cost rate
+**Line 3** — Directory, git branch@sha with freshness, CPU/memory/disk with freshness, analytics
 
 ---
 
@@ -296,50 +292,61 @@ If you see nothing, check `python3 --version` and that `~/.claude/statusline.py`
 
 ## Modules
 
-### Core (enabled by default)
+### Line 1 — Core
 
 | Module | Glyph | Shows | Example |
 |---|---|---|---|
-| `model` | 󰚩 | Model name | `󰚩 Op4.6` |
-| `dir` | 󰝰 | Directory + git branch/SHA | `󰝰 myproject main@a3f*` |
-| `context_bar` | 󰋑 | Dual-color context health bar | `↑50k↓20k 󰋑 ██▓▓▓░░░░░ 35%` |
-| `sys_overhead` | 󰳲 | System token overhead (anchor) | `󰳲 27.4k` |
-| `cache_writes` | — | Per-turn cache write + spike detection | `3.0k` / `8.0k󰒿` |
-| `cost` | `$` | Session cost (USD) | `$1.50` |
-| `duration` | 󰥔 | Session duration | `󰥔 2m30s` |
+| `model` | 󰚩 | Model name | `󰚩 Opus4.6[1M]` |
+| `context_bar` | 󰋑 | Dual-color context health bar | `▓▓▓░░░░ 󰋑 35%` |
+| `token_counts` | ▲ | Input tokens | `▲ 9.0k` |
+| `token_out_counts` | ▼ | Output tokens | `▼ 300k` |
+| `cache_rate` | 󰓅 | Cache hit rate (measured only) | `󰓅 99%` |
+| `cost` | `$` | Session cost + $/hr rate | `$83.88\|26.44/hr` |
+| `duration` | 󰥔 | Session duration | `󰥔 3h10m` |
+| `degraded` | ⚠ | Error diagnostic pill (only on error) | `⚠ 2 err: cpu,obs` |
 
-### System (enabled by default)
+### Line 2 — Overhead + Observability
 
-| Module | Glyph | Shows | Example | Requires |
-|---|---|---|---|---|
-| `cpu` | 󰓌 | CPU usage bar | `󰓌 ██░░░ 42%` | Linux `/proc/stat` |
-| `memory` | 󰍛 | Memory usage bar | `󰍛 ███░░ 63%` | Linux `/proc/meminfo` |
-| `disk` | 󰋊 | Disk usage bar | `󰋊 ████░ 78%` | `os.statvfs` |
-| `git` | 󰊢 | Branch, short SHA, dirty | `main@a3f7b2c*` | `git` in PATH |
+| Module | Glyph | Shows | Threshold colors |
+|---|---|---|---|
+| `sys_overhead_pill` | 󰑖 | System token overhead | — |
+| `cache_read` | © | Cache read tokens this turn | — |
+| `cache_delta` | 󰍻 | Cache write tokens this turn | spike > 5k (red) |
+| `obs_prompts` | 󰅺 | User prompt count | — |
+| `obs_reads` | 󰑇 | File read count | — |
+| `obs_rereads` | ® | Reread percentage | warn 30%, critical 50% |
+| `obs_writes` | 󰙏 | File write/edit count | — |
+| `obs_bash` | 󰆍 | Bash command count | — |
+| `obs_failures` | 󰀩 | Tool failure count | warn 1, critical 5 |
+| `obs_tasks` | 󰌘 | Completed task count | — |
+| `obs_subagents` | 󰀦 | Subagent spawn count | — |
+| `obs_health` | 󰕥 | Session health badge | green/yellow/red |
+| `obs_compactions` | 󰉇 | Context compaction count | — |
+| `turns` | 󰔠 | Turns until autocompact | green > 50, red ≤ 10 |
+
+### Line 3 — System + Analytics
+
+| Module | Glyph | Shows | Notes |
+|---|---|---|---|
+| `dir` | 󰝰 | Working directory | — |
+| `git` | — | Branch@SHA + freshness age | `main@bca0083 10s` |
+| `cpu` | 󰓌 | CPU usage bar + freshness | `󰓌 ░░░░░ 10% 10s` |
+| `memory` | 󰍛 | Memory usage bar + freshness | `󰍛 ██░░░ 57% 10s` |
+| `disk` | 󰋊 | Disk usage bar + freshness | `󰋊 █░░░░ 25% 10s` |
+| `daily_cost` | 󰃭 | Today's cumulative cost | — |
+| `weekly_cost` | 󰃗 | Weekly cost estimate | — |
+| `think_pct` | 󰔛 | Human wait time % | — |
+| `cost_per_ktok` | 󰈣 | Cost per 1k output tokens | — |
+| `io_ratio` | 󰻁 | Output:input token ratio | — |
+| `tokens_per_turn` | 󰭵 | Avg output tokens per turn | — |
+| `free_context` | 󰚎 | Remaining context tokens | — |
 
 ### Utility (disabled by default)
 
 | Module | Glyph | Shows | Enable with |
 |---|---|---|---|
-| `agents` | 󰓌 | Active Claude agent count | `[agents]` `enabled = true` |
+| `agents` | 󰓌 | Active Codex instance count | `[agents]` `enabled = true` |
 | `tmux` | `tmux` | tmux session/pane count | `[tmux]` `enabled = true` |
-
-### Observability (disabled by default, listed in layout)
-
-Session telemetry modules. Each is `enabled = false` by default. They are listed in the default `line3` layout array so that enabling them in TOML is all you need — no layout editing required. They also require the observability hook infrastructure to produce data — see [Observability Setup](#observability-setup).
-
-| Module | Glyph | Shows | Threshold colors |
-|---|---|---|---|
-| `obs_reads` | 󰑇 | File read count | — |
-| `obs_rereads` | 󰓦 | Reread percentage | warn 30%, critical 50% |
-| `obs_writes` | 󰙏 | File write/edit count | — |
-| `obs_bash` | 󰆍 | Bash command count | — |
-| `obs_prompts` | 󰅺 | User prompt count | — |
-| `obs_tasks` | 󰄷 | Completed task count | — |
-| `obs_subagents` | 󰓁 | Subagent spawn count | — |
-| `obs_failures` | 󰀩 | Tool failure count | warn 1, critical 5 |
-| `obs_compactions` | 󱃧 | Context compaction count | — |
-| `obs_health` | 󰕥 | Session health badge | green/yellow/red by state |
 
 ### Context Overhead Monitor
 
@@ -587,26 +594,40 @@ If there are no session directories, the hooks aren't installed or haven't fired
 
 ## Architecture
 
-Three Python modules: `src/statusline.py` (~1740 lines), `src/context_overhead.py` (~387 lines), and `src/obs_utils.py` (~543 lines), plus 12 observability hooks in `hooks/` and shared libraries in `scripts/`. No runtime dependencies beyond Python stdlib.
+Four Python modules: `src/statusline.py` (~3190 lines), `src/context_overhead.py` (~890 lines), `src/obs_utils.py` (~630 lines), and `src/qline-daemon.py` (~170 lines), plus 12 observability hooks in `hooks/` and shared libraries in `scripts/`. No runtime dependencies beyond Python stdlib.
 
 ```
 stdin (JSON from Claude Code)
+  → _init_session_paths()          # scope /tmp files by session_id
   → read_stdin_bounded()           # 200ms deadline, 256KB cap
   → normalize()                    # sparse-safe field extraction
-  → load_config()                  # TOML merge over DEFAULT_THEME
-  → collect_system_data()          # git, /proc, statvfs — 50ms timeouts each
-  → _inject_obs_counters()         # cached event counts, 30s refresh
-  → render()                       # module registry → auto-wrap at max_width
-  → stdout                         # single ANSI-styled line
+  → _check_payload_fingerprint()   # detect CC format changes
+  → collect_system_data()          # git, /proc, statvfs — tiered 60s TTL
+  → _inject_obs_counters()         # cached event counts — tiered 5s TTL
+  → inject_context_overhead()      # transcript analysis — 30s TTL
+  → render()                       # 3-line module registry output
+  → stdout                         # ANSI-styled, up to 3 lines
 ```
 
 ### Key design decisions
 
-- **Single file**: no package install, no virtualenv, no pip. Copy and run.
-- **Exit 0 always**: any failure is caught and swallowed. A broken status line must never block Claude Code.
+- **Session isolation**: all `/tmp` state files scoped by `sha256(session_id)[:12]`. Concurrent CC sessions (multiple tabs, subagents, different projects) cannot corrupt each other.
+- **Tiered cache TTL**: obs counters refresh every 5s (change per turn), overhead every 30s, system metrics every 60s.
+- **Freshness visibility**: stale cached metrics show a dim age suffix (e.g., `10s`) so you can tell at a glance whether data is current.
+- **Diagnostic capture**: key `except` blocks call `_capture_diagnostic()` instead of bare `pass`. The `degraded` pill renders visibly when errors occur — the statusline never goes silently blank.
+- **Schema fingerprint**: hashes the CC payload structure on first invocation, detects format changes across CC updates, surfaces a visible diagnostic.
+- **Exit 0 always**: any failure is caught. A broken status line must never block Claude Code.
 - **50ms subprocess timeouts**: system collectors (git, cpu) can't stall the pipeline.
-- **Cache layer**: `/tmp/qline-cache.json` stores system metrics between invocations. Stale data is dimmed rather than hidden.
 - **NO_COLOR support**: respects https://no-color.org/ — set `NO_COLOR=1` to get plain text.
+
+### Deployment
+
+```
+src/statusline.py  →  install.sh  →  ~/.claude/statusline.py
+     (repo)              (copy)          (production)
+```
+
+The repo is the single source of truth. Run `bash install.sh` after any code change. The installed version imports `obs_utils` and `context_overhead` from `~/.claude/`.
 
 ---
 
