@@ -69,7 +69,7 @@ def main():
     )
     from context_overhead import inject_context_overhead
     if _OBS_AVAILABLE:
-        from obs_utils import resolve_package_root
+        from obs_utils import resolve_package_root_env as resolve_package_root
     else:
         resolve_package_root = None
 
@@ -142,7 +142,7 @@ def main():
                 "save_cache": save_cache,
                 "cache_max_age": CACHE_MAX_AGE_S,
                 "obs_available": _OBS_AVAILABLE,
-                "resolve_package_root": resolve_package_root,
+                "resolve_package_root_env": resolve_package_root,
             }
             inject_context_overhead(state, payload, theme, cache_ctx)
 
