@@ -6,11 +6,9 @@ All I/O is bounded: symlink (not copy), line-count only for event ledger, no hea
 """
 import json
 import os
-import sys
 
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import run_fail_open, run_obs_hook
 from obs_utils import (
-    resolve_package_root_env,
     append_event,
     update_manifest,
     update_health,
@@ -99,22 +97,9 @@ def generate_session_summary(package_root: str, session_id: str, end_reason: str
     }
 
 
-def main() -> None:
-    input_data = read_hook_input(timeout_seconds=2)
-    if not input_data:
-        sys.exit(0)
-
-    session_id = input_data.get("session_id")
-    if not session_id:
-        sys.exit(0)
-
+def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     transcript_path = input_data.get("transcript_path", "")
     end_reason = input_data.get("reason", "unknown")
-
-    # Resolve package — if None, session was never packaged; exit silently
-    package_root = resolve_package_root_env(session_id)
-    if package_root is None:
-        sys.exit(0)
 
     # ------------------------------------------------------------------
     # Step 1: Symlink main transcript (NOT copy — too slow for 1.5s cap)
@@ -210,8 +195,6 @@ def main() -> None:
     except Exception:
         pass  # Non-critical — don't block session finalization
 
-    sys.exit(0)
-
 
 if __name__ == "__main__":
-    run_fail_open(main, "obs-session-end", "SessionEnd")
+    run_fail_open(lambda: run_obs_hook(_handle, "obs-session-end", "SessionEnd"), "obs-session-end", "SessionEnd")

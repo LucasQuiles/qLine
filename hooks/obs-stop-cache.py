@@ -13,12 +13,10 @@ Hardened transcript reading:
 """
 import json
 import os
-import sys
 from typing import Any
 
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import run_fail_open, run_obs_hook
 from obs_utils import (
-    resolve_package_root_env,
     append_event,
     update_manifest_if_absent_batch,
     _atomic_jsonl_append,
@@ -122,26 +120,14 @@ def _read_compaction_count(package_root: str) -> int:
     return len(load_manifest(package_root).get("compactions", []))
 
 
-def main() -> None:
-    input_data = read_hook_input(timeout_seconds=2)
-    if not input_data:
-        sys.exit(0)
-
-    session_id = input_data.get("session_id")
-    if not session_id:
-        sys.exit(0)
-
+def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     # Don't capture during forced continuation
     if input_data.get("stop_hook_active"):
-        sys.exit(0)
+        return
 
     transcript_path = input_data.get("transcript_path")
     if not transcript_path:
-        sys.exit(0)
-
-    package_root = resolve_package_root_env(session_id)
-    if package_root is None:
-        sys.exit(0)
+        return
 
     # Read last sidecar entry for dedup and compaction tracking
     sidecar_path = os.path.join(package_root, "custom", "cache_metrics.jsonl")
@@ -180,7 +166,7 @@ def main() -> None:
             origin_type="hook",
             hook=_HOOK_NAME,
         )
-        sys.exit(0)
+        return
 
     # Check compaction state via manifest
     current_compaction_count = _read_compaction_count(package_root)
@@ -235,4 +221,4 @@ def main() -> None:
         )
 
 
-run_fail_open(main, _HOOK_NAME, _EVENT_NAME)
+run_fail_open(lambda: run_obs_hook(_handle, _HOOK_NAME, _EVENT_NAME), _HOOK_NAME, _EVENT_NAME)

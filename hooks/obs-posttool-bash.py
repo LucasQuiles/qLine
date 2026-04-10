@@ -20,12 +20,10 @@ Per-call steps:
 """
 import json
 import os
-import sys
 from typing import Any
 
-from hook_utils import read_hook_input, run_fail_open, hash16, now_iso
+from hook_utils import run_fail_open, run_obs_hook, hash16, now_iso
 from obs_utils import (
-    resolve_package_root_env,
     append_event,
     update_health,
     record_error,
@@ -39,28 +37,14 @@ _MAX_STDOUT_PREVIEW = 500
 _MAX_STDERR_PREVIEW = 200
 
 
-def main() -> None:
-    input_data = read_hook_input(timeout_seconds=2)
-    if not input_data:
-        sys.exit(0)
-
-    session_id = input_data.get("session_id")
-    if not session_id:
-        sys.exit(0)
-
+def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     tool_name = input_data.get("tool_name", "")
     if tool_name != "Bash":
-        sys.exit(0)
-
-    # Log to action ledger
+        return
 
     tool_response = input_data.get("tool_response")
     if not isinstance(tool_response, dict):
-        sys.exit(0)
-
-    package_root = resolve_package_root_env(session_id)
-    if package_root is None:
-        sys.exit(0)
+        return
 
     # --- Extract fields ---
     tool_input: dict = input_data.get("tool_input", {})
@@ -145,8 +129,6 @@ def main() -> None:
             warning={"code": "BASH_LOG_APPEND_FAILED"},
         )
 
-    sys.exit(0)
-
 
 if __name__ == "__main__":
-    run_fail_open(main, _HOOK_NAME, _EVENT_NAME)
+    run_fail_open(lambda: run_obs_hook(_handle, _HOOK_NAME, _EVENT_NAME), _HOOK_NAME, _EVENT_NAME)

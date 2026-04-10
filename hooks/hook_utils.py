@@ -142,6 +142,40 @@ def _write_hook_perf(
         pass
 
 
+def run_obs_hook(
+    handler: Callable[[dict, str, str], None],
+    hook_name: str,
+    event_name: str,
+) -> None:
+    """Standard obs hook dispatcher: read stdin, validate, resolve package, call handler.
+
+    Encapsulates the 6-line preamble shared by all obs-* hooks:
+      1. read_hook_input() — exit 0 if empty
+      2. get session_id — exit 0 if missing
+      3. resolve_package_root_env(session_id) — exit 0 if None
+      4. call handler(input_data, session_id, package_root)
+      5. exit 0
+    """
+    input_data = read_hook_input(timeout_seconds=2)
+    if not input_data:
+        sys.exit(0)
+
+    session_id = input_data.get("session_id")
+    if not session_id:
+        sys.exit(0)
+
+    try:
+        from obs_utils import resolve_package_root_env
+        package_root = resolve_package_root_env(session_id)
+    except ImportError:
+        sys.exit(0)
+    if package_root is None:
+        sys.exit(0)
+
+    handler(input_data, session_id, package_root)
+    sys.exit(0)
+
+
 def run_fail_open(
     main_fn: Callable,
     hook_name: str,

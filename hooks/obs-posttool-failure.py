@@ -5,29 +5,16 @@ Scope: All tools (matcher: .*). No tool_name filter.
 Only Bash failure shape is proved; other tools handled defensively.
 """
 import os
-import sys
 from typing import Any
 
-from hook_utils import read_hook_input, run_fail_open, hash16
-from obs_utils import resolve_package_root_env, append_event
+from hook_utils import run_fail_open, run_obs_hook, hash16
+from obs_utils import append_event
 
 _HOOK_NAME = "obs-posttool-failure"
 _EVENT_NAME = "PostToolUseFailure"
 
 
-def main() -> None:
-    input_data = read_hook_input(timeout_seconds=2)
-    if not input_data:
-        sys.exit(0)
-
-    session_id = input_data.get("session_id")
-    if not session_id:
-        sys.exit(0)
-
-    package_root = resolve_package_root_env(session_id)
-    if package_root is None:
-        sys.exit(0)
-
+def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     tool_name = input_data.get("tool_name", "unknown")
     tool_ref = input_data.get("tool_use_id", "")
     error = input_data.get("error", "")
@@ -56,8 +43,6 @@ def main() -> None:
         hook=_HOOK_NAME,
     )
 
-    sys.exit(0)
-
 
 if __name__ == "__main__":
-    run_fail_open(main, _HOOK_NAME, _EVENT_NAME)
+    run_fail_open(lambda: run_obs_hook(_handle, _HOOK_NAME, _EVENT_NAME), _HOOK_NAME, _EVENT_NAME)

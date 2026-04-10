@@ -16,12 +16,10 @@ Per-call steps:
 """
 import json
 import os
-import sys
 from typing import Any
 
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import run_fail_open, run_obs_hook
 from obs_utils import (
-    resolve_package_root_env,
     append_event,
     record_error,
     _atomic_jsonl_append,
@@ -34,25 +32,10 @@ _HOOK_NAME = "obs-pretool-read"
 _EVENT_NAME = "PreToolUse"
 
 
-def main() -> None:
-    input_data = read_hook_input(timeout_seconds=2)
-    if not input_data:
-        sys.exit(0)
-
-    session_id = input_data.get("session_id")
-    if not session_id:
-        sys.exit(0)
-
+def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     tool_name = input_data.get("tool_name", "")
     if tool_name != "Read":
-        sys.exit(0)
-
-    # Log to action ledger
-
-    # Resolve package — if None, session was never packaged; exit silently
-    package_root = resolve_package_root_env(session_id)
-    if package_root is None:
-        sys.exit(0)
+        return
 
     # ------------------------------------------------------------------
     # Step 1: Extract tool_input fields
@@ -140,8 +123,6 @@ def main() -> None:
     }
     _save_read_state(state_path, state)
 
-    sys.exit(0)
-
 
 if __name__ == "__main__":
-    run_fail_open(main, _HOOK_NAME, _EVENT_NAME)
+    run_fail_open(lambda: run_obs_hook(_handle, _HOOK_NAME, _EVENT_NAME), _HOOK_NAME, _EVENT_NAME)

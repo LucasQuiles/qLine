@@ -19,12 +19,10 @@ Per-call steps:
 """
 import json
 import os
-import sys
 from typing import Any
 
-from hook_utils import read_hook_input, run_fail_open, hash16
+from hook_utils import run_fail_open, run_obs_hook, hash16
 from obs_utils import (
-    resolve_package_root_env,
     append_event,
     register_artifact,
     record_error,
@@ -66,31 +64,16 @@ def _build_patch(file_path: str, content: str) -> str:
     return "\n".join(patch_lines) + "\n"
 
 
-def main() -> None:
-    input_data = read_hook_input(timeout_seconds=2)
-    if not input_data:
-        sys.exit(0)
-
-    session_id = input_data.get("session_id")
-    if not session_id:
-        sys.exit(0)
-
+def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     tool_name = input_data.get("tool_name", "")
     if tool_name != "Write":
-        sys.exit(0)
-
-    # Log to action ledger for decision tree tracing (no Brick call)
+        return
 
     # Guard: tool_response must be a dict to confirm successful write.
     # Missing or non-dict tool_response = malformed or failed payload — skip.
     tool_response = input_data.get("tool_response")
     if not isinstance(tool_response, dict):
-        sys.exit(0)
-
-    # Resolve package — if None, session was never packaged; exit silently
-    package_root = resolve_package_root_env(session_id)
-    if package_root is None:
-        sys.exit(0)
+        return
 
     # ------------------------------------------------------------------
     # Step 1: Extract tool_input fields
@@ -186,8 +169,6 @@ def main() -> None:
     state[file_path] = existing
     _save_read_state(state_path, state)
 
-    sys.exit(0)
-
 
 if __name__ == "__main__":
-    run_fail_open(main, _HOOK_NAME, _EVENT_NAME)
+    run_fail_open(lambda: run_obs_hook(_handle, _HOOK_NAME, _EVENT_NAME), _HOOK_NAME, _EVENT_NAME)

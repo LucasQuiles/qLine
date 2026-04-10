@@ -2,11 +2,9 @@
 """SubagentStop observability hook: archives subagent transcript and emits subagent.stopped event."""
 import os
 import shutil
-import sys
 
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import run_fail_open, run_obs_hook
 from obs_utils import (
-    resolve_package_root_env,
     append_event,
     register_artifact,
     update_manifest_array,
@@ -15,25 +13,12 @@ from obs_utils import (
 )
 
 
-def main() -> None:
-    input_data = read_hook_input(timeout_seconds=2)
-    if not input_data:
-        sys.exit(0)
-
-    session_id = input_data.get("session_id")
-    if not session_id:
-        sys.exit(0)
-
+def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     agent_id = input_data.get("agent_id", "")
     agent_type = input_data.get("agent_type", "")
     agent_transcript_path = input_data.get("agent_transcript_path", "")
     last_assistant_message = input_data.get("last_assistant_message", "")
     message_length = len(last_assistant_message)
-
-    # Resolve package — if None, session was never packaged; exit silently
-    package_root = resolve_package_root_env(session_id)
-    if package_root is None:
-        sys.exit(0)
 
     # ------------------------------------------------------------------
     # Step 1: Copy subagent transcript if it exists
@@ -99,8 +84,6 @@ def main() -> None:
         },
     )
 
-    sys.exit(0)
-
 
 if __name__ == "__main__":
-    run_fail_open(main, "obs-subagent-stop", "SubagentStop")
+    run_fail_open(lambda: run_obs_hook(_handle, "obs-subagent-stop", "SubagentStop"), "obs-subagent-stop", "SubagentStop")

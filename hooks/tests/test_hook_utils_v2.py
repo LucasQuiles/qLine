@@ -237,3 +237,100 @@ class TestSchemaConstants:
     def test_session_end(self):
         from hook_utils import SCHEMA_SESSION_END
         assert SCHEMA_SESSION_END == {"session_id"}
+
+
+class TestRunObsHook:
+    """Tests for the run_obs_hook obs-hook dispatcher."""
+
+    def test_handler_called_with_valid_input(self, monkeypatch, tmp_path):
+        """Handler receives (input_data, session_id, package_root) when stdin is valid."""
+        import hook_utils as hu
+
+        captured = {}
+
+        def fake_handler(input_data, session_id, package_root):
+            captured["input_data"] = input_data
+            captured["session_id"] = session_id
+            captured["package_root"] = package_root
+
+        payload = {"session_id": "test-session-123"}
+        monkeypatch.setattr(hu, "read_hook_input", lambda timeout_seconds=2: payload)
+
+        fake_root = str(tmp_path / "pkg")
+        # Patch obs_utils.resolve_package_root_env via the import inside run_obs_hook
+        import obs_utils
+        monkeypatch.setattr(obs_utils, "resolve_package_root_env", lambda sid: fake_root)
+
+        with pytest.raises(SystemExit) as exc_info:
+            hu.run_obs_hook(fake_handler, "test-hook", "TestEvent")
+        assert exc_info.value.code == 0
+        assert captured["input_data"] == payload
+        assert captured["session_id"] == "test-session-123"
+        assert captured["package_root"] == fake_root
+
+    def test_handler_not_called_when_no_session_id(self, monkeypatch):
+        """Handler is NOT called when session_id is missing from input."""
+        import hook_utils as hu
+
+        called = []
+
+        def fake_handler(input_data, session_id, package_root):
+            called.append(True)
+
+        payload = {"tool_name": "Bash"}  # no session_id
+        monkeypatch.setattr(hu, "read_hook_input", lambda timeout_seconds=2: payload)
+
+        with pytest.raises(SystemExit) as exc_info:
+            hu.run_obs_hook(fake_handler, "test-hook", "TestEvent")
+        assert exc_info.value.code == 0
+        assert len(called) == 0
+
+    def test_handler_not_called_when_stdin_empty(self, monkeypatch):
+        """Handler is NOT called when stdin is empty/invalid."""
+        import hook_utils as hu
+
+        called = []
+
+        def fake_handler(input_data, session_id, package_root):
+            called.append(True)
+
+        monkeypatch.setattr(hu, "read_hook_input", lambda timeout_seconds=2: None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            hu.run_obs_hook(fake_handler, "test-hook", "TestEvent")
+        assert exc_info.value.code == 0
+        assert len(called) == 0
+
+    def test_handler_not_called_when_package_root_none(self, monkeypatch):
+        """Handler is NOT called when resolve_package_root_env returns None."""
+        import hook_utils as hu
+
+        called = []
+
+        def fake_handler(input_data, session_id, package_root):
+            called.append(True)
+
+        payload = {"session_id": "test-session-456"}
+        monkeypatch.setattr(hu, "read_hook_input", lambda timeout_seconds=2: payload)
+
+        import obs_utils
+        monkeypatch.setattr(obs_utils, "resolve_package_root_env", lambda sid: None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            hu.run_obs_hook(fake_handler, "test-hook", "TestEvent")
+        assert exc_info.value.code == 0
+        assert len(called) == 0
+
+    def test_exits_zero_after_handler(self, monkeypatch, tmp_path):
+        """run_obs_hook always exits 0 after handler completes."""
+        import hook_utils as hu
+
+        payload = {"session_id": "s1"}
+        monkeypatch.setattr(hu, "read_hook_input", lambda timeout_seconds=2: payload)
+
+        import obs_utils
+        monkeypatch.setattr(obs_utils, "resolve_package_root_env", lambda sid: str(tmp_path))
+
+        with pytest.raises(SystemExit) as exc_info:
+            hu.run_obs_hook(lambda d, s, p: None, "h", "E")
+        assert exc_info.value.code == 0
