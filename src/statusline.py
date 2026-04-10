@@ -1128,7 +1128,6 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
         cw_color = "#ebcb8b"  # nord13 yellow
 
     # Store shared state for line 2 renderers
-    state["_sev"] = sev
     state["_sev_color"] = color
     state["_sev_bold"] = bold
     state["_cw_color"] = cw_color
@@ -1327,10 +1326,6 @@ def render_token_out(state: dict[str, Any], theme: dict[str, Any]) -> str | None
     """Legacy alias for render_token_out_counts (layout compat)."""
     return render_token_out_counts(state, theme)
 
-
-def render_cache_pill(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Legacy stub — cache now rendered by cache_read + cache_delta."""
-    return None
 
 
 def render_cache_read(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -2269,7 +2264,6 @@ MODULE_RENDERERS: dict[str, Any] = {
     "token_out_counts": render_token_out_counts,
     "token_in": render_token_in,
     "token_out": render_token_out,
-    "cache_pill": render_cache_pill,
     "cache_read": render_cache_read,
     "cache_delta": render_cache_delta,
     "cache_rate": render_cache_rate,
