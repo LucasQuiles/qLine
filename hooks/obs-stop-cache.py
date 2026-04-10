@@ -24,6 +24,7 @@ from obs_utils import (
     _atomic_jsonl_append,
     now_iso,
     extract_usage_full,
+    load_manifest,
 )
 
 _HOOK_NAME = "obs-stop-cache"
@@ -118,13 +119,7 @@ def _read_last_sidecar_entry(sidecar_path: str) -> dict:
 
 def _read_compaction_count(package_root: str) -> int:
     """Read current compaction count from manifest compactions array."""
-    manifest_path = os.path.join(package_root, "manifest.json")
-    try:
-        with open(manifest_path) as f:
-            m = json.load(f)
-        return len(m.get("compactions", []))
-    except Exception:
-        return 0
+    return len(load_manifest(package_root).get("compactions", []))
 
 
 def main() -> None:

@@ -51,7 +51,7 @@ try:
     for _obs_path in [_plugin_hooks, _script_dir, os.path.join(_claude_dir, "scripts")]:
         if os.path.isdir(_obs_path) and _obs_path not in sys.path:
             sys.path.insert(0, _obs_path)
-    from obs_utils import resolve_package_root_env, update_health, _atomic_jsonl_append
+    from obs_utils import resolve_package_root_env, update_health, _atomic_jsonl_append, load_manifest
     # Detect stale copies: obs_utils.__version__ was added in 2.1.0.
     # If it's missing, the import resolved to a pre-2.1.0 copy.
     import obs_utils as _obs_mod
@@ -2537,13 +2537,7 @@ def _count_rereads(package_root: str) -> tuple[int, int]:
 
 def _read_obs_health(package_root: str) -> str:
     """Read overall health from manifest."""
-    manifest = os.path.join(package_root, "manifest.json")
-    try:
-        with open(manifest) as f:
-            m = json.load(f)
-        return m.get("health", {}).get("overall", "unknown")
-    except Exception:
-        return "unknown"
+    return load_manifest(package_root).get("health", {}).get("overall", "unknown")
 
 
 def _count_recent_faults(max_age_s: float = 3600) -> int:
