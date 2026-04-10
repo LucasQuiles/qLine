@@ -4,7 +4,6 @@
 Scope: All tools (matcher: .*). No tool_name filter.
 Only Bash failure shape is proved; other tools handled defensively.
 """
-import os
 from typing import Any
 
 from hook_utils import run_fail_open, run_obs_hook, hash16

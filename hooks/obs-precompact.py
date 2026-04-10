@@ -4,33 +4,20 @@
 PURELY OBSERVATIONAL. Does not output systemMessage or hookSpecificOutput.
 The existing precompact-preserve.py handles context injection.
 
-Steps:
-  1. Read stdin; exit 0 if empty or no session_id.
-  2. Resolve package_root via runtime map; exit 0 if unknown session.
-  3. Compute compact_seq = len(manifest.compactions) + 1.
-  4. Emit compact.started event with {trigger, compact_seq}.
-  5. Update manifest compactions array with {seq, trigger, timestamp}.
-  6. Exit 0 always (fail-open).
+Per-call steps (preamble handled by run_obs_hook):
+  1. Compute compact_seq = len(manifest.compactions) + 1.
+  2. Emit compact.started event with {trigger, compact_seq}.
+  3. Update manifest compactions array with {seq, trigger, timestamp}.
+  4. Emit compact.anchor_invalidated event.
 """
-import json
-import os
 from hook_utils import run_fail_open, run_obs_hook
-from obs_utils import append_event, update_manifest_array, now_iso
+from obs_utils import append_event, update_manifest_array, now_iso, load_manifest
 
 
 def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     trigger = str(input_data.get("trigger") or "unknown")
 
-    # ------------------------------------------------------------------
-    # Compute compact_seq from existing compactions in the manifest
-    # ------------------------------------------------------------------
-    manifest_path = os.path.join(package_root, "manifest.json")
-    try:
-        with open(manifest_path) as f:
-            manifest = json.load(f)
-        compact_seq = len(manifest.get("compactions", [])) + 1
-    except Exception:
-        compact_seq = 1
+    compact_seq = len(load_manifest(package_root).get("compactions", [])) + 1
 
     # ------------------------------------------------------------------
     # Emit compact.started event to hook_events.jsonl

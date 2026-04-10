@@ -12,8 +12,6 @@ Per-call steps (preamble handled by run_obs_hook):
   5. Emit prompt.observed event via append_event()
   6. Do NOT write to stdout (no hookSpecificOutput).
 """
-import os
-
 from hook_utils import run_fail_open, run_obs_hook, hash16
 from obs_utils import append_event
 
