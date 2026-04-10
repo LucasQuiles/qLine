@@ -158,6 +158,65 @@ class TestCircuitBreaker:
         assert hu.circuit_is_open("good") is False
 
 
+class TestDeny:
+    def test_deny_outputs_block_json(self, capsys):
+        import hook_utils as hu
+        with pytest.raises(SystemExit) as exc_info:
+            hu.deny("bad tool call")
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        data = json.loads(out.strip())
+        assert data == {"decision": "block", "reason": "bad tool call"}
+
+    def test_deny_empty_reason(self, capsys):
+        import hook_utils as hu
+        with pytest.raises(SystemExit) as exc_info:
+            hu.deny("")
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        data = json.loads(out.strip())
+        assert data["decision"] == "block"
+        assert data["reason"] == ""
+
+
+class TestGetToolInfo:
+    def test_get_tool_info_extracts_fields(self):
+        from hook_utils import get_tool_info
+        data = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
+        name, inp = get_tool_info(data)
+        assert name == "Bash"
+        assert inp == {"command": "ls"}
+
+    def test_get_tool_info_missing_fields(self):
+        from hook_utils import get_tool_info
+        name, inp = get_tool_info({})
+        assert name == ""
+        assert inp == {}
+
+    def test_get_tool_info_partial_fields(self):
+        from hook_utils import get_tool_info
+        name, inp = get_tool_info({"tool_name": "Read"})
+        assert name == "Read"
+        assert inp == {}
+
+
+class TestAllowWithContext:
+    def test_outputs_additional_context_json(self, capsys):
+        import hook_utils as hu
+        with pytest.raises(SystemExit) as exc_info:
+            hu.allow_with_context("some context here")
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        data = json.loads(out.strip())
+        assert data == {"additionalContext": "some context here"}
+
+    def test_event_param_kept_for_compat(self, capsys):
+        import hook_utils as hu
+        # event param should not cause errors (backward compat)
+        with pytest.raises(SystemExit):
+            hu.allow_with_context("ctx", event="PreToolUse")
+
+
 class TestSchemaConstants:
     def test_session_start(self):
         from hook_utils import SCHEMA_SESSION_START

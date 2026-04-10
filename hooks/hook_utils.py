@@ -279,15 +279,23 @@ def block_stop(reason: str, event: str = "SubagentStop") -> None:
     sys.exit(0)
 
 
-def allow_with_context(message: str, event: str = "PreToolUse") -> None:
-    """Print an allow decision with context message. Used by non-qLine hooks."""
+def deny(reason: str) -> None:
+    """Print a deny/block decision and exit 0. Used by PreToolUse hooks."""
+    print(json.dumps({"decision": "block", "reason": reason}))
+    sys.exit(0)
+
+
+def get_tool_info(data: dict) -> tuple[str, dict]:
+    """Extract (tool_name, tool_input) from hook input data."""
+    return data.get("tool_name", ""), data.get("tool_input", {})
+
+
+def allow_with_context(context: str, event: str = "PreToolUse") -> None:
+    """Print an allow decision with additional context injected into the conversation."""
     print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": event,
-            "decision": "allow",
-            "message": message,
-        }
+        "additionalContext": context,
     }))
+    sys.exit(0)
 
 
 # ---------------------------------------------------------------------------

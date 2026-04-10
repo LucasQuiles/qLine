@@ -85,8 +85,7 @@ echo "Installed: $DEST_DIR/context_overhead.py"
 # (canonical, repo-managed). Copy to ~/.claude/ as fallback for non-plugin installs.
 if [ -L "$DEST_DIR/plugins/qline" ] || [ -d "$DEST_DIR/plugins/qline" ]; then
     # Plugin active — clean up stale copies that would shadow the plugin version
-    for stale in "$DEST_DIR/obs_utils.py" "$DEST_DIR/hook_utils.py" \
-                 "$DEST_DIR/scripts/obs_utils.py" "$DEST_DIR/scripts/hook_utils.py"; do
+    for stale in "$DEST_DIR/obs_utils.py" "$DEST_DIR/hook_utils.py"; do
         if [ -f "$stale" ] && [ ! -L "$stale" ]; then
             rm -f "$stale"
             echo "Removed stale: $stale"
