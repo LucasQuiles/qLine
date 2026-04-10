@@ -378,7 +378,7 @@ DEFAULT_THEME: dict[str, Any] = {
     "obs_compactions": {
         "label": "compact",
         "enabled": True,
-        "glyph": "\U000f0520 ",  # nf-md-timer (compactions)
+        "glyph": "\U000f0247 ",  # nf-md-delete_sweep (compactions)
         "color": "#a8a29e",
         "bg": "#2e3440",
     },
@@ -1999,7 +1999,7 @@ def render_obs_tasks(state: dict[str, Any], theme: dict[str, Any]) -> str | None
 
 
 def render_obs_compactions(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    return _render_obs_counter(state, theme, "obs_compactions", "obs_compactions", default_glyph="\U000f0520", prefix="x")
+    return _render_obs_counter(state, theme, "obs_compactions", "obs_compactions", default_glyph="\U000f0247", prefix="x")
 
 
 def render_obs_prompts(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
