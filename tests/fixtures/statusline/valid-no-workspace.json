@@ -4,9 +4,10 @@
     "id": "claude-opus-4-6",
     "display_name": "Opus"
   },
-  "cwd": "/home/q/Projects/myapp",
+  "cwd": "/workspace/myapp",
   "cost": {
-    "total_cost_usd": 0.10,
+    "total_cost_usd": 0.1,
     "total_duration_ms": 5000
-  }
+  },
+  "session_id": "test-session-fixture-001"
 }

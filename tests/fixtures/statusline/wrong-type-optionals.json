@@ -5,9 +5,10 @@
     "display_name": "Opus"
   },
   "workspace": {
-    "current_dir": "/home/q/LAB/qLine"
+    "current_dir": "/workspace/qline"
   },
   "cost": "not-a-dict",
   "context_window": "also-not-a-dict",
-  "added_dirs": "should-be-list"
+  "added_dirs": "should-be-list",
+  "session_id": "test-session-fixture-001"
 }

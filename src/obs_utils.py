@@ -23,6 +23,8 @@ Directory layout produced by create_package():
 
 from __future__ import annotations
 
+__version__ = "2.1.0"
+
 import fcntl
 import json
 import os
@@ -209,6 +211,12 @@ def resolve_package_root(
         return pkg if isinstance(pkg, str) else None
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
+
+
+def resolve_package_root_env(session_id: str) -> str | None:
+    """Convenience wrapper — reads OBS_ROOT from env automatically."""
+    obs_root = os.environ.get("OBS_ROOT", _DEFAULT_OBS_ROOT)
+    return resolve_package_root(session_id, obs_root=obs_root)
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +422,13 @@ def generate_overhead_report(
     except OSError:
         return None
 
-    turns: list[dict] = []
+    # Phase 1: Extract usage entries, deduplicating PRELIM entries by requestId.
+    # Extended thinking generates 2-5 PRELIM entries with identical cache values;
+    # without dedup, turn count and token totals inflate by up to 2.87x.
+    seen_req_ids: dict[str, int] = {}
+    raw_turns: list[dict] = []
+    raw_count = 0
+
     for line in lines:
         line = line.strip()
         if not line:
@@ -424,17 +438,32 @@ def generate_overhead_report(
         except (json.JSONDecodeError, ValueError):
             continue
 
+        usage = None
+        req_id = None
         msg = entry.get("message")
         if isinstance(msg, dict) and msg.get("stop_reason") is not None:
             usage = msg.get("usage")
             if isinstance(usage, dict):
-                turns.append(usage)
-                continue
-        tur = entry.get("toolUseResult")
-        if isinstance(tur, dict):
-            usage = tur.get("usage")
-            if isinstance(usage, dict):
-                turns.append(usage)
+                req_id = msg.get("requestId") or entry.get("requestId")
+        if usage is None:
+            tur = entry.get("toolUseResult")
+            if isinstance(tur, dict):
+                usage = tur.get("usage")
+                if isinstance(usage, dict):
+                    req_id = tur.get("requestId") or entry.get("requestId")
+
+        if usage is None:
+            continue
+        raw_count += 1
+
+        if req_id and req_id in seen_req_ids:
+            raw_turns[seen_req_ids[req_id]] = usage
+        else:
+            if req_id:
+                seen_req_ids[req_id] = len(raw_turns)
+            raw_turns.append(usage)
+
+    turns = [t for t in raw_turns if t is not None]
 
     if not turns:
         return None
@@ -454,12 +483,34 @@ def generate_overhead_report(
         and i > 0
     ]
 
+    # TTL expiry detection: full rebuilds after healthy turns
+    ttl_expiry_turns = []
+    for i in range(1, len(turns)):
+        cc = turns[i].get("cache_creation_input_tokens", 0)
+        cr = turns[i].get("cache_read_input_tokens", 0)
+        if anchor > 0 and cc >= anchor * 0.8 and (cr < cc * 0.2):
+            # Check if previous turn was healthy
+            prev_cr = turns[i - 1].get("cache_read_input_tokens", 0)
+            prev_cc = turns[i - 1].get("cache_creation_input_tokens", 0)
+            if prev_cr > prev_cc:
+                ttl_expiry_turns.append(i)
+
+    # MicroCompact detection: large drops in cache_create between turns
+    microcompact_turns = []
+    for i in range(1, len(turns)):
+        prev_cc = turns[i - 1].get("cache_creation_input_tokens", 0)
+        curr_cc = turns[i].get("cache_creation_input_tokens", 0)
+        if prev_cc > 0 and curr_cc / prev_cc < 0.5:
+            microcompact_turns.append(i)
+
     theoretical_input = anchor + total_fresh
     actual_input = total_cache_read + total_cache_create + total_fresh
     cost_mult = actual_input / theoretical_input if theoretical_input > 0 else 1.0
 
     report = {
         "total_turns": len(turns),
+        "raw_entries_before_dedup": raw_count,
+        "prelim_entries_removed": raw_count - len(turns),
         "system_overhead_tokens": anchor,
         "system_overhead_source": "first_turn_anchor",
         "system_overhead_pct_of_window": round(anchor * 100 / context_window_size, 1)
@@ -467,6 +518,10 @@ def generate_overhead_report(
         "cache_hit_rate_overall": round(hit_rate, 4),
         "cache_busting_events": len(busting_turns),
         "cache_busting_turns": busting_turns,
+        "ttl_expiry_events": len(ttl_expiry_turns),
+        "ttl_expiry_turns": ttl_expiry_turns,
+        "microcompact_events": len(microcompact_turns),
+        "microcompact_turns": microcompact_turns,
         "total_cache_read_tokens": total_cache_read,
         "total_cache_create_tokens": total_cache_create,
         "total_fresh_input_tokens": total_fresh,

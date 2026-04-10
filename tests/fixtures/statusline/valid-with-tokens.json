@@ -5,7 +5,7 @@
     "display_name": "Opus"
   },
   "workspace": {
-    "current_dir": "/home/q/LAB/qLine"
+    "current_dir": "/workspace/qline"
   },
   "cost": {
     "total_cost_usd": 0.75,
@@ -16,5 +16,6 @@
     "total": 100000,
     "total_input_tokens": 12345,
     "total_output_tokens": 4100
-  }
+  },
+  "session_id": "test-session-fixture-001"
 }
