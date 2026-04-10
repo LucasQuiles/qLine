@@ -1397,54 +1397,26 @@ print('OK')
 ")
 assert_equals "TIERED-02: system TTL respected" "$OUT" "OK"
 
-echo "  FRESH-01: freshness suffix shows age for stale data"
+echo "  FRESH-01: freshness suffix disabled (returns empty)"
 OUT=$(run_py "
-import os
-os.environ['NO_COLOR'] = '1'
-import time
 from statusline import _freshness_suffix
-
-# Fresh data: no suffix
-state_fresh = {'cpu_stale': False}
-assert _freshness_suffix(state_fresh, 'cpu') == '', 'fresh should have no suffix'
-
-# Stale data with timestamp: shows age
-state_stale = {
-    'cpu_stale': True,
-    '_cache_timestamps': {'cpu': time.time() - 42},
-}
-suffix = _freshness_suffix(state_stale, 'cpu')
-assert '42s' in suffix or '43s' in suffix, f'should show ~42s age: {repr(suffix)}'
-
-# Very fresh stale data (< 5s): no suffix
-state_barely = {
-    'cpu_stale': True,
-    '_cache_timestamps': {'cpu': time.time() - 2},
-}
-assert _freshness_suffix(state_barely, 'cpu') == '', 'barely stale should have no suffix'
-
-# No timestamp: no suffix
-state_no_ts = {'cpu_stale': True}
-assert _freshness_suffix(state_no_ts, 'cpu') == '', 'no timestamp should have no suffix'
+# Freshness suffix is disabled — always returns empty string
+state = {'cpu_stale': True, '_cache_timestamps': {'cpu': 0}}
+assert _freshness_suffix(state, 'cpu') == '', f'should be empty: {repr(_freshness_suffix(state, \"cpu\"))}'
 print('OK')
 ")
 assert_equals "FRESH-01: freshness suffix" "$OUT" "OK"
 
-echo "  FRESH-02: stale system metric includes age in output"
+echo "  FRESH-02: stale metric renders without age suffix"
 OUT=$(run_py "
-import os, time
+import os
 os.environ['NO_COLOR'] = '1'
 from statusline import render_cpu, DEFAULT_THEME
-
-state = {
-    'cpu_percent': 45,
-    'cpu_stale': True,
-    '_cache_timestamps': {'cpu': time.time() - 25},
-}
+state = {'cpu_percent': 45, 'cpu_stale': True}
 result = render_cpu(state, DEFAULT_THEME)
 assert result is not None, 'should render'
 assert '45%' in result, f'should show percentage: {result}'
-assert '25s' in result or '26s' in result, f'should show age: {result}'
+assert 's' not in result.split('%')[-1], f'should not have age suffix: {result}'
 print('OK')
 ")
 assert_equals "FRESH-02: metric with age" "$OUT" "OK"
