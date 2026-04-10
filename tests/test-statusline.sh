@@ -498,7 +498,7 @@ assert_contains "R-02b: dir with glyph" "$OUT" $'\U000f0770 qLine'
 assert_contains "R-02c: bar present" "$OUT" "50%"
 assert_contains "R-02d: tokens present" "$OUT" "12.3k"
 assert_contains "R-02e: cost with glyph" "$OUT" '$1.23'
-assert_contains "R-02f: duration with glyph" "$OUT" $'\U000f0954'" 0h 00m"
+assert_contains "R-02f: duration with glyph" "$OUT" $'\U000f0954'"45s"
 assert_contains "R-02g: separator" "$OUT" "│"
 
 # R-03: Missing modules omitted
@@ -527,7 +527,7 @@ OUT=$(run_py "
 from statusline import render_bar, DEFAULT_THEME
 print(render_bar(45, DEFAULT_THEME))
 ")
-assert_contains "R-05: warn suffix at 45%" "$OUT" "45%~"
+assert_contains "R-05: normal suffix at 45%" "$OUT" "45%"
 
 # R-06: Context bar critical at new threshold (>=70%)
 OUT=$(run_py "
@@ -597,8 +597,8 @@ OUT=$(run_py "
 from statusline import format_tokens, DEFAULT_THEME
 print(format_tokens(12345, 4100, DEFAULT_THEME))
 ")
-assert_contains "R-12a: input arrow" "$OUT" "▲ 12.3k"
-assert_contains "R-12b: output arrow" "$OUT" "▼ 4.1k"
+assert_contains "R-12a: input arrow" "$OUT" "▲12.3k"
+assert_contains "R-12b: output arrow" "$OUT" "▼4.1k"
 
 # R-13: Newline sanitization
 OUT=$(run_py "
@@ -730,7 +730,7 @@ assert_not_empty "C-01c: non-empty output" "$LAST_STDOUT"
 assert_contains "C-01d: model" "$LAST_STDOUT" "Op"
 assert_contains "C-01e: dir" "$LAST_STDOUT" "qLine"
 assert_contains "C-01f: cost" "$LAST_STDOUT" '1.23'
-assert_contains "C-01g: duration" "$LAST_STDOUT" "0h 00m"
+assert_contains "C-01g: duration" "$LAST_STDOUT" "45s"
 
 # C-02: Minimal fixture
 run_statusline "$(cat "$FIXTURES/valid-minimal.json")"
@@ -771,8 +771,8 @@ assert_empty "C-08b: no stdout" "$LAST_STDOUT"
 # C-09: Tokens fixture
 run_statusline "$(cat "$FIXTURES/valid-with-tokens.json")"
 assert_exit_zero "C-09a: exit 0" "$LAST_EXIT"
-assert_contains "C-09b: input tokens" "$LAST_STDOUT" "▲ 12.3k"
-assert_contains "C-09c: output tokens" "$LAST_STDOUT" "▼ 4.1k"
+assert_contains "C-09b: input tokens" "$LAST_STDOUT" "▲12.3k"
+assert_contains "C-09c: output tokens" "$LAST_STDOUT" "▼4.1k"
 assert_contains "C-09d: bar present" "$LAST_STDOUT" "50%"
 
 # C-10: Real payload format (used_percentage + context_window_size)
@@ -780,8 +780,8 @@ run_statusline "$(cat "$FIXTURES/valid-real-payload.json")"
 assert_exit_zero "C-10a: exit 0" "$LAST_EXIT"
 # used_percentage (15%) — output tokens are NOT added (they're re-ingested as cache_read)
 assert_contains "C-10b: bar present" "$LAST_STDOUT" "15%"
-assert_contains "C-10c: input tokens" "$LAST_STDOUT" "▲ 281k"
-assert_contains "C-10d: output tokens" "$LAST_STDOUT" "▼ 141k"
+assert_contains "C-10c: input tokens" "$LAST_STDOUT" "▲281k"
+assert_contains "C-10d: output tokens" "$LAST_STDOUT" "▼141k"
 assert_contains "C-10e: cost critical" "$LAST_STDOUT" '27.29'
 
 # C-11: Optional fields don't crash
@@ -2040,25 +2040,25 @@ print('OK')
 ")
 assert_equals "sys critical conv zero" "$OUT" "OK"
 
-echo "  cache writes: render_cache_pill shows writes"
+echo "  cache writes: render_cache_delta shows writes"
 LAST_STDOUT=$(run_py "
-from statusline import render_cache_pill, DEFAULT_THEME
-# render_cache_pill shows writes
+from statusline import render_cache_delta, DEFAULT_THEME
+# render_cache_delta shows cache creation counts
 state = {'last_cache_create': 500}
-pill = render_cache_pill(state, DEFAULT_THEME)
+pill = render_cache_delta(state, DEFAULT_THEME)
 assert pill is not None and '500' in pill, f'should show 500: {repr(pill)}'
 print('OK')
 ")
 assert_equals "spike below notable" "$LAST_STDOUT" "OK"
 
-echo "  cache writes: notable and spike thresholds in cache_pill"
+echo "  cache writes: notable and spike thresholds in cache_delta"
 LAST_STDOUT=$(run_py "
-from statusline import render_cache_pill, DEFAULT_THEME
+from statusline import render_cache_delta, DEFAULT_THEME
 state_notable = {'last_cache_create': 1001}
-pill = render_cache_pill(state_notable, DEFAULT_THEME)
+pill = render_cache_delta(state_notable, DEFAULT_THEME)
 assert pill is not None and '1.0k' in pill, f'should show 1.0k: {repr(pill)}'
 state_spike = {'last_cache_create': 5001}
-pill2 = render_cache_pill(state_spike, DEFAULT_THEME)
+pill2 = render_cache_delta(state_spike, DEFAULT_THEME)
 assert pill2 is not None and '5.0k' in pill2, f'should show 5.0k: {repr(pill2)}'
 print('OK')
 ")
@@ -2578,10 +2578,9 @@ state = {
 result = render_context_bar(state, DEFAULT_THEME)
 # With NO_COLOR, no ANSI escapes
 assert '\033[' not in result, f'unexpected ANSI in NO_COLOR mode: {repr(result)}'
-# Bar blocks + pct in bracket-delimited segments
+# Bar blocks + pct present (no bracket delimiters in NO_COLOR mode)
 assert '\u2588' in result, f'sys blocks missing: {repr(result)}'
 assert '\u2593' in result, f'conv blocks missing: {repr(result)}'
-assert '[' in result, f'segments should be bracket-delimited: {repr(result)}'
 assert '40%' in result, f'pct should show in bar: {repr(result)}'
 print('OK')
 ")
