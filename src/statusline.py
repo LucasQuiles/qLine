@@ -1802,17 +1802,8 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
 
 
 def _freshness_suffix(state: dict, cache_key: str) -> str:
-    """Return dim age suffix like ' 42s' for stale cached data, or '' if fresh."""
-    if not state.get(f"{cache_key}_stale"):
-        return ""
-    ts_map = state.get("_cache_timestamps", {})
-    ts = ts_map.get(cache_key)
-    if ts is None:
-        return ""
-    age = int(time.time() - ts)
-    if age < 5:
-        return ""  # Fresh enough — no suffix
-    return style_dim(f" {age}s") if not NO_COLOR else f" {age}s"
+    """Freshness suffix — currently disabled (too noisy on the status line)."""
+    return ""
 
 
 def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
