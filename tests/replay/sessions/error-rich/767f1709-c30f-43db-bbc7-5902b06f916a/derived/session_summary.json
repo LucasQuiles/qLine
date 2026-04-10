@@ -1,0 +1,12 @@
+{
+  "session_id": "767f1709-c30f-43db-bbc7-5902b06f916a",
+  "started_at": "2026-04-04T10:46:36.168652+00:00",
+  "ended_at": "2026-04-05T02:25:18.869501+00:00",
+  "end_reason": "prompt_input_exit",
+  "cwd": "/Users/q",
+  "event_count": 88,
+  "task_count": 0,
+  "subagent_count": 0,
+  "compaction_count": 0,
+  "patch_count": 0
+}

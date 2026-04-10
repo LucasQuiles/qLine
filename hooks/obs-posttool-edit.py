@@ -4,16 +4,14 @@
 Scope: Edit tool only. Exits 0 for any other tool_name including MultiEdit
 (gated until MultiEdit fixture is captured).
 """
-import hashlib
 import json
 import os
 import sys
 from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import read_hook_input, run_fail_open, hash16
 from obs_utils import (
-    resolve_package_root,
+    resolve_package_root_env,
     append_event,
     register_artifact,
     record_error,
@@ -85,16 +83,13 @@ def main() -> None:
     if tool_name != "Edit":
         sys.exit(0)
 
+    # Log to action ledger
+
     tool_response = input_data.get("tool_response")
     if not isinstance(tool_response, dict):
         sys.exit(0)
 
-    obs_root_override = os.environ.get("OBS_ROOT")
-    kwargs: dict = {}
-    if obs_root_override:
-        kwargs["obs_root"] = obs_root_override
-
-    package_root = resolve_package_root(session_id, **kwargs)
+    package_root = resolve_package_root_env(session_id)
     if package_root is None:
         sys.exit(0)
 
@@ -118,7 +113,7 @@ def main() -> None:
             message=f"structuredPatch empty for {file_path}; fell back to old_string/new_string",
         )
 
-    patch_hash = hashlib.sha256(patch_content.encode()).hexdigest()[:16]
+    patch_hash = hash16(patch_content)
 
     event_data: dict[str, Any] = {
         "tool": "Edit",

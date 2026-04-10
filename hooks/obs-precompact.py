@@ -15,9 +15,8 @@ Steps:
 import json
 import os
 import sys
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
 from hook_utils import read_hook_input, run_fail_open
-from obs_utils import resolve_package_root, append_event, update_manifest_array, _now_iso
+from obs_utils import resolve_package_root_env, append_event, update_manifest_array, now_iso
 
 
 def main() -> None:
@@ -31,14 +30,8 @@ def main() -> None:
 
     trigger = str(input_data.get("trigger") or "unknown")
 
-    # Allow tests to override the observability root via env var
-    obs_root_override = os.environ.get("OBS_ROOT")
-    kwargs: dict = {}
-    if obs_root_override:
-        kwargs["obs_root"] = obs_root_override
-
     # Resolve package — if None, session was never packaged; exit silently
-    package_root = resolve_package_root(session_id, **kwargs)
+    package_root = resolve_package_root_env(session_id)
     if package_root is None:
         sys.exit(0)
 
@@ -77,8 +70,23 @@ def main() -> None:
         {
             "seq": compact_seq,
             "trigger": trigger,
-            "timestamp": _now_iso(),
+            "timestamp": now_iso(),
         },
+    )
+
+    # ------------------------------------------------------------------
+    # Emit anchor invalidation event (compaction breaks the turn-1 anchor)
+    # ------------------------------------------------------------------
+    append_event(
+        package_root,
+        "compact.anchor_invalidated",
+        session_id,
+        {
+            "trigger": trigger,
+            "compact_seq": compact_seq,
+        },
+        origin_type="native_snapshot",
+        hook="obs-precompact",
     )
 
     sys.exit(0)

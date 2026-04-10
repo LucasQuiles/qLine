@@ -1,0 +1,55 @@
+{
+  "_scenario": "cache-busting-rapid",
+  "_description": "Cache health transitions: healthy -> degraded -> busting within 5 turns",
+  "hook_event_name": "Status",
+  "session_id": "synth-cache-busting-rapid",
+  "transcript_path": "/tmp/qline-test-transcript.jsonl",
+  "model": {
+    "id": "claude-opus-4-6",
+    "display_name": "Opus 4.6 (1M context)"
+  },
+  "workspace": {
+    "current_dir": "/tmp/test-project"
+  },
+  "cost": {
+    "total_cost_usd": 2.5,
+    "total_duration_ms": 120000
+  },
+  "context_window": {
+    "total_input_tokens": 100000,
+    "total_output_tokens": 5000,
+    "context_window_size": 200000,
+    "used_percentage": 52
+  },
+  "_synthetic_cache_state": {
+    "turns": [
+      {
+        "cache_read": 35000,
+        "cache_create": 500,
+        "input": 3
+      },
+      {
+        "cache_read": 36000,
+        "cache_create": 600,
+        "input": 3
+      },
+      {
+        "cache_read": 5000,
+        "cache_create": 32000,
+        "input": 3
+      },
+      {
+        "cache_read": 2000,
+        "cache_create": 35000,
+        "input": 3
+      },
+      {
+        "cache_read": 500,
+        "cache_create": 37000,
+        "input": 3
+      }
+    ],
+    "expected_hit_rate_below": 0.3,
+    "expected_busting": true
+  }
+}

@@ -15,13 +15,11 @@ Per-call steps:
   8. Emit prompt.observed event via append_event()
   9. Exit 0 always. Do NOT write to stdout (no hookSpecificOutput).
 """
-import hashlib
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
-from hook_utils import read_hook_input, run_fail_open
-from obs_utils import resolve_package_root, append_event
+from hook_utils import read_hook_input, run_fail_open, hash16
+from obs_utils import resolve_package_root_env, append_event
 
 _HOOK_NAME = "obs-prompt-submit"
 _EVENT_NAME = "UserPromptSubmit"
@@ -45,14 +43,8 @@ def main() -> None:
     if not session_id:
         sys.exit(0)
 
-    # Allow tests to override the observability root via env var
-    obs_root_override = os.environ.get("OBS_ROOT")
-    kwargs: dict = {}
-    if obs_root_override:
-        kwargs["obs_root"] = obs_root_override
-
     # Resolve package — if None, session was never packaged; exit silently
-    package_root = resolve_package_root(session_id, **kwargs)
+    package_root = resolve_package_root_env(session_id)
     if package_root is None:
         sys.exit(0)
 
@@ -64,7 +56,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Hash + length — NEVER store the full prompt text
     # ------------------------------------------------------------------
-    prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
+    prompt_hash = hash16(prompt)
     prompt_length = len(prompt)
 
     # ------------------------------------------------------------------

@@ -1,0 +1,53 @@
+{
+  "_scenario": "compaction-mid-session",
+  "_description": "Overhead anchor invalidation after compaction event",
+  "hook_event_name": "Status",
+  "session_id": "synth-compaction-mid",
+  "transcript_path": "/tmp/qline-test-transcript.jsonl",
+  "model": {
+    "id": "claude-opus-4-6",
+    "display_name": "Opus 4.6 (1M context)"
+  },
+  "workspace": {
+    "current_dir": "/tmp/test-project"
+  },
+  "cost": {
+    "total_cost_usd": 5.0,
+    "total_duration_ms": 300000
+  },
+  "context_window": {
+    "total_input_tokens": 50000,
+    "total_output_tokens": 3000,
+    "context_window_size": 200000,
+    "used_percentage": 26
+  },
+  "_synthetic_cache_state": {
+    "pre_compaction_turns": [
+      {
+        "cache_read": 120000,
+        "cache_create": 2000,
+        "input": 3
+      },
+      {
+        "cache_read": 125000,
+        "cache_create": 1500,
+        "input": 3
+      }
+    ],
+    "compaction_event": true,
+    "post_compaction_turns": [
+      {
+        "cache_read": 0,
+        "cache_create": 45000,
+        "input": 3
+      },
+      {
+        "cache_read": 46000,
+        "cache_create": 500,
+        "input": 3
+      }
+    ],
+    "expected_anchor_reset": true,
+    "obs_compactions": 1
+  }
+}

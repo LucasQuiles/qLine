@@ -18,17 +18,14 @@ Per-call steps:
   8. Update bash_capture health subsystem
   9. Exit 0 always
 """
-import hashlib
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import read_hook_input, run_fail_open, hash16, now_iso
 from obs_utils import (
-    resolve_package_root,
+    resolve_package_root_env,
     append_event,
     update_health,
     record_error,
@@ -40,11 +37,6 @@ _EVENT_NAME = "PostToolUse"
 _MAX_CMD_PREVIEW = 500
 _MAX_STDOUT_PREVIEW = 500
 _MAX_STDERR_PREVIEW = 200
-
-
-def _hash16(s: str) -> str:
-    """SHA-256 truncated to 16 hex chars."""
-    return hashlib.sha256(s.encode()).hexdigest()[:16]
 
 
 def main() -> None:
@@ -60,16 +52,13 @@ def main() -> None:
     if tool_name != "Bash":
         sys.exit(0)
 
+    # Log to action ledger
+
     tool_response = input_data.get("tool_response")
     if not isinstance(tool_response, dict):
         sys.exit(0)
 
-    obs_root_override = os.environ.get("OBS_ROOT")
-    kwargs: dict = {}
-    if obs_root_override:
-        kwargs["obs_root"] = obs_root_override
-
-    package_root = resolve_package_root(session_id, **kwargs)
+    package_root = resolve_package_root_env(session_id)
     if package_root is None:
         sys.exit(0)
 
@@ -84,11 +73,11 @@ def main() -> None:
     no_output_expected: bool = tool_response.get("noOutputExpected", False)
 
     # --- Compute bounded fields ---
-    command_hash = _hash16(command)
-    stdout_hash = _hash16(stdout)
-    stderr_hash = _hash16(stderr)
-    stdout_bytes = len(stdout.encode()) if stdout else 0
-    stderr_bytes = len(stderr.encode()) if stderr else 0
+    command_hash = hash16(command)
+    stdout_hash = hash16(stdout)
+    stderr_hash = hash16(stderr)
+    stdout_bytes = len(stdout) if stdout else 0
+    stderr_bytes = len(stderr) if stderr else 0
     command_preview = command[:_MAX_CMD_PREVIEW]
     stdout_preview = stdout[:_MAX_STDOUT_PREVIEW]
     stderr_preview = stderr[:_MAX_STDERR_PREVIEW]
@@ -119,7 +108,7 @@ def main() -> None:
 
     # --- Append detail record to side log ---
     detail_record: dict[str, Any] = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now_iso(),
         "session_id": session_id,
         "tool_ref": tool_ref,
         "command_hash": command_hash,

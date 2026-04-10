@@ -4,14 +4,12 @@
 Scope: All tools (matcher: .*). No tool_name filter.
 Only Bash failure shape is proved; other tools handled defensively.
 """
-import hashlib
 import os
 import sys
 from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
-from hook_utils import read_hook_input, run_fail_open
-from obs_utils import resolve_package_root, append_event
+from hook_utils import read_hook_input, run_fail_open, hash16
+from obs_utils import resolve_package_root_env, append_event
 
 _HOOK_NAME = "obs-posttool-failure"
 _EVENT_NAME = "PostToolUseFailure"
@@ -26,12 +24,7 @@ def main() -> None:
     if not session_id:
         sys.exit(0)
 
-    obs_root_override = os.environ.get("OBS_ROOT")
-    kwargs: dict = {}
-    if obs_root_override:
-        kwargs["obs_root"] = obs_root_override
-
-    package_root = resolve_package_root(session_id, **kwargs)
+    package_root = resolve_package_root_env(session_id)
     if package_root is None:
         sys.exit(0)
 
@@ -52,7 +45,7 @@ def main() -> None:
         command = tool_input.get("command", "")
         if command:
             event_data["command_preview"] = command[:500]
-            event_data["command_hash"] = hashlib.sha256(command.encode()).hexdigest()[:16]
+            event_data["command_hash"] = hash16(command)
 
     append_event(
         package_root,

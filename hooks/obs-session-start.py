@@ -5,9 +5,8 @@ import os
 import sys
 from datetime import datetime, timezone
 
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
-from hook_utils import read_hook_input, run_fail_open
-from obs_utils import create_package, append_event, resolve_package_root, update_health, record_error
+from hook_utils import read_hook_input, run_fail_open, now_iso
+from obs_utils import create_package, append_event, resolve_package_root_env, update_health, record_error
 
 
 def _file_stats(path: str) -> dict | None:
@@ -83,9 +82,58 @@ def _scan_inventory(package_root: str, cwd: str) -> None:
             by_event[event] = count
     total_hooks = sum(by_event.values())
 
+    # --- Hook coverage (OPP-17) ---
+    hook_coverage: dict = {}
+    try:
+        hooks_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # Build expected set: all obs-*.py files in the hooks directory
+        expected_set: set[str] = set()
+        try:
+            for name in os.listdir(hooks_dir):
+                if name.startswith("obs-") and name.endswith(".py"):
+                    expected_set.add(os.path.join(hooks_dir, name))
+        except OSError:
+            pass
+
+        # Build registered set: hook script paths from settings that point into hooks_dir
+        registered_set: set[str] = set()
+        for event, entries in hooks_cfg.items():
+            if not isinstance(entries, list):
+                continue
+            for matcher_block in entries:
+                if not isinstance(matcher_block, dict):
+                    continue
+                for hook_entry in matcher_block.get("hooks", []):
+                    if not isinstance(hook_entry, dict):
+                        continue
+                    cmd = hook_entry.get("command", "")
+                    if not isinstance(cmd, str):
+                        continue
+                    # Extract the script path — command may be "python3 /path/to/script.py"
+                    # or just "/path/to/script.py". Find the first .py path in the command.
+                    for token in cmd.split():
+                        if token.endswith(".py"):
+                            abs_token = os.path.abspath(token)
+                            if abs_token.startswith(hooks_dir):
+                                registered_set.add(abs_token)
+                            break
+
+        # Normalize to basenames for readability, but keep full paths in lists
+        missing = sorted(expected_set - registered_set)
+        extra = sorted(registered_set - expected_set)
+        hook_coverage = {
+            "registered": sorted(registered_set),
+            "expected": sorted(expected_set),
+            "missing": missing,
+            "extra": extra,
+        }
+    except Exception:
+        pass  # Fail-open: skip coverage if anything goes wrong
+
     # --- Assemble and write ---
     inventory = {
-        "captured_at": datetime.now(tz=timezone.utc).isoformat(),
+        "captured_at": now_iso(),
         "claude_md": claude_md,
         "agents_md": agents_md,
         "plugins": {
@@ -99,6 +147,8 @@ def _scan_inventory(package_root: str, cwd: str) -> None:
         },
         "settings_json": settings_info,
     }
+    if hook_coverage:
+        inventory["hook_coverage"] = hook_coverage
 
     inventory_path = os.path.join(package_root, "metadata", "session_inventory.json")
     with open(inventory_path, "w") as f:
@@ -118,14 +168,8 @@ def main() -> None:
     cwd = input_data.get("cwd", "")
     source = input_data.get("source", "unknown")
 
-    # Allow tests to override the observability root via env var
-    obs_root_override = os.environ.get("OBS_ROOT")
-    kwargs: dict = {}
-    if obs_root_override:
-        kwargs["obs_root"] = obs_root_override
-
     # Handle re-entry: package already exists (any source, including repeated startup)
-    existing = resolve_package_root(session_id, **kwargs)
+    existing = resolve_package_root_env(session_id)
     if existing:
         append_event(
             existing,
@@ -139,7 +183,9 @@ def main() -> None:
 
     # Create new package (Tier 0 — raises OSError on failure)
     try:
-        package_root = create_package(session_id, cwd, transcript_path, source, **kwargs)
+        obs_root_override = os.environ.get("OBS_ROOT")
+        cp_kwargs: dict = {"obs_root": obs_root_override} if obs_root_override else {}
+        package_root = create_package(session_id, cwd, transcript_path, source, **cp_kwargs)
     except Exception as exc:
         print(f"[obs-session-start] Tier 0 failure: {exc}", file=sys.stderr)
         sys.exit(0)  # fail open for Claude

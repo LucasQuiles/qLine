@@ -1,0 +1,53 @@
+{
+  "_scenario": "stale-resume",
+  "_description": "Session resumed after >1 hour gap; transcript has new session_id entries",
+  "hook_event_name": "Status",
+  "session_id": "synth-stale-resume",
+  "transcript_path": "/tmp/qline-test-transcript.jsonl",
+  "model": {
+    "id": "claude-opus-4-6",
+    "display_name": "Opus 4.6 (1M context)"
+  },
+  "workspace": {
+    "current_dir": "/tmp/test-project"
+  },
+  "cost": {
+    "total_cost_usd": 8.0,
+    "total_duration_ms": 600000
+  },
+  "context_window": {
+    "total_input_tokens": 80000,
+    "total_output_tokens": 10000,
+    "context_window_size": 200000,
+    "used_percentage": 45
+  },
+  "_synthetic_cache_state": {
+    "pre_gap_turns": [
+      {
+        "cache_read": 50000,
+        "cache_create": 1000,
+        "input": 3
+      },
+      {
+        "cache_read": 55000,
+        "cache_create": 800,
+        "input": 3
+      }
+    ],
+    "gap_duration_s": 4200,
+    "post_gap_turns": [
+      {
+        "cache_read": 0,
+        "cache_create": 40000,
+        "input": 3
+      },
+      {
+        "cache_read": 41000,
+        "cache_create": 500,
+        "input": 3
+      }
+    ],
+    "expected_cache_expired": true,
+    "expected_busting": false
+  }
+}

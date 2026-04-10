@@ -1,0 +1,6 @@
+{
+  "name": "qline",
+  "version": "1.0.0",
+  "description": "Claude Code status line and session observability — styled terminal bar, tool recording, session tracking.",
+  "author": { "name": "q" }
+}

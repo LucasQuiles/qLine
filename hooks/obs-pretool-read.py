@@ -19,14 +19,13 @@ import os
 import sys
 from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
 from hook_utils import read_hook_input, run_fail_open
 from obs_utils import (
-    resolve_package_root,
+    resolve_package_root_env,
     append_event,
     record_error,
     _atomic_jsonl_append,
-    _now_iso,
+    now_iso,
     _load_read_state,
     _save_read_state,
 )
@@ -48,14 +47,10 @@ def main() -> None:
     if tool_name != "Read":
         sys.exit(0)
 
-    # Allow tests to override the observability root via env var
-    obs_root_override = os.environ.get("OBS_ROOT")
-    kwargs: dict = {}
-    if obs_root_override:
-        kwargs["obs_root"] = obs_root_override
+    # Log to action ledger
 
     # Resolve package — if None, session was never packaged; exit silently
-    package_root = resolve_package_root(session_id, **kwargs)
+    package_root = resolve_package_root_env(session_id)
     if package_root is None:
         sys.exit(0)
 
@@ -86,7 +81,7 @@ def main() -> None:
     # Step 3: Build read record for custom/reads.jsonl
     # ------------------------------------------------------------------
     read_record: dict[str, Any] = {
-        "ts": _now_iso(),
+        "ts": now_iso(),
         "session_id": session_id,
         "tool": tool_name,
         "tool_ref": tool_ref,

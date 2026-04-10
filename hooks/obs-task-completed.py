@@ -11,16 +11,15 @@ Steps:
 """
 import os
 import sys
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "scripts"))
 from hook_utils import read_hook_input, run_fail_open
 from obs_utils import (
     _atomic_jsonl_append,
-    resolve_package_root,
+    resolve_package_root_env,
     append_event,
     update_manifest_array,
     record_error,
     update_health,
-    _now_iso,
+    now_iso,
 )
 
 
@@ -38,14 +37,8 @@ def main() -> None:
     task_description = str(input_data.get("task_description") or "")
     cwd = str(input_data.get("cwd") or "")
 
-    # Allow tests to override the observability root via env var
-    obs_root_override = os.environ.get("OBS_ROOT")
-    kwargs: dict = {}
-    if obs_root_override:
-        kwargs["obs_root"] = obs_root_override
-
     # Resolve package — if None, session was never packaged; exit silently
-    package_root = resolve_package_root(session_id, **kwargs)
+    package_root = resolve_package_root_env(session_id)
     if package_root is None:
         sys.exit(0)
 
@@ -60,7 +53,7 @@ def main() -> None:
         "task_subject": task_subject,
         "task_description": task_description,
         "cwd": cwd,
-        "recorded_at": _now_iso(),
+        "recorded_at": now_iso(),
     }
     task_log_ok = _atomic_jsonl_append(task_log_path, raw_record)
     if not task_log_ok:
@@ -96,7 +89,7 @@ def main() -> None:
         {
             "task_id": task_id,
             "task_subject": task_subject,
-            "completed_at": _now_iso(),
+            "completed_at": now_iso(),
         },
     )
 

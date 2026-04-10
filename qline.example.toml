@@ -4,13 +4,26 @@
 
 # ─── Layout ─────────────────────────────────────────────────────────
 [layout]
-# force_single_line = true          # merge all lines into one (default: true)
-# max_width = 200                   # wrap threshold in chars (default: 200)
-# line1 = ["model", "dir", "context_bar", "cost", "duration"]
-# line2 = ["cpu", "memory", "disk"]
-# line3 = ["obs_reads", "obs_rereads", "obs_writes", "obs_bash",
-#           "obs_prompts", "obs_tasks", "obs_subagents",
-#           "obs_failures", "obs_compactions", "obs_health"]
+# force_single_line = false          # merge all lines into one (default: false)
+# max_width = 120                    # wrap threshold in chars (default: 120)
+# max_lines = 3                      # CC status bar line limit (default: 3)
+# show_labels = false                # prepend text labels to modules (default: false)
+
+# Default layout (uncomment to customize):
+# line1 = ["model", "token_counts", "token_out_counts", "context_bar",
+#           "cache_rate", "duration"]
+# line2 = ["sys_overhead_pill", "cache_read", "cache_delta",
+#           "turns", "obs_reads", "obs_rereads", "obs_writes",
+#           "obs_bash", "obs_failures", "obs_tasks",
+#           "obs_subagents", "obs_health", "obs_compactions",
+#           "obs_hook_faults", "lines_changed",
+#           "session_count", "daily_cost", "weekly_cost",
+#           "api_efficiency", "cost_per_ktok",
+#           "io_ratio", "tokens_per_turn",
+#           "free_context", "growth_rate",
+#           "unique_files", "fail_rate", "think_pct",
+#           "cost_per_turn", "burn_trend", "cost"]
+# line3 = ["dir", "git", "cpu", "memory", "disk"]
 
 # ─── Core Modules ───────────────────────────────────────────────────
 # [model]
@@ -25,19 +38,14 @@
 
 # [context_bar]
 # enabled = true
-# width = 0                         # 0 = auto (fill terminal width); or set fixed number
-# warn_threshold = 40.0             # % context used → yellow
-# critical_threshold = 70.0         # % context used → red
-# Bar segment colors derive from health severity (dark→light within color family).
-# No separate sys_color/conv_color — segments automatically track health state.
-# System overhead thresholds (% of total context window)
-# sys_warn_threshold = 30.0
-# sys_critical_threshold = 50.0
-# Cache health thresholds (prompt cache hit rate)
-# cache_warn_rate = 0.8
-# cache_critical_rate = 0.3
-# Data source: "auto" | "measured" | "estimated" | "off"
-# overhead_source = "auto"
+# width = 0                         # 0 = auto (fill to max_width - 55); or fixed number
+# warn_threshold = 75.0             # % context used → yellow (default 75)
+# critical_threshold = 90.0         # % context used → red (default 90)
+# sys_warn_threshold = 30.0         # system overhead % → yellow
+# sys_critical_threshold = 50.0     # system overhead % → red
+# cache_warn_rate = 0.8             # cache hit rate below this → degraded
+# cache_critical_rate = 0.3         # cache hit rate below this → busting
+# overhead_source = "auto"          # auto | measured | estimated | off
 
 # [cost]
 # enabled = true
@@ -46,7 +54,6 @@
 
 # [duration]
 # enabled = true
-# format = "auto"                   # auto | hm | m | hms
 
 # ─── System Modules ────────────────────────────────────────────────
 # [cpu]
@@ -76,20 +83,20 @@
 # dirty_marker = "*"
 
 # [agents]
-# enabled = false                   # off by default
+# enabled = false                   # off by default; shows Codex instance count
 
 # [tmux]
-# enabled = false                   # off by default
+# enabled = false                   # off by default; shows tmux session/pane count
 
 # ─── Observability Modules ──────────────────────────────────────────
-# These require the observability infrastructure (obs_utils.py + hooks).
-# All disabled by default. Enable the ones you want:
+# Most obs modules are ENABLED by default. Only obs_failures is disabled.
+# The observability infrastructure (obs_utils.py + hooks) must be installed.
 
 # [obs_reads]
 # enabled = true                    # 󰑇 file read count
 
 # [obs_rereads]
-# enabled = true                    # 󰓦 reread % (warn at 30%, critical at 50%)
+# enabled = true                    # ® reread % (warn at 30%, critical at 50%)
 # warn_threshold = 30
 # critical_threshold = 50
 
@@ -103,21 +110,62 @@
 # enabled = true                    # 󰅺 prompt count
 
 # [obs_tasks]
-# enabled = true                    # 󰄷 completed task count
+# enabled = true                    # 󰌘 completed task count
 
 # [obs_subagents]
-# enabled = true                    # 󰓁 subagent count
+# enabled = true                    # 󰀦 subagent count
 
 # [obs_failures]
-# enabled = true                    # 󰀩 tool failure count (warn at 1, critical at 5)
+# enabled = true                    # 󰀩 tool failure count (DISABLED by default)
 # warn_threshold = 1
 # critical_threshold = 5
 
 # [obs_compactions]
-# enabled = true                    # 󱃧 context compaction count
+# enabled = true                    # 󰔠 context compaction count
 
 # [obs_health]
-# enabled = true                    # 󰕥 session health badge (green/yellow/red)
+# enabled = true                    # 󰕥 session health badge
+
+# [obs_hook_faults]
+# enabled = true                    # 󰀩 hook crash count (last hour)
+# warn_threshold = 1
+# critical_threshold = 5
+
+# ─── Session Metrics ───────────────────────────────────────────────
+
+# [lines_changed]
+# enabled = true                    # +N/-N lines added/removed
+
+# [daily_cost]
+# enabled = true                    # 󰃭$N today's cumulative cost
+# warn_threshold = 200
+# critical_threshold = 400
+
+# [weekly_cost]
+# enabled = true                    # $N/wk this week's cost
+# warn_threshold = 1000
+# critical_threshold = 2000
+
+# [session_count]
+# enabled = true                    # #N sessions today
+
+# [api_efficiency]
+# enabled = true                    # ⏱N% API-active time ratio
+
+# [cost_per_ktok]
+# enabled = true                    # $/kN cost per 1k output tokens
+
+# [io_ratio]
+# enabled = true                    # io:Nx output/input ratio
+
+# [tokens_per_turn]
+# enabled = true                    # tok/tN avg output per turn
+
+# [free_context]
+# enabled = true                    # ▼Nfree remaining context
+
+# [growth_rate]
+# enabled = true                    # gro:N/t context growth per turn
 
 # ─── Quick Presets ──────────────────────────────────────────────────
 # Minimal (just model + context):
@@ -126,22 +174,9 @@
 #   line2 = []
 #   line3 = []
 #
-# Full observability:
-#   [obs_reads]
-#   enabled = true
-#   [obs_rereads]
-#   enabled = true
-#   [obs_writes]
-#   enabled = true
-#   [obs_bash]
-#   enabled = true
-#   [obs_prompts]
-#   enabled = true
-#   [obs_tasks]
-#   enabled = true
-#   [obs_subagents]
-#   enabled = true
-#   [obs_failures]
-#   enabled = true
-#   [obs_health]
-#   enabled = true
+# Classic (pre-expansion, 12 modules):
+#   [layout]
+#   line2 = ["sys_overhead_pill", "cache_read", "cache_delta",
+#            "obs_reads", "obs_rereads", "obs_writes", "obs_bash",
+#            "obs_prompts", "obs_tasks", "obs_subagents", "obs_health",
+#            "turns_pill", "cost"]
