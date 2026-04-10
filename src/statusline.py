@@ -1937,36 +1937,40 @@ def render_api_efficiency(state: dict[str, Any], theme: dict[str, Any]) -> str |
     return _pill(text, cfg, theme=theme)
 
 
-def render_daily_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render today's cumulative cost from session snapshot history."""
-    cost = state.get("daily_cost")
+def _render_cost_pill(
+    state: dict[str, Any],
+    theme: dict[str, Any],
+    state_key: str,
+    theme_key: str,
+    fmt: str,
+    warn_default: float,
+    crit_default: float,
+) -> str | None:
+    """Shared renderer for threshold-colored cost pills."""
+    cost = state.get(state_key)
     if cost is None:
         return None
-    cfg = theme.get("daily_cost", {})
-    warn_t = cfg.get("warn_threshold", 200)
-    crit_t = cfg.get("critical_threshold", 400)
-    text = f"\U000f00ed${cost:.0f}"
+    cfg = theme.get(theme_key, {})
+    warn_t = cfg.get("warn_threshold", warn_default)
+    crit_t = cfg.get("critical_threshold", crit_default)
+    text = fmt.format(cost=cost)
     if cost >= crit_t:
         return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
     if cost >= warn_t:
         return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
     return _pill(text, cfg, theme=theme)
+
+
+def render_daily_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render today's cumulative cost from session snapshot history."""
+    return _render_cost_pill(state, theme, "daily_cost", "daily_cost",
+                             "\U000f00ed${cost:.0f}", 200, 400)
 
 
 def render_weekly_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     """Render this week's cumulative cost."""
-    cost = state.get("weekly_cost")
-    if cost is None:
-        return None
-    cfg = theme.get("weekly_cost", {})
-    warn_t = cfg.get("warn_threshold", 1000)
-    crit_t = cfg.get("critical_threshold", 2000)
-    text = f"${cost:.0f}/wk"
-    if cost >= crit_t:
-        return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
-    if cost >= warn_t:
-        return _pill(text, cfg, cfg.get("warn_color", "#f0d399"), theme=theme)
-    return _pill(text, cfg, theme=theme)
+    return _render_cost_pill(state, theme, "weekly_cost", "weekly_cost",
+                             "${cost:.0f}/wk", 1000, 2000)
 
 
 def render_session_count(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
