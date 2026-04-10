@@ -2097,7 +2097,7 @@ def render_weekly_cost(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     cfg = theme.get("weekly_cost", {})
     warn_t = cfg.get("warn_threshold", 1000)
     crit_t = cfg.get("critical_threshold", 2000)
-    text = f"${cost:.0f}/wk"
+    text = f"\U000f0117 ${cost:.0f}/wk"  # nf-md-calendar_week
     if cost >= crit_t:
         return _pill(text, cfg, cfg.get("critical_color", "#d06070"), True, theme)
     if cost >= warn_t:
@@ -2122,10 +2122,8 @@ def render_cost_per_ktok(state: dict[str, Any], theme: dict[str, Any]) -> str | 
         return None
     cfg = theme.get("cost_per_ktok", {})
     per_k = cost / (out_tok / 1000)
-    if state.get("_show_labels"):
-        text = f"{per_k:.3f}" if per_k < 0.01 else f"{per_k:.2f}"
-    else:
-        text = f"$/k{per_k:.3f}" if per_k < 0.01 else f"$/k{per_k:.2f}"
+    val = f"{per_k:.3f}" if per_k < 0.01 else f"{per_k:.2f}"
+    text = f"\U000f0223 {val}/k" if not state.get("_show_labels") else val  # nf-md-currency_usd
     return _pill(text, cfg, theme=theme)
 
 
@@ -2137,7 +2135,7 @@ def render_io_ratio(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
         return None
     cfg = theme.get("io_ratio", {})
     ratio = out_tok / in_tok
-    text = f"{ratio:.1f}x" if state.get("_show_labels") else f"io:{ratio:.1f}x"
+    text = f"{ratio:.1f}x" if state.get("_show_labels") else f"\U000f0ec1 {ratio:.1f}x"  # nf-md-swap_horizontal
     return _pill(text, cfg, theme=theme)
 
 
@@ -2149,7 +2147,7 @@ def render_tokens_per_turn(state: dict[str, Any], theme: dict[str, Any]) -> str 
         return None
     cfg = theme.get("tokens_per_turn", {})
     avg = out_tok // turns
-    text = f"{_abbreviate_count(avg)}" if state.get("_show_labels") else f"tok/t{_abbreviate_count(avg)}"
+    text = f"{_abbreviate_count(avg)}" if state.get("_show_labels") else f"\U000f04cc {_abbreviate_count(avg)}/t"  # nf-md-chip (tokens per turn)
     return _pill(text, cfg, theme=theme)
 
 
@@ -2166,7 +2164,7 @@ def render_free_context(state: dict[str, Any], theme: dict[str, Any]) -> str | N
     if free <= 0:
         return None
     cfg = theme.get("free_context", {})
-    text = f"{_abbreviate_count(free)}" if state.get("_show_labels") else f"\u25bc{_abbreviate_count(free)}free"
+    text = f"{_abbreviate_count(free)}" if state.get("_show_labels") else f"\U000f068e {_abbreviate_count(free)}"  # nf-md-gauge_empty (free context)
     return _pill(text, cfg, theme=theme)
 
 
@@ -2211,7 +2209,7 @@ def render_think_pct(state: dict[str, Any], theme: dict[str, Any]) -> str | None
     if pct is None:
         return None
     cfg = theme.get("think_pct", {})
-    text = f"{pct}%" if state.get("_show_labels") else f"\U000f0520{pct}%"
+    text = f"{pct}%" if state.get("_show_labels") else f"\U000f0954 {pct}%"  # nf-md-clock_outline (think/wait time)
     return _pill(text, cfg, theme=theme)
 
 
