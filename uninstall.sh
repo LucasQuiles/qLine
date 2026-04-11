@@ -38,7 +38,7 @@ for candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
     fi
 done
 
-if [ -n "$PYTHON" ] && [ -f "$SETTINGS" ]; then
+if [ -n "$PYTHON" ] && [ -f "$SETTINGS" ] && [ -n "$HOOKS_DIR" ]; then
     "$PYTHON" -c "
 import json
 
@@ -49,6 +49,7 @@ hooks = settings.get('hooks', {})
 removed = 0
 
 # Remove any entry whose command points to our hooks dir
+hooks_dir = '$HOOKS_DIR'
 for event in list(hooks.keys()):
     new_entries = []
     for entry in hooks[event]:
@@ -56,7 +57,7 @@ for event in list(hooks.keys()):
         keep = True
         for h in inner:
             cmd = h.get('command', '')
-            if '/hooks/obs-' in cmd and '$HOOKS_DIR' in cmd:
+            if cmd.startswith(hooks_dir + '/'):
                 keep = False
                 removed += 1
         if keep:
@@ -71,9 +72,9 @@ with open('$SETTINGS', 'w') as f:
     json.dump(settings, f, indent=2)
 
 if removed:
-    print(f'Removed {removed} obs hook registrations from settings.json')
+    print(f'Removed {removed} hook registrations from settings.json')
 else:
-    print('No obs hook registrations found in settings.json')
+    print('No hook registrations found in settings.json')
 " 2>&1 || echo "WARNING: failed to update settings.json hook entries"
 fi
 
