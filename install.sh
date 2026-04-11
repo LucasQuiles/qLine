@@ -202,9 +202,10 @@ OBS_HOOKS = [
     ('TaskCompleted', '.*', 'task-completed-gate.py', 5000),
 ]
 
+run_hook = f'{hooks_dir}/run-hook'
 registered = 0
 for event, matcher, filename, timeout in OBS_HOOKS:
-    command = f'{hooks_dir}/{filename}'
+    command = f'{run_hook} {hooks_dir}/{filename}'
     event_hooks = hooks.setdefault(event, [])
     already = any(
         any(h.get('command') == command for h in entry.get('hooks', []))

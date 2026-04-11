@@ -5,7 +5,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
-from hook_utils import read_hook_input, run_fail_open, now_iso
+from hook_utils import read_hook_input, run_fail_open, now_iso, validate_session_id
 from obs_utils import create_package, append_event, resolve_package_root_env, update_health, record_error
 
 
@@ -160,9 +160,9 @@ def main() -> None:
     if not input_data:
         sys.exit(0)
 
-    session_id = input_data.get("session_id")
+    session_id = validate_session_id(input_data.get("session_id"))
     if not session_id:
-        sys.exit(0)  # No identity — cannot create package
+        sys.exit(0)  # No identity or malformed — cannot create package
 
     transcript_path = input_data.get("transcript_path", "")
     cwd = input_data.get("cwd", "")

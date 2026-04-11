@@ -175,7 +175,7 @@ def run_obs_hook(
     try:
         handler(input_data, session_id, package_root)
     except SystemExit:
-        pass  # Swallow non-zero exits from handlers to maintain fail-open contract
+        pass  # Handlers should return, not exit; swallow any SystemExit to ensure exit 0
     sys.exit(0)
 
 
