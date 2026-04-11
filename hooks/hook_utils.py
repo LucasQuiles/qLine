@@ -160,7 +160,7 @@ def run_obs_hook(
     if not input_data:
         sys.exit(0)
 
-    session_id = input_data.get("session_id")
+    session_id = validate_session_id(input_data.get("session_id"))
     if not session_id:
         sys.exit(0)
 
@@ -172,7 +172,10 @@ def run_obs_hook(
     if package_root is None:
         sys.exit(0)
 
-    handler(input_data, session_id, package_root)
+    try:
+        handler(input_data, session_id, package_root)
+    except SystemExit:
+        pass  # Swallow non-zero exits from handlers to maintain fail-open contract
     sys.exit(0)
 
 

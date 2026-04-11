@@ -1,20 +1,15 @@
 #!/usr/bin/env python3
 """TaskCompleted observability hook: logs task completion to the session package.
 
-Steps:
-  1. Read stdin; exit 0 if empty or no session_id.
-  2. Resolve package_root via runtime map; exit 0 if unknown session.
-  3. Append raw task payload to metadata/task_events.jsonl (dedicated task log).
-  4. Emit task.completed event to metadata/hook_events.jsonl.
-  5. Update manifest tasks array with {task_id, task_subject, completed_at}.
-  6. Exit 0 always (fail-open).
+Per-call steps (preamble handled by run_obs_hook):
+  1. Append raw task payload to metadata/task_events.jsonl (dedicated task log).
+  2. Emit task.completed event to metadata/hook_events.jsonl.
+  3. Update manifest tasks array with {task_id, task_subject, completed_at}.
 """
 import os
-import sys
-from hook_utils import read_hook_input, run_fail_open
+from hook_utils import run_fail_open, run_obs_hook
 from obs_utils import (
     _atomic_jsonl_append,
-    resolve_package_root_env,
     append_event,
     update_manifest_array,
     record_error,
@@ -23,28 +18,14 @@ from obs_utils import (
 )
 
 
-def main() -> None:
-    input_data = read_hook_input(timeout_seconds=2)
-    if not input_data:
-        sys.exit(0)
-
-    session_id = input_data.get("session_id")
-    if not session_id:
-        sys.exit(0)
-
+def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     task_id = str(input_data.get("task_id") or "")
     task_subject = str(input_data.get("task_subject") or "")
     task_description = str(input_data.get("task_description") or "")
     cwd = str(input_data.get("cwd") or "")
 
-    # Resolve package — if None, session was never packaged; exit silently
-    package_root = resolve_package_root_env(session_id)
-    if package_root is None:
-        sys.exit(0)
-
     # ------------------------------------------------------------------
-    # Step 3: Append raw task payload to metadata/task_events.jsonl
-    # This is a dedicated task log, separate from the event ledger.
+    # Step 1: Append raw task payload to metadata/task_events.jsonl
     # ------------------------------------------------------------------
     task_log_path = os.path.join(package_root, "metadata", "task_events.jsonl")
     raw_record = {
@@ -65,7 +46,7 @@ def main() -> None:
                      warning={"code": "TASK_EVENT_WRITE_FAILED", "task_id": task_id})
 
     # ------------------------------------------------------------------
-    # Step 4: Emit task.completed event to hook_events.jsonl
+    # Step 2: Emit task.completed event to hook_events.jsonl
     # ------------------------------------------------------------------
     append_event(
         package_root,
@@ -81,7 +62,7 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    # Step 5: Update manifest tasks array
+    # Step 3: Update manifest tasks array
     # ------------------------------------------------------------------
     update_manifest_array(
         package_root,
@@ -93,8 +74,6 @@ def main() -> None:
         },
     )
 
-    sys.exit(0)
-
 
 if __name__ == "__main__":
-    run_fail_open(main, "obs-task-completed", "TaskCompleted")
+    run_fail_open(lambda: run_obs_hook(_handle, "obs-task-completed", "TaskCompleted"), "obs-task-completed", "TaskCompleted")
