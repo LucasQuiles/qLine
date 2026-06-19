@@ -48,6 +48,35 @@ class TestFailuresProducer:
         monkeypatch.setattr(P, "read_session_failed_commands", lambda sid: [])
         assert P.produce_failures({"session_id": "s"}) is None
 
+    # A tool.failed event with no preview, no error, no hash carries zero
+    # actionable information. Rendering "(failed tool)" is non-actionable noise
+    # (violates "alerts must be actionable"). Drop content-free records.
+    def test_drops_content_free_failure_records(self, monkeypatch):
+        import precompact_producers as P
+        fails = [
+            {"event": "tool.failed"},  # no preview, no error, no hash → drop
+            {"event": "tool.failed", "command_preview": "pytest -q",
+             "command_hash": "b2"},
+        ]
+        monkeypatch.setattr(P, "read_session_failed_commands", lambda sid: fails)
+        section = P.produce_failures({"session_id": "s"})
+        assert section["unresolved_failures"] == ["pytest -q"]
+
+    def test_none_when_all_failures_content_free(self, monkeypatch):
+        import precompact_producers as P
+        fails = [{"event": "tool.failed"}, {"event": "tool.failed"}]
+        monkeypatch.setattr(P, "read_session_failed_commands", lambda sid: fails)
+        assert P.produce_failures({"session_id": "s"}) is None
+
+    # An error string is still actionable even without a command preview.
+    def test_keeps_failure_with_error_but_no_preview(self, monkeypatch):
+        import precompact_producers as P
+        fails = [{"event": "tool.failed", "error": "ENOENT: missing binary",
+                  "command_hash": "z9"}]
+        monkeypatch.setattr(P, "read_session_failed_commands", lambda sid: fails)
+        out = P.produce_failures({"session_id": "s"})["unresolved_failures"]
+        assert out == ["ENOENT: missing binary"]
+
     def test_redacts_secrets_and_truncates_preview(self, monkeypatch):
         import precompact_producers as P
         fails = [

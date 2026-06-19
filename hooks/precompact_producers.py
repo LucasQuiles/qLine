@@ -184,7 +184,12 @@ def produce_failures(inp: dict) -> dict | None:
         if key in seen:
             continue
         seen.add(key)
-        raw = rec.get("command_preview") or rec.get("error") or "(failed tool)"
+        # A failed-tool record with neither a command preview nor an error
+        # string carries no actionable information. Rendering a "(failed tool)"
+        # placeholder is non-actionable noise — drop the record instead.
+        raw = rec.get("command_preview") or rec.get("error")
+        if not raw:
+            continue
         cmds.append(_safe_preview(raw))
     if not cmds:
         return None
