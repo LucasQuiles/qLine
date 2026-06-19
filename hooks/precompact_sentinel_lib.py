@@ -14,10 +14,11 @@ EXPECTED_PRODUCERS = ("preserve", "git", "stats")
 
 def evaluate_capsule(capsule) -> list[dict]:
     """Return a list of alert dicts (possibly empty). Pure; never raises."""
-    if not capsule:
+    if not isinstance(capsule, dict):
         return []
     alerts: list[dict] = []
-    failed = list(capsule.get("_producers_failed") or [])
+    raw_failed = capsule.get("_producers_failed")
+    failed = [str(x) for x in raw_failed] if isinstance(raw_failed, list) else []
     if failed:
         alerts.append({
             "reason_class": "precompact_producer_rot",

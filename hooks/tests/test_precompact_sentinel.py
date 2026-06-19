@@ -32,3 +32,16 @@ class TestEvaluateCapsule:
     def test_no_capsule_is_silent(self):
         from precompact_sentinel_lib import evaluate_capsule
         assert evaluate_capsule(None) == []
+
+    def test_non_dict_capsule_never_raises(self):
+        # A corrupted capsule (e.g. a JSON array) must degrade to [], not raise.
+        from precompact_sentinel_lib import evaluate_capsule
+        assert evaluate_capsule([1, 2, 3]) == []
+        assert evaluate_capsule("garbage") == []
+
+    def test_malformed_failed_field_does_not_iterate_chars(self):
+        # _producers_failed as a string must NOT become ['g','i','t'].
+        from precompact_sentinel_lib import evaluate_capsule
+        alerts = evaluate_capsule({"_producers_failed": "git", "_empty": False})
+        # string is not a list -> treated as no structural failures
+        assert all(a["reason_class"] != "precompact_producer_rot" for a in alerts)
