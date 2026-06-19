@@ -93,3 +93,47 @@ def render_systemmessage(capsule: dict) -> str | None:
     if len(lines) == 1:
         return None
     return "\n".join(lines)
+
+
+# append to hooks/precompact_capsule.py
+import json as _json
+import os as _os
+
+DEFAULT_CAPSULE_DIR = _os.path.join(
+    _os.path.expanduser("~"), ".claude", "precompact-capsules"
+)
+
+
+def _safe_name(session_id: str) -> str:
+    cleaned = "".join(
+        c if ((c.isascii() and c.isalnum()) or c in {"_", "-"}) else "-"
+        for c in str(session_id)
+    )
+    return (cleaned or "unknown")[:128]
+
+
+def capsule_path(session_id: str, base_dir: str = DEFAULT_CAPSULE_DIR) -> str:
+    return _os.path.join(base_dir, _safe_name(session_id) + ".json")
+
+
+def write_capsule(session_id: str, capsule: dict, *, base_dir: str = DEFAULT_CAPSULE_DIR) -> None:
+    try:
+        _os.makedirs(base_dir, exist_ok=True)
+        path = capsule_path(session_id, base_dir)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(_json.dumps(capsule))
+        _os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def read_capsule(session_id: str, *, base_dir: str = DEFAULT_CAPSULE_DIR) -> dict | None:
+    try:
+        path = capsule_path(session_id, base_dir)
+        if not _os.path.exists(path):
+            return None
+        with open(path) as f:
+            return _json.load(f)
+    except (OSError, _json.JSONDecodeError):
+        return None

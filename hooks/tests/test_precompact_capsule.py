@@ -54,3 +54,25 @@ class TestMergeCapsule:
     def test_render_returns_none_when_empty(self):
         from precompact_capsule import render_systemmessage
         assert render_systemmessage({"_empty": True}) is None
+
+
+class TestCapsuleStore:
+    def test_write_then_read_roundtrip(self, tmp_path):
+        from precompact_capsule import write_capsule, read_capsule
+        cap = {"schema_version": 1, "open_tasks": "x", "_empty": False,
+               "_producers_ok": ["preserve"], "_producers_failed": [], "_ms": 3}
+        write_capsule("sess-1", cap, base_dir=str(tmp_path))
+        assert read_capsule("sess-1", base_dir=str(tmp_path))["open_tasks"] == "x"
+
+    def test_read_absent_returns_none(self, tmp_path):
+        from precompact_capsule import read_capsule
+        assert read_capsule("nope", base_dir=str(tmp_path)) is None
+
+    def test_session_id_path_is_sanitized(self, tmp_path):
+        from precompact_capsule import write_capsule
+        import os
+        write_capsule("../evil", {"_empty": True}, base_dir=str(tmp_path))
+        for dp, _, files in os.walk(str(tmp_path)):
+            for fn in files:
+                assert os.path.realpath(os.path.join(dp, fn)).startswith(
+                    os.path.realpath(str(tmp_path)))
