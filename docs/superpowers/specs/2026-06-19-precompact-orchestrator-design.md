@@ -243,3 +243,28 @@ q machine before approval. Results:
 
 No claim was refuted. The only correction was the registration location (global,
 not repo-scoped), which strengthens rather than weakens the env-flag-gated rollout.
+
+## Appendix D — Reuse-first rider alignment (design input for the plan)
+
+A reuse-first runtime-hardening rider informs this work. The rider's literal
+artifacts (`/Users/q/...` macOS paths, `AGENT_RUNTIME_STANDARD.md`,
+`agent-runtime-probes/`, an `AGENT_MCP_ALLOWLIST.yaml`) **do not exist on this
+host** — this is Linux `/home/q`, and a grounding check (2026-06-19) found all of
+them MISSING. We therefore adopt the rider's **principles**, not its paths. The
+plan and implementation MUST honor:
+
+| Rider principle | How this design satisfies it (plan must preserve) |
+|---|---|
+| **Reuse first, not reuse only** | `preserve`/`git`/`failures`/`stats` producers wrap existing logic invoked as subprocesses; only `handoff` is a net-new primitive — and it closes a real gap (no compact-time capsule consumer exists; Appendix C row 5). |
+| **One canonical event schema; receipts** | The capsule's `{_producers_ok, _producers_failed, _empty, _ms}` envelope IS the receipt. Plan: keep it a single, versioned schema; each producer emits the same shape. |
+| **Shared classifiers, not per-producer logic** | Bounded-read + path/secret scrub live in ONE shared helper the producers call — not duplicated per producer. |
+| **Shadow → warn → enforce; rollback** | `PRECOMPACT_ORCHESTRATOR_ENABLED=1` runs in parallel with legacy hooks; ≥5 clean audits (incl. ≥1 non-qLine compaction) before deregistering; rollback = unset flag. |
+| **No raw secrets / no raw transcript persistence** | The handoff note is agent-authored, local-only, never staged to any external worker; the v2 external-panel deferral (Appendix B) keeps it that way until a fail-closed sanitizer exists. |
+| **Measurable; experiment-gated** | Golden parity test + producer-failure + bounded-read + empty-session tests; the observability envelope makes producer rot visible (SessionStart alert to BOT PATCHES). |
+
+**Rider Add-in 8 ("compaction state capsule") is this project** — same primitive,
+already specced. The remaining rider add-ins (live inventory, MCP capability
+ledger, OTel exporter, OPA bridge, etc.) are explicitly **out of scope** here; if
+pursued they are separate specs, not folded into this one (rider §"decompose
+first"). The plan does NOT introduce any `/Users/q` path or assume any rider
+doctrine file exists.
