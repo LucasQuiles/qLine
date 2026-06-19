@@ -620,23 +620,23 @@ class TestPreserveProducer:
 
 
 class TestFailuresProducer:
-    def test_unresolved_failures_excludes_later_success(self, monkeypatch):
+    # Failures come from `tool.failed` obs events (the action-ledger has NO exit
+    # status). Success events are NOT in that stream, so v1 reports distinct
+    # failed commands this session, deduped by command_hash. Informational.
+    def test_reports_distinct_failed_commands(self, monkeypatch):
         import precompact_producers as P
-        actions = [
-            {"tool": "Bash", "command": "pytest", "exit_code": 1, "ts": "1"},
-            {"tool": "Bash", "command": "pytest", "exit_code": 0, "ts": "2"},
-            {"tool": "Bash", "command": "ruff check", "exit_code": 2, "ts": "3"},
+        fails = [
+            {"event": "tool.failed", "command_preview": "ruff check", "command_hash": "a1"},
+            {"event": "tool.failed", "command_preview": "ruff check", "command_hash": "a1"},
+            {"event": "tool.failed", "command_preview": "pytest -q", "command_hash": "b2"},
         ]
-        monkeypatch.setattr(P, "read_session_actions", lambda sid, **k: actions)
+        monkeypatch.setattr(P, "read_session_failed_commands", lambda sid: fails)
         section = P.produce_failures({"session_id": "s"})
-        # 'pytest' later succeeded -> excluded; 'ruff check' has no later success -> kept
-        assert any("ruff check" in f for f in section["unresolved_failures"])
-        assert not any("pytest" in f for f in section["unresolved_failures"])
+        assert section["unresolved_failures"] == ["ruff check", "pytest -q"]  # deduped
 
     def test_none_when_no_failures(self, monkeypatch):
         import precompact_producers as P
-        monkeypatch.setattr(P, "read_session_actions",
-                            lambda sid, **k: [{"tool": "Bash", "command": "ls", "exit_code": 0}])
+        monkeypatch.setattr(P, "read_session_failed_commands", lambda sid: [])
         assert P.produce_failures({"session_id": "s"}) is None
 
 
@@ -714,7 +714,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from hook_utils import iter_open_tasks, find_latest_plan  # noqa: E402
-from precompact_ledger import read_session_actions  # noqa: E402
+from precompact_ledger import read_session_actions, _read_tail_lines  # noqa: E402
 from precompact_handoff import read_note  # noqa: E402
 
 _MAX_REPOS = 5
@@ -809,31 +809,57 @@ def produce_git(inp: dict) -> dict | None:
 
 
 # --- failures ---------------------------------------------------------------
+# Source: `tool.failed` events in the obs package's metadata/hook_events.jsonl
+# (the action-ledger carries NO exit status). Success events are not in this
+# stream, so v1 reports DISTINCT failed commands this session, deduped by
+# command_hash. Informational; degrades to None cleanly.
+
+_MAX_EVENTS_BYTES = 1 * 1024 * 1024
+
+
+def read_session_failed_commands(session_id: str) -> list[dict]:
+    """Return tool.failed event records for the session (bounded tail). Never raises."""
+    try:
+        from obs_utils import resolve_package_root_env
+        root = resolve_package_root_env(session_id)
+    except Exception:
+        return []
+    if not root:
+        return []
+    events_path = os.path.join(root, "metadata", "hook_events.jsonl")
+    if not os.path.exists(events_path):
+        return []
+    out: list[dict] = []
+    try:
+        for line in _read_tail_lines(events_path, _MAX_EVENTS_BYTES):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(rec, dict) and (rec.get("event") or rec.get("event_type")) == "tool.failed":
+                out.append(rec)
+    except OSError:
+        return []
+    return out
+
 
 def produce_failures(inp: dict) -> dict | None:
     session_id = str(inp.get("session_id") or "")
-    actions = read_session_actions(session_id)
-    last_success: dict[str, str] = {}
-    failures: dict[str, str] = {}
-    for a in actions:
-        if a.get("tool") != "Bash":
+    fails = read_session_failed_commands(session_id)
+    seen: set = set()
+    cmds: list[str] = []
+    for rec in fails:
+        key = rec.get("command_hash") or rec.get("command_preview")
+        if key in seen:
             continue
-        cmd = a.get("command")
-        if not cmd:
-            continue
-        ts = str(a.get("ts") or "")
-        code = a.get("exit_code")
-        if code in (0, None):
-            last_success[cmd] = ts
-        else:
-            failures[cmd] = ts
-    unresolved = [
-        cmd for cmd, fts in failures.items()
-        if last_success.get(cmd, "") <= fts
-    ]
-    if not unresolved:
+        seen.add(key)
+        cmds.append(rec.get("command_preview") or rec.get("error") or "(failed tool)")
+    if not cmds:
         return None
-    return {"unresolved_failures": unresolved[:_MAX_FAILURES]}
+    return {"unresolved_failures": cmds[:_MAX_FAILURES]}
 
 
 # --- stats ------------------------------------------------------------------
@@ -1637,4 +1663,4 @@ After clean audits, remove the three legacy entries (`enrich-precompact.py`, `ob
 
 **3. Type consistency:** Section keys (`open_tasks`, `active_plan`, `git_state`, `unresolved_failures`, `session_stats`, `handoff_note`) are defined once in `SECTION_KEYS` (Task 1) and used identically by producers (Task 4), render (Task 1), and tests. `merge_capsule(results, failed, elapsed_ms)`, `run_producers(inp)→(results, failed)`, `evaluate_capsule(capsule)→list[dict]`, `read_capsule`/`write_capsule(session_id, ..., base_dir=)` signatures are consistent across tasks. `is_strict("PRECOMPACT_ORCHESTRATOR_ENABLED")` is the single gate used by both hooks.
 
-**Note on the `failures` producer ledger field:** the producer keys on `exit_code`. The current ledger sample did not include `exit_code` on every record; if the failed-command signal is stored under a different field, adjust `produce_failures` accordingly during Task 4 (the test seeds `exit_code` explicitly, so verify the live field name with `tail` on the ledger before relying on rollout data — `failures` is informational and its absence does not block the capsule).
+**Resolved data-source note (`failures` producer):** the action-ledger was verified (2026-06-19) to carry **no** exit/failure field — keys are `action_id, command, cwd, file_path, lines, tool, ts, v`. Failures are recorded separately as `tool.failed` events in the obs package's `metadata/hook_events.jsonl` (via `obs-posttool-failure.py` → `append_event`), carrying `command_preview` + `command_hash`. `produce_failures` therefore sources from `read_session_failed_commands` (bounded tail of that events file, resolved via `resolve_package_root_env`). Because success events are not in that stream, v1 reports **distinct failed commands this session** (deduped by `command_hash`), a deliberate simplification of the spec's "no later success" wording — acceptable since `failures` is informational, not must-be-exact. If exact unresolved-failure semantics are later required, correlate `tool.failed` hashes against the action-ledger's re-run of the same command (follow-on, not v1).
