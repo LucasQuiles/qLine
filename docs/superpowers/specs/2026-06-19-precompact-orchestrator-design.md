@@ -341,3 +341,25 @@ then pushed clean. The convention is not codified in any qLine repo file, so the
 durable fix is to stop emitting the trailer on qLine commits. Candidate BOT PATCHES
 escalation: the global trailer convention should be reconciled with the W28 policy
 fleet-wide so the contradiction stops recurring.
+
+---
+
+### Appendix F — Post-enforce hardening pass (2026-06-19)
+
+Driven from a live production capsule (orchestrator firing in prod). Audit +
+hardening, no rollout-state change.
+
+- **Validation:** 91→94 tests green; `HEAD==origin/main`.
+- **Ledger sweep:** fault ledger had 0 `precompact_producer_rot` records and 1
+  known synthetic `precompact_capsule_empty` (pre-flight no-op artifact). The
+  "2012 precompact matches" was substring noise, not rot. Producers healthy.
+- **Defect found + fixed (`f4edf2e`):** `produce_failures` rendered a
+  non-actionable `(failed tool)` placeholder when a `tool.failed` event carried
+  no `command_preview` and no `error`. Per "alerts must be actionable," such
+  content-free records are now dropped instead of emitted. 3 producer tests added
+  (drop-content-free, none-when-all-content-free, keep-error-without-preview).
+- **Sibling-pattern scan:** no other placeholder fallbacks in producers/render.
+- **No-op proof:** flag unset → rc 0, empty output. **Enabled proof:** live
+  session capsule renders clean (open tasks + stats; failures producer returns
+  None; no `(failed tool)` line).
+- Pushed without AI trailer per the W28 policy noted above.
