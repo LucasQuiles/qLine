@@ -54,7 +54,7 @@ def read_session_actions(
 
     out: list[dict] = []
     for line in lines:
-        if deadline is not None and deadline.remaining() == 0:
+        if deadline is not None and deadline.remaining() <= 0:
             break
         line = line.strip()
         if not line:
