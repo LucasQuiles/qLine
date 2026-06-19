@@ -32,7 +32,7 @@ def select_new_rot_records(ledger_path: str, offset: int) -> tuple[list[dict], i
     if offset > size:  # ledger rotated/truncated
         offset = 0
     out: list[dict] = []
-    with open(ledger_path) as f:
+    with open(ledger_path, errors="replace") as f:
         f.seek(offset)
         for line in f:
             line = line.strip()
