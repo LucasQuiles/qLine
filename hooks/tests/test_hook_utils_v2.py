@@ -124,8 +124,24 @@ class TestSubprocessResourceLimits:
         assert callable(subprocess_resource_limits)
 
     def test_does_not_raise(self):
+        # subprocess_resource_limits() is a preexec_fn: it calls
+        # resource.setrlimit() to clamp CPU/NOFILE/NPROC for a CHILD before
+        # exec. Calling it inline would clamp THIS pytest process (and every
+        # subprocess the suite later spawns) — and because it lowers *hard*
+        # limits, a non-root process cannot restore them. Exercise it in a
+        # forked child, exactly as it is used in production.
+        import os
         from hook_utils import subprocess_resource_limits
-        subprocess_resource_limits()
+
+        pid = os.fork()
+        if pid == 0:  # child
+            try:
+                subprocess_resource_limits()
+                os._exit(0)
+            except Exception:
+                os._exit(1)
+        _, status = os.waitpid(pid, 0)
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
 
 
 class TestCircuitBreaker:
