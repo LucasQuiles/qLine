@@ -268,3 +268,50 @@ ledger, OTel exporter, OPA bridge, etc.) are explicitly **out of scope** here; i
 pursued they are separate specs, not folded into this one (rider §"decompose
 first"). The plan does NOT introduce any `/Users/q` path or assume any rider
 doctrine file exists.
+
+## Appendix E — Rollout audit log (2026-06-19)
+
+Tasks 1–7 implemented and committed on `spec/precompact-orchestrator`; full hooks
+suite **91 passed**. Global registration (Task 8) executed with a consolidation
+pass — conflicts, blast radius, regression points, and protections below.
+
+**Consolidation finding (conflict).** The plan assumed all three legacy PreCompact
+hooks lived in `PreCompact[0].hooks`. Live `settings.json` actually splits them
+across **two** groups: `[0]` matcher `auto|manual` → `enrich-precompact.py`; `[1]`
+no matcher → `obs-precompact.py`, `precompact-preserve.py`. Resolution: orchestrator
+appended to `[0]` (fires on both triggers, matches the plan's `[0]` validation);
+`[1]` left untouched.
+
+**Pre-flight proof (empirical, before edit).**
+- No-op / shadow: flag **unset** → both entrypoints exit 0 with **zero** stdout
+  (orchestrator and sentinel) — exact current behavior preserved.
+- Enabled path vs a **real** session (`42c66455…`, 2048 actions): exit 0,
+  `_producers_ok=['preserve','failures','stats']`, `_producers_failed=[]`,
+  `_empty=False`, **79 ms** (vs 10 s timeout). Injected capsule carried real open
+  tasks, session stats, and a **generically-redacted** failure line (no secret leak).
+- Sentinel vs that capsule: exit 0, no false rot alert.
+
+**Blast radius.** Registration is global but scoped to the `q` user's `~/.claude`.
+Per compaction: +1 fail-open subprocess fan-out (~79 ms measured). Per session
+start: +1 capsule read (sentinel). Bounded by per-producer 3 s deadline,
+`ThreadPoolExecutor`, and the 10 s/8 s hook timeouts.
+
+**Regression points + protections.**
+- JSON corruption → timestamped backup `~/.claude/settings.json.bak-precompact-*`
+  + post-edit `json.load` assertion; legacy entries asserted intact.
+- Hook crash → `run_fail_open` wrapper on both entrypoints.
+- Latency → measured 79 ms; capped by timeouts.
+- Secret leak → `_safe_preview` redaction verified live (generic `(failed tool)`).
+- Schema guard → `validate-settings-schema.py` is forward-compatible + non-blocking.
+
+**Phase: WARN.** `PRECOMPACT_ORCHESTRATOR_ENABLED=1` set in `settings.json` `env`;
+orchestrator now runs in **parallel** with the three legacy hooks for new sessions.
+Rollback = remove that env line (→ shadow) or restore the backup.
+
+**Step 8 (deregister legacy) — HELD.** Gated on ≥5 clean audits across ≥2 projects
+incl. ≥1 non-qLine compaction. Audit rows to be appended here as compactions occur;
+run `precompact_botpatches_forward.py` after each to confirm no producer-rot payload.
+
+| # | Date | Project | Trigger | `_producers_failed` | `_empty` | Rot? | Verdict |
+|---|------|---------|---------|---------------------|----------|------|---------|
+| _pending organic compactions_ | | | | | | | |
