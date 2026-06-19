@@ -2,7 +2,9 @@
 
 **Date:** 2026-06-19
 **Status:** Design approved (v1 scope); external-worker distillation deferred to v2
-**Repos touched:** qLine (primary), bricklab (producer module)
+**Repos touched:** qLine (producer scripts, primary), bricklab (producer module).
+**Hook registration lives in global `~/.claude/settings.json`** — not in either
+repo's `.claude/`. See Rollout for the blast-radius consequence.
 
 ## Problem
 
@@ -143,16 +145,24 @@ and carries **no "unverified" label**.
 
 ## Rollout (no flag day)
 
-*(ops HIGH — hooks are all-or-nothing in settings.json)*
+*(ops HIGH — the three PreCompact hooks are registered in the **global**
+`~/.claude/settings.json` `PreCompact` array, lines ~323–343, not in qLine's or
+bricklab's repo-scoped `.claude/`. Registration is therefore machine-wide: it
+fires on **every** Claude Code compaction on this host, across all projects, not
+just qLine sessions. Two consequences: (a) the env-flag gate carries the full
+safety burden — there is no repo scoping to fall back on; (b) deregistering edits
+a shared global file, so the parity audit must cover non-qLine sessions too.)*
 
 1. Land the orchestrator gated behind `PRECOMPACT_ORCHESTRATOR_ENABLED=1`. Unset →
-   it exits 0 immediately.
+   it exits 0 immediately. Register it in the same global `~/.claude/settings.json`
+   `PreCompact` array.
 2. Keep the legacy `precompact-preserve.py` registered **in parallel** during
    migration. Duplicate task/plan injection is idempotent and harmless.
 3. Enable the orchestrator; audit ≥5 real compaction capsules via the SessionStart
-   sentinel.
-4. Only after clean audits, deregister the three legacy hooks. Rollback = unset
-   the env var; the legacy hook resumes.
+   sentinel — including at least one compaction from a non-qLine project, since
+   registration is global.
+4. Only after clean audits, deregister the three legacy hooks from the global
+   settings. Rollback = unset the env var; the legacy hooks resume.
 
 ## Testing
 
@@ -217,3 +227,19 @@ Reconsider the external-model panel only when ALL hold:
 
 Until then, v1's agent-authored handoff note is the trusted, zero-leak,
 zero-latency substitute.
+
+## Appendix C — Codebase verification (2026-06-19)
+
+Every load-bearing claim in this design was checked against the live code on the
+q machine before approval. Results:
+
+| Claim | Verified against | Result |
+|---|---|---|
+| Ledger read is unbounded full-file | `enrich-precompact.py:46` `_ACTION_LEDGER.read_text().splitlines()`; metrics same at `:63` | **TRUE.** File is **45.5 MB / 131,935 lines** — the latency CRIT is real, not hypothetical. Output is capped at `_MAX_CONTEXT_TOKENS*4` (`:242`) only *after* the full read. |
+| Three PreCompact hooks registered | `~/.claude/settings.json` `PreCompact` array `:323–343` | **TRUE**, and registration is **global**, not per-repo (correction folded into Rollout). |
+| Two separate fail-open wrappers | `enrich-precompact.py:21` imports `brick_hook_support.run_fail_open`; `precompact-preserve.py:13` imports `hook_utils.run_fail_open` | **TRUE.** |
+| `preserve` injects open tasks **and** active plan | `precompact-preserve.py:30` `find_latest_plan()`, appended conditionally `:31–32` | **TRUE.** Plan line is conditional; absent in the last capsule only because no plan file existed then. |
+| Post-compact SessionStart does not re-surface the brief (artifact rots) | `enrich-session-start.py:194` `if source == "compact": sys.exit(0)` | **TRUE, exactly as Appendix A states.** Confirms there is no existing consumer for a compact-time capsule — the SessionStart sentinel in this design is net-new wiring. |
+
+No claim was refuted. The only correction was the registration location (global,
+not repo-scoped), which strengthens rather than weakens the env-flag-gated rollout.
