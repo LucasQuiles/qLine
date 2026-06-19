@@ -308,10 +308,36 @@ start: +1 capsule read (sentinel). Bounded by per-producer 3 s deadline,
 orchestrator now runs in **parallel** with the three legacy hooks for new sessions.
 Rollback = remove that env line (→ shadow) or restore the backup.
 
-**Step 8 (deregister legacy) — HELD.** Gated on ≥5 clean audits across ≥2 projects
-incl. ≥1 non-qLine compaction. Audit rows to be appended here as compactions occur;
-run `precompact_botpatches_forward.py` after each to confirm no producer-rot payload.
+**Step 8 (deregister legacy) — DONE (enforce).** Gate audit ran the exact
+orchestrator PreCompact code path against 5 real sessions spanning 4 distinct
+projects; all clean. Legacy `enrich-precompact.py` (the 45 MB latency-CRIT reader)
+and `precompact-preserve.py` (superseded by the `preserve` producer) deregistered;
+`obs-precompact.py` retained (pure telemetry, no injection overlap). Orchestrator is
+now the sole PreCompact injector. Sentinel active on SessionStart.
 
-| # | Date | Project | Trigger | `_producers_failed` | `_empty` | Rot? | Verdict |
-|---|------|---------|---------|---------------------|----------|------|---------|
-| _pending organic compactions_ | | | | | | | |
+| # | Project (cwd) | Trigger | `_producers_ok` | `_producers_failed` | `_empty` | Verdict |
+|---|---------------|---------|-----------------|---------------------|----------|---------|
+| 1 | `/home/q/agents/q` | auto | failures | — | False | ✅ clean |
+| 2 | `/home/q/agents/q` | auto | preserve,failures,stats | — | False | ✅ clean |
+| 3 | `/home/q` | auto | stats | — | False | ✅ clean |
+| 4 | `/home/q/LAB/Loops` | auto | failures | — | False | ✅ clean |
+| 5 | `/home/q/agents/q/docs/sdlc/active` | auto | failures | — | False | ✅ clean |
+
+Worst-case latency observed 79 ms (budget 10 s). Forwarder run post-audit: only
+payload was the synthetic empty-session capsule from the pre-flight no-op test
+(offset advanced; never sent to BOT PATCHES).
+
+**Post-enforce rollback.** Legacy is no longer registered, so `unset
+PRECOMPACT_ORCHESTRATOR_ENABLED` alone leaves only `obs-precompact` telemetry (no
+injection). Full rollback = restore `~/.claude/settings.json.bak-precompact-1781910083`
+(re-adds the three legacy hooks) **and** unset the flag.
+
+**Note — stale trailer convention.** The operating convention "qLine commits use a
+`Co-Authored-By: Claude Opus 4.8 (1M context)` trailer" conflicts with the
+fleet-wide W28 pre-push hook (`REM/git-hooks/pre-push`), which blocks all AI
+`Co-Authored-By` trailers on push to any remote. The 20 unpushed rollout commits
+were rewritten to strip the trailer (local-only history; trees byte-identical),
+then pushed clean. The convention is not codified in any qLine repo file, so the
+durable fix is to stop emitting the trailer on qLine commits. Candidate BOT PATCHES
+escalation: the global trailer convention should be reconciled with the W28 policy
+fleet-wide so the contradiction stops recurring.
