@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -121,6 +122,27 @@ def produce_git(inp: dict) -> dict | None:
 # command_hash. Informational; degrades to None cleanly.
 
 _MAX_EVENTS_BYTES = 1 * 1024 * 1024
+_PREVIEW_MAX_CHARS = 100
+
+# Credential-bearing patterns redacted before a failed command is surfaced into
+# the compacted context (no-leak principle: never inject raw secrets).
+_SECRET_PATTERNS = [
+    re.compile(r"(?i)(authorization:\s*bearer\s+)\S+"),
+    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{8,}"),
+    re.compile(r"(?i)(--?(?:password|token|secret|api[-_]?key|apikey)[=\s]+)\S+"),
+    re.compile(r"(?i)(-p\s+)\S+"),
+    re.compile(r"\b(sk|ghp|gho|ghu|ghs|ghr|xox[baprs])[-_][A-Za-z0-9]{8,}"),
+    re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b"),  # long base64-ish blobs
+]
+
+
+def _safe_preview(text) -> str:
+    """Redact known credential patterns and truncate. Display-only signal."""
+    s = str(text or "")
+    for pat in _SECRET_PATTERNS:
+        s = pat.sub(lambda m: (m.group(1) if m.lastindex else "") + "<redacted>", s)
+    s = s.replace("\n", " ").strip()
+    return s[:_PREVIEW_MAX_CHARS]
 
 
 def read_session_failed_commands(session_id: str) -> list[dict]:
@@ -162,7 +184,8 @@ def produce_failures(inp: dict) -> dict | None:
         if key in seen:
             continue
         seen.add(key)
-        cmds.append(rec.get("command_preview") or rec.get("error") or "(failed tool)")
+        raw = rec.get("command_preview") or rec.get("error") or "(failed tool)"
+        cmds.append(_safe_preview(raw))
     if not cmds:
         return None
     return {"unresolved_failures": cmds[:_MAX_FAILURES]}

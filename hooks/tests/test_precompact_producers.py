@@ -48,6 +48,34 @@ class TestFailuresProducer:
         monkeypatch.setattr(P, "read_session_failed_commands", lambda sid: [])
         assert P.produce_failures({"session_id": "s"}) is None
 
+    def test_redacts_secrets_and_truncates_preview(self, monkeypatch):
+        import precompact_producers as P
+        fails = [
+            {"event": "tool.failed",
+             "command_preview": 'curl -H "Authorization: Bearer sk-abcdEFGH12345678" https://x',
+             "command_hash": "c3"},
+            {"event": "tool.failed",
+             "command_preview": "psql --password=SuperSecret123 -c 'select 1'",
+             "command_hash": "d4"},
+        ]
+        monkeypatch.setattr(P, "read_session_failed_commands", lambda sid: fails)
+        out = P.produce_failures({"session_id": "s"})["unresolved_failures"]
+        joined = " ".join(out)
+        assert "sk-abcdEFGH12345678" not in joined
+        assert "SuperSecret123" not in joined
+        assert "<redacted>" in joined
+        # signal preserved: the program name survives redaction
+        assert "curl" in joined and "psql" in joined
+
+    def test_preview_is_length_capped(self, monkeypatch):
+        import precompact_producers as P
+        from precompact_producers import _PREVIEW_MAX_CHARS
+        fails = [{"event": "tool.failed", "command_preview": "echo " + "a" * 500,
+                  "command_hash": "e5"}]
+        monkeypatch.setattr(P, "read_session_failed_commands", lambda sid: fails)
+        out = P.produce_failures({"session_id": "s"})["unresolved_failures"]
+        assert len(out[0]) <= _PREVIEW_MAX_CHARS
+
 
 class TestStatsProducer:
     def test_counts_tools(self, monkeypatch):
