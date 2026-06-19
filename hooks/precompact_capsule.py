@@ -95,21 +95,15 @@ def render_systemmessage(capsule: dict) -> str | None:
     return "\n".join(lines)
 
 
-# append to hooks/precompact_capsule.py
+# --- session-keyed capsule store -------------------------------------------
 import json as _json
 import os as _os
+
+from precompact_paths import safe_name as _safe_name
 
 DEFAULT_CAPSULE_DIR = _os.path.join(
     _os.path.expanduser("~"), ".claude", "precompact-capsules"
 )
-
-
-def _safe_name(session_id: str) -> str:
-    cleaned = "".join(
-        c if ((c.isascii() and c.isalnum()) or c in {"_", "-"}) else "-"
-        for c in str(session_id)
-    )
-    return (cleaned or "unknown")[:128]
 
 
 def capsule_path(session_id: str, base_dir: str = DEFAULT_CAPSULE_DIR) -> str:

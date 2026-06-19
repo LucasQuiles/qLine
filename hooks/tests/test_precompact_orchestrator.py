@@ -77,3 +77,27 @@ class TestProducerFailure:
                 if name == "boom" else None,
         )
         assert "boom" in failed
+
+
+class TestConcurrentBudget:
+    def test_producers_run_concurrently_not_serially(self):
+        # 5 producers each "taking" 0.3s must finish well under the serial
+        # sum (1.5s); concurrency bounds wall-clock to ~one producer.
+        import time
+        import importlib
+        orch = importlib.import_module("precompact_orchestrator_lib")
+
+        def slow_runner(name, inp, deadline_s):
+            time.sleep(0.3)
+            return None
+
+        t0 = time.monotonic()
+        results, failed = orch.run_producers(
+            {"session_id": "s"},
+            producers=["preserve", "git", "failures", "stats", "handoff"],
+            runner=slow_runner,
+        )
+        elapsed = time.monotonic() - t0
+        assert elapsed < 1.0, f"serial-looking: {elapsed:.2f}s for 5x0.3s"
+        assert failed == []
+        assert set(results) == {"preserve", "git", "failures", "stats", "handoff"}

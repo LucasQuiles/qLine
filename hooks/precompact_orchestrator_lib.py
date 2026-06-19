@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 from precompact_capsule import merge_capsule
 
@@ -35,17 +36,25 @@ def _subprocess_runner(name: str, inp: dict, deadline_s: float):
 
 
 def run_producers(inp: dict, *, producers=None, runner=None, deadline_s=PER_PRODUCER_DEADLINE_S):
-    """Run each producer; return (results, failed)."""
+    """Run each producer concurrently; return (results, failed).
+
+    Producers are independent subprocesses, so they run in parallel: total
+    wall-clock is bounded by the slowest single producer (~deadline_s), NOT the
+    sum. This keeps the hook within its registered timeout even if every
+    producer runs to its per-producer deadline.
+    """
     producers = producers or PRODUCER_ORDER
     runner = runner or _subprocess_runner
     results: dict = {}
     failed: list = []
-    for name in producers:
-        try:
-            results[name] = runner(name, inp, deadline_s)
-        except Exception:
-            failed.append(name)
-            results[name] = None
+    with ThreadPoolExecutor(max_workers=max(1, len(producers))) as ex:
+        futures = {name: ex.submit(runner, name, inp, deadline_s) for name in producers}
+        for name in producers:
+            try:
+                results[name] = futures[name].result()
+            except Exception:
+                failed.append(name)
+                results[name] = None
     return results, failed
 
 

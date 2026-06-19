@@ -16,19 +16,14 @@ from __future__ import annotations
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from precompact_paths import safe_name as _safe_name  # noqa: E402
+
 MAX_NOTE_CHARS = 4000
 DEFAULT_BASE_DIR = os.path.join(
     os.path.expanduser("~"), ".claude", "precompact-handoff"
 )
-
-
-def _safe_name(session_id: str) -> str:
-    """Sanitize session_id to a single path-safe filename (no traversal)."""
-    cleaned = "".join(
-        c if ((c.isascii() and c.isalnum()) or c in {"_", "-"}) else "-"
-        for c in str(session_id)
-    )
-    return (cleaned or "unknown")[:128]
 
 
 def _note_path(session_id: str, base_dir: str) -> str:
