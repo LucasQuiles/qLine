@@ -77,7 +77,7 @@ def render_systemmessage(capsule: dict) -> str | None:
         lines.append(f"Active plan: {capsule['active_plan']}")
     if capsule.get("git_state"):
         gl = ", ".join(
-            f"{g['repo']}(+{g.get('dirty', 0)}d/{g.get('unpushed', 0)}u)"
+            f"{g.get('repo', '?')}(+{g.get('dirty', 0)}d/{g.get('unpushed', 0)}u)"
             for g in capsule["git_state"]
         )
         lines.append(f"Git: {gl}")
