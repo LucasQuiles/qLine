@@ -363,3 +363,30 @@ hardening, no rollout-state change.
   session capsule renders clean (open tasks + stats; failures producer returns
   None; no `(failed tool)` line).
 - Pushed without AI trailer per the W28 policy noted above.
+
+## Appendix G — Portability / config-seam centralization (2026-06-19)
+
+Packaged the orchestrator as a portable tool. Audit found config seams scattered
+across 6 modules with host-specific defaults baked in (capsule/handoff dirs,
+brick-lab action-ledger path, fault-ledger/offset, per-producer deadline, repo/
+failure caps) and — the worst offender — a **hardcoded BOT PATCHES WhatsApp JID**
+in `precompact_botpatches_forward.py`.
+
+- **Single config surface:** new `precompact_config.py` owns every seam, each
+  with a documented env override and sterile default (resolved at call-time).
+  Seam modules bind their `DEFAULT_*` from it at import; no call-site churn, no
+  behavior change. Env reference table lives in `README-precompact.md`.
+- **Sterilized the JID:** removed the literal group id from code. Default is
+  empty → forwarding disabled; deployers opt in via `PRECOMPACT_BOTPATCHES_CHAT`.
+  A guard test asserts no `@g.us` literal exists in any `precompact_*.py`.
+  Live behavior preserved by wiring the real JID into this deployment's
+  `~/.claude/settings.json` env (config now lives in deployment, not code).
+- **Forwarder was operator-run only** (no cron/timer/caller) → sterilization
+  regressed no automation.
+- **Cleanup:** hoisted capsule.py mid-file imports to top (cleared 3 pre-existing
+  E402s + the new one). Ruff clean across all changed files.
+- **Packaging doc:** `hooks/README-precompact.md` (files table, env override
+  table, deploy steps, design-principle rider).
+- **Tests:** 94 → 103 green (`test_precompact_config.py`: defaults, env
+  overrides, garbage-int fallback, sterile-JID guard). Commit `1801e7c`, pushed
+  to `origin/main` without AI trailer.
