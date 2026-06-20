@@ -16,11 +16,16 @@ import json
 import os
 import sys
 
-FAULT_LEDGER = os.path.join(os.path.expanduser("~"), ".claude", "logs",
-                            "lifecycle-hook-faults.jsonl")
-OFFSET_FILE = os.path.join(os.path.expanduser("~"), ".claude", "logs",
-                           "precompact-rot-forward.offset")
-BOT_PATCHES_CHAT = "120363428426970843@g.us"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from precompact_config import (  # noqa: E402
+    fault_ledger_path as _fault_ledger_path,
+    rot_offset_file as _rot_offset_file,
+    botpatches_chat as _botpatches_chat,
+)
+
+FAULT_LEDGER = _fault_ledger_path()
+OFFSET_FILE = _rot_offset_file()
+BOT_PATCHES_CHAT = _botpatches_chat()  # empty => forwarding disabled (sterile)
 _ROT_CLASSES = {"precompact_producer_rot", "precompact_capsule_empty"}
 
 
@@ -65,6 +70,11 @@ def _write_offset(offset: int) -> None:
 
 
 def main() -> int:
+    if not BOT_PATCHES_CHAT:
+        # No escalation channel configured -> forwarding disabled. Do not
+        # advance the offset; a deployer can set the channel and pick up from
+        # where the ledger stands.
+        return 0
     new, offset = select_new_rot_records(FAULT_LEDGER, _read_offset())
     if not new:
         return 0

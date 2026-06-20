@@ -6,6 +6,12 @@ orchestrator records which producers succeeded, failed, or returned nothing.
 """
 from __future__ import annotations
 
+import json as _json
+import os as _os
+
+from precompact_paths import safe_name as _safe_name
+from precompact_config import capsule_dir as _capsule_dir
+
 CAPSULE_SCHEMA_VERSION = 1
 
 # Section keys each producer may contribute. Order = render order.
@@ -96,14 +102,7 @@ def render_systemmessage(capsule: dict) -> str | None:
 
 
 # --- session-keyed capsule store -------------------------------------------
-import json as _json
-import os as _os
-
-from precompact_paths import safe_name as _safe_name
-
-DEFAULT_CAPSULE_DIR = _os.path.join(
-    _os.path.expanduser("~"), ".claude", "precompact-capsules"
-)
+DEFAULT_CAPSULE_DIR = _capsule_dir()
 
 
 def capsule_path(session_id: str, base_dir: str = DEFAULT_CAPSULE_DIR) -> str:

@@ -19,11 +19,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from precompact_paths import safe_name as _safe_name  # noqa: E402
+from precompact_config import handoff_dir as _handoff_dir  # noqa: E402
 
 MAX_NOTE_CHARS = 4000
-DEFAULT_BASE_DIR = os.path.join(
-    os.path.expanduser("~"), ".claude", "precompact-handoff"
-)
+DEFAULT_BASE_DIR = _handoff_dir()
 
 
 def _note_path(session_id: str, base_dir: str) -> str:

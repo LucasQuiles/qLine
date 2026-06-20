@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
-DEFAULT_LEDGER_PATH = os.path.join(
-    os.path.expanduser("~"), ".local", "share", "brick-lab", "action-ledger.jsonl"
-)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from precompact_config import ledger_path as _ledger_path  # noqa: E402
+
+DEFAULT_LEDGER_PATH = _ledger_path()
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024  # 2 MB tail window
 
 

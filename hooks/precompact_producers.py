@@ -23,9 +23,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_utils import iter_open_tasks, find_latest_plan  # noqa: E402
 from precompact_ledger import read_session_actions, _read_tail_lines  # noqa: E402
 from precompact_handoff import read_note  # noqa: E402
+from precompact_config import max_repos as _max_repos, max_failures as _max_failures  # noqa: E402
 
-_MAX_REPOS = 5
-_MAX_FAILURES = 10
+_MAX_REPOS = _max_repos()
+_MAX_FAILURES = _max_failures()
 
 
 # --- preserve ---------------------------------------------------------------
