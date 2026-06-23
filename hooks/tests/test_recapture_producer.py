@@ -193,6 +193,84 @@ class TestStaleness:
         assert verdict is None, (
             "empty glob expansion must not be a breach (C2b); got verdict")
 
+    # --- T4 edge coverage ---------------------------------------------------
+
+    def test_stale_action_propagates_non_warn(self, tmp_path):
+        """A non-'warn' stale_action (e.g. 'block') must flow through classify into
+        the verdict, not be normalized. Every other test uses 'warn'; this pins the
+        propagation of the actual configured action."""
+        import recapture_producer as rp
+        fm = self._conformant("2026-06-01", window=7)  # stale by age
+        fm["stale_action"] = "block"
+        verdict = rp.classify(str(tmp_path / "d.md"), fm,
+                              now_epoch=rp._eod_epoch("2026-06-22"))
+        assert verdict["reason"] == "age"
+        assert verdict["stale_action"] == "block"
+
+    def test_multi_trigger_later_entry_breaches(self, tmp_path):
+        """Comma-separated triggers: a clean earlier entry must NOT short-circuit
+        the loop; a later entry newer than `updated` still yields trigger_mtime."""
+        import recapture_producer as rp
+        clean = tmp_path / "clean"
+        clean.mkdir()
+        cf = clean / "a.py"
+        cf.write_text("x")
+        hot = tmp_path / "hot"
+        hot.mkdir()
+        hf = hot / "b.py"
+        hf.write_text("y")
+        updated_eod = rp._eod_epoch("2026-06-22")
+        os.utime(str(cf), (updated_eod - 86400, updated_eod - 86400))  # clean
+        os.utime(str(hf), (updated_eod + 86400, updated_eod + 86400))  # breaches
+        fm = self._conformant("2026-06-22")
+        fm["recapture_trigger_files"] = f"{clean}/*, {hot}/*"
+        verdict = rp.classify(str(tmp_path / "d.md"), fm, now_epoch=updated_eod)
+        assert verdict["reason"] == "trigger_mtime", (
+            "later comma-separated trigger must be reached after a clean earlier one")
+
+    def test_trigger_getmtime_oserror_is_skipped(self, tmp_path, monkeypatch):
+        """A trigger hit whose getmtime raises OSError is skipped (no breach),
+        exercising the inner `except OSError: continue`."""
+        import recapture_producer as rp
+        trig = tmp_path / "trig"
+        trig.mkdir()
+        f = trig / "src.py"
+        f.write_text("x")
+        real_getmtime = os.path.getmtime
+
+        def flaky(p):
+            if str(p) == str(f):
+                raise OSError("simulated stat failure")
+            return real_getmtime(p)
+
+        monkeypatch.setattr(rp.os.path, "getmtime", flaky)
+        fm = self._conformant("2026-06-22")  # valid updated -> no mtime fallback
+        fm["recapture_trigger_files"] = str(trig / "*")
+        verdict = rp.classify(str(tmp_path / "d.md"), fm,
+                              now_epoch=rp._eod_epoch("2026-06-22"))
+        assert verdict is None, "getmtime OSError on a trigger hit must be skipped"
+
+
+class TestIterRecaptureDocs:
+    """The real os.walk seam — monkeypatched away in every scan() test, so its
+    skip-list is exercised directly here (spec 2.5 noise exclusion)."""
+
+    def test_skip_list_excludes_noise_dirs(self, tmp_path):
+        import recapture_producer as rp
+        keep = tmp_path / "docs"
+        keep.mkdir()
+        (keep / "real.md").write_text("x")
+        (keep / "ignore.txt").write_text("x")  # non-md -> never yielded
+        # noise dirs matching the skip tuple ("/.claude/projects",
+        # "/.claude/observability", "/node_modules/"). node_modules needs a nested
+        # component to contain the trailing-slash pattern.
+        for noise in (".claude/projects", ".claude/observability", "node_modules/pkg"):
+            d = tmp_path / noise
+            d.mkdir(parents=True)
+            (d / "noise.md").write_text("x")
+        found = sorted(rp._iter_recapture_docs([str(tmp_path)]))
+        assert found == [str(keep / "real.md")]
+
 
 class TestProduceRecapture:
     def test_none_when_no_docs(self, tmp_path, monkeypatch):
