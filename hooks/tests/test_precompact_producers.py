@@ -148,3 +148,35 @@ class TestCLIDispatcher:
             input="{}", capture_output=True, text=True, timeout=10,
         )
         assert proc.returncode != 0
+
+    def test_r2g_dispatch_failure_logs_diagnostic_not_silent(self, tmp_path, monkeypatch):
+        """R2g: a producer raising in central dispatch (_main) must stay fail-open
+        (emit "null", exit 0) AND record an attributed fault — not be swallowed
+        silently. Same anti-pattern as R2d, one level up at the dispatch boundary."""
+        import io
+        import hook_utils
+        import precompact_producers as P
+
+        ledger = tmp_path / "faults.jsonl"
+        monkeypatch.setattr(hook_utils, "_LEDGER_PATH", str(ledger))
+
+        def _boom(inp):
+            raise RuntimeError("injected producer failure")
+
+        monkeypatch.setitem(P.PRODUCERS, "git", _boom)
+        monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+        out = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", out)
+
+        rc = P._main(["git"])
+
+        # fail-open preserved: exit 0, null section on stdout
+        assert rc == 0
+        assert out.getvalue() == "null"
+        # R2g: the dispatch-level failure must be recorded, attributed to the producer
+        assert ledger.exists(), "R2g: dispatch failure must write a fault record"
+        records = [json.loads(ln) for ln in ledger.read_text().splitlines() if ln.strip()]
+        match = [r for r in records if r.get("reason_class") == "producer_dispatch_failed"]
+        assert match, f"R2g: expected a producer_dispatch_failed diagnostic, got {records}"
+        assert match[0].get("context", {}).get("producer") == "git", (
+            f"R2g: fault must name the failing producer, got {match[0]}")

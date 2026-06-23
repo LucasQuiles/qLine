@@ -262,7 +262,14 @@ def _main(argv: list[str]) -> int:
         inp = {}
     try:
         section = PRODUCERS[name](inp)
-    except Exception:
+    except Exception as exc:
+        # R2g: stay fail-open (null section, exit 0) but record the dispatch-level
+        # failure with producer attribution so an enabled-but-broken producer is
+        # visible, not silently swallowed (mirrors R2d one level up).
+        log_hook_diagnostic(
+            "precompact-producers", "PreCompact", "producer_dispatch_failed",
+            f"producer {name!r} raised: {exc!r}",
+            level="warning", context={"producer": name})
         section = None  # producer failure -> null section, still exit 0
     sys.stdout.write(json.dumps(section))
     return 0
