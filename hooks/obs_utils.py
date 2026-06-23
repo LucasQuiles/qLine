@@ -117,6 +117,33 @@ def record_write_seq(custom_dir: str, file_path: str, seq: int) -> None:
     _save_read_state(state_path, state)
 
 
+def write_patch_file(package_root: str, custom_dir: str, patch_filename: str,
+                     patch_content: str, file_path: str) -> str:
+    """Write a captured patch under ``custom_dir/write_diffs/`` and return its path.
+
+    On failure, record the error AND mark the ``patch_capture`` subsystem degraded
+    so the failure is visible in the health model — consistent across the post-write
+    and post-edit hooks (R4b: the write hook previously skipped the health update).
+    Returns the intended path even on failure (best-effort, for artifact registration)."""
+    write_diffs_dir = os.path.join(custom_dir, "write_diffs")
+    patch_path = os.path.join(write_diffs_dir, patch_filename)
+    try:
+        os.makedirs(write_diffs_dir, exist_ok=True)
+        with open(patch_path, "w") as f:
+            f.write(patch_content)
+    except Exception as exc:
+        record_error(
+            package_root, "PATCH_WRITE_FAILED", "warning", "patch_capture",
+            "write_patch_file",
+            message=f"Failed to write patch for {file_path}: {exc}",
+        )
+        update_health(
+            package_root, "patch_capture", "degraded",
+            warning={"code": "PATCH_WRITE_FAILED"},
+        )
+    return patch_path
+
+
 _dirs_ensured: set[str] = set()
 
 

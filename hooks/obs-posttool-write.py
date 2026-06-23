@@ -21,8 +21,8 @@ from hook_utils import run_fail_open, run_obs_hook, hash16
 from obs_utils import (
     append_event,
     register_artifact,
-    record_error,
     record_write_seq,
+    write_patch_file,
 )
 
 _HOOK_NAME = "obs-posttool-write"
@@ -120,23 +120,8 @@ def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     tool_use_short = tool_ref[:12] if tool_ref else "unknown"
     patch_filename = f"{seq}-{tool_use_short}.patch"
     custom_dir = os.path.join(package_root, "custom")
-    write_diffs_dir = os.path.join(custom_dir, "write_diffs")
-
-    try:
-        os.makedirs(write_diffs_dir, exist_ok=True)
-        patch_path = os.path.join(write_diffs_dir, patch_filename)
-        with open(patch_path, "w") as f:
-            f.write(patch_content)
-    except Exception as exc:
-        record_error(
-            package_root,
-            "PATCH_WRITE_FAILED",
-            "warning",
-            "patch_capture",
-            "write_patch_file",
-            message=f"Failed to write patch for {file_path}: {exc}",
-        )
-        patch_path = os.path.join(write_diffs_dir, patch_filename)  # best-effort path
+    patch_path = write_patch_file(
+        package_root, custom_dir, patch_filename, patch_content, file_path)
 
     # ------------------------------------------------------------------
     # Step 6: Register artifact in artifact_index.jsonl
