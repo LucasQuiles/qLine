@@ -2,7 +2,6 @@
 """Tests for the PreCompact capsule schema + merge/envelope."""
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -54,6 +53,18 @@ class TestMergeCapsule:
     def test_render_returns_none_when_empty(self):
         from precompact_capsule import render_systemmessage
         assert render_systemmessage({"_empty": True}) is None
+
+    def test_render_truncates_oversized_handoff_note(self):
+        """R3b: render_systemmessage must cap an oversized handoff_note at
+        MAX_NOTE_CHARS (defense-in-depth at the output boundary, not only at
+        write/read). Guards capsules whose note bypassed write_note/read_note."""
+        from precompact_capsule import render_systemmessage
+        from precompact_handoff import MAX_NOTE_CHARS
+        big = "x" * (MAX_NOTE_CHARS + 500)
+        msg = render_systemmessage({"handoff_note": big})
+        assert ("x" * MAX_NOTE_CHARS) in msg, "note should still render up to the cap"
+        assert ("x" * (MAX_NOTE_CHARS + 1)) not in msg, (
+            "R3b: oversized handoff_note must be truncated at render")
 
 
 class TestCapsuleStore:

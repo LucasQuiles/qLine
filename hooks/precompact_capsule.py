@@ -11,6 +11,7 @@ import os as _os
 
 from precompact_paths import safe_name as _safe_name
 from precompact_config import capsule_dir as _capsule_dir
+from precompact_handoff import MAX_NOTE_CHARS
 
 CAPSULE_SCHEMA_VERSION = 1
 
@@ -96,7 +97,9 @@ def render_systemmessage(capsule: dict) -> str | None:
         lines.append(f"Session stats: {capsule['session_stats']}")
     if capsule.get("handoff_note"):
         lines.append("Handoff note (agent-authored):")
-        lines.append(capsule["handoff_note"])
+        # R3b: cap at the render/output boundary too (write_note/read_note already
+        # enforce MAX_NOTE_CHARS; this guards capsules whose note bypassed them).
+        lines.append(capsule["handoff_note"][:MAX_NOTE_CHARS])
     if capsule.get("stale_recapture"):
         sr = capsule["stale_recapture"]
         if sr.get("stale"):
