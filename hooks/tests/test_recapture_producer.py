@@ -195,10 +195,31 @@ class TestStaleness:
 
 
 class TestProduceRecapture:
-    def test_none_when_all_fresh(self, tmp_path, monkeypatch):
+    def test_none_when_no_docs(self, tmp_path, monkeypatch):
+        """No recapture docs at all -> scan returns None (the empty-iter path)."""
         import recapture_producer as rp
         monkeypatch.setattr(rp, "_iter_recapture_docs", lambda roots: [])
         assert rp.scan([str(tmp_path)]) is None
+
+    def test_none_when_all_fresh(self, tmp_path, monkeypatch):
+        """A real conformant + fresh doc must be filtered out by scan (returns
+        None) — exercises the freshness branch, not just the empty-iter path.
+        Deterministic via injected now_epoch so it never rots."""
+        import recapture_producer as rp
+        doc = _write(tmp_path, "fresh.md", """\
+            ---
+            requires_recapture: true
+            freshness_window_days: 7
+            recapture_owner: "Q"
+            recapture_trigger_files: "%s/nomatch/*"
+            stale_action: "warn"
+            updated: "2026-06-22"
+            ---
+            body
+        """ % str(tmp_path))
+        monkeypatch.setattr(rp, "_iter_recapture_docs", lambda roots: [str(doc)])
+        # now == updated EOD, window 7d, trigger glob matches nothing -> fresh
+        assert rp.scan([str(tmp_path)], now_epoch=rp._eod_epoch("2026-06-22")) is None
 
     def test_missing_fields_section(self, tmp_path, monkeypatch):
         import recapture_producer as rp
@@ -282,18 +303,6 @@ class TestRender:
         assert "[warn]" in msg
         assert "claude-guards/README.md" in msg
 
-    def test_no_doc_body_leak(self):
-        # near-vacuous version from plan — kept as sanity, but C3 test below is real
-        from precompact_capsule import render_systemmessage
-        cap = {"schema_version": 1, "_empty": False,
-               "stale_recapture": {
-                   "stale": [{"path": "/x/y.md", "owner": "Q",
-                              "reason": "age", "stale_action": "block"}],
-                   "missing_fields": []}}
-        msg = render_systemmessage(cap)
-        for banned in ("action_boundary", "freshness_window_days:", "---"):
-            assert banned not in msg
-
     def test_c3_no_body_leak_full_chain(self, tmp_path, monkeypatch):
         """C3: feed a real fixture doc (multi-line action_boundary + body) through
         scan()->produce_recapture()->render_systemmessage(); assert no body
@@ -336,6 +345,13 @@ class TestRender:
             f"C3: body text leaked into rendered output: {msg[:200]}")
         assert ACTION_SENTINEL not in msg, (
             f"C3: action_boundary text leaked into rendered output: {msg[:200]}")
+
+        # Frontmatter structure must not leak either. Folds in the former
+        # near-vacuous test_no_doc_body_leak (which only checked a hand-built
+        # cap dict that never contained these tokens) — now proven through the
+        # real scan->produce->render chain.
+        for banned in ("action_boundary", "freshness_window_days:", "---"):
+            assert banned not in msg, f"C3: frontmatter token leaked: {banned!r}"
 
 
 class TestFailOpenAndParity:
