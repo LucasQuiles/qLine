@@ -20,7 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from hook_utils import iter_open_tasks, find_latest_plan  # noqa: E402
+from hook_utils import iter_open_tasks, find_latest_plan, log_hook_diagnostic  # noqa: E402
 from precompact_ledger import read_session_actions, _read_tail_lines  # noqa: E402
 from precompact_handoff import read_note  # noqa: E402
 from precompact_config import max_repos as _max_repos, max_failures as _max_failures  # noqa: E402
@@ -227,7 +227,13 @@ def produce_recapture(inp: dict) -> dict | None:
     try:
         import recapture_producer
         section = recapture_producer.scan(recapture_roots())
-    except Exception:
+    except Exception as exc:
+        # R2d: stay fail-open (C4 never-raise contract) but record the failure
+        # so an enabled-but-broken scan is visible, not silently swallowed.
+        log_hook_diagnostic(
+            "precompact-producers", "PreCompact", "recapture_scan_failed",
+            f"recapture scan raised: {exc!r}",
+            level="warning", context={"producer": "recapture"})
         return None  # fail-open: any exception -> null section
     return {"stale_recapture": section} if section else None
 

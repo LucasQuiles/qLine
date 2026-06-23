@@ -376,3 +376,31 @@ class TestFailOpenAndParity:
         # When every doc raises, scan returns None -> produce returns None
         assert result is None, (
             f"C4: expected None when all docs error, got: {result}")
+
+    def test_r2d_scan_failure_logs_diagnostic_not_silent(self, tmp_path, monkeypatch):
+        """R2d: a top-level scan() failure must stay fail-open (None, per C4) AND
+        write an actionable fault record — not be swallowed silently."""
+        import json
+        import hook_utils
+        import recapture_producer as rp
+
+        ledger = tmp_path / "faults.jsonl"
+        monkeypatch.setattr(hook_utils, "_LEDGER_PATH", str(ledger))
+
+        def _boom(roots, **kw):
+            raise RuntimeError("injected scan failure")
+
+        monkeypatch.setattr(rp, "scan", _boom)
+        monkeypatch.setenv("PRECOMPACT_RECAPTURE_ENABLED", "1")
+        monkeypatch.setenv("PRECOMPACT_RECAPTURE_ROOTS", str(tmp_path))
+
+        from precompact_producers import produce_recapture
+        result = produce_recapture({"session_id": "s"})
+
+        # C4 fail-open preserved
+        assert result is None, f"expected None on scan failure, got {result!r}"
+        # R2d: the failure must be recorded, not silently swallowed
+        assert ledger.exists(), "R2d: scan failure must write a fault record"
+        records = [json.loads(ln) for ln in ledger.read_text().splitlines() if ln.strip()]
+        assert any(r.get("reason_class") == "recapture_scan_failed" for r in records), (
+            f"R2d: expected a recapture_scan_failed diagnostic, got {records}")
