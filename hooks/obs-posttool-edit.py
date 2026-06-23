@@ -4,7 +4,6 @@
 Scope: Edit tool only. Exits 0 for any other tool_name including MultiEdit
 (gated until MultiEdit fixture is captured).
 """
-import json
 import os
 from typing import Any
 
@@ -14,8 +13,7 @@ from obs_utils import (
     register_artifact,
     record_error,
     update_health,
-    _load_read_state,
-    _save_read_state,
+    record_write_seq,
 )
 
 _HOOK_NAME = "obs-posttool-edit"
@@ -145,12 +143,7 @@ def _handle(input_data: dict, session_id: str, package_root: str) -> None:
         seq=seq, file_path=file_path, patch_hash=patch_hash,
     )
 
-    state_path = os.path.join(custom_dir, ".read_state.json")
-    state = _load_read_state(state_path)
-    existing: dict = state.get(file_path, {})
-    existing["last_write_seq"] = seq
-    state[file_path] = existing
-    _save_read_state(state_path, state)
+    record_write_seq(custom_dir, file_path, seq)
 
 
 if __name__ == "__main__":

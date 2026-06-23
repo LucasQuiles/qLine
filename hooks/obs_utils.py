@@ -105,6 +105,18 @@ def _save_read_state(state_path: str, state: dict) -> None:
         pass
 
 
+def record_write_seq(custom_dir: str, file_path: str, seq: int) -> None:
+    """Persist ``last_write_seq`` for ``file_path`` in the read_state sidecar,
+    preserving any existing entry (e.g. read_count, last_read_seq). Shared by the
+    post-write and post-edit observability hooks (R4a — single source of truth)."""
+    state_path = os.path.join(custom_dir, ".read_state.json")
+    state = _load_read_state(state_path)
+    existing: dict = state.get(file_path, {})
+    existing["last_write_seq"] = seq
+    state[file_path] = existing
+    _save_read_state(state_path, state)
+
+
 _dirs_ensured: set[str] = set()
 
 

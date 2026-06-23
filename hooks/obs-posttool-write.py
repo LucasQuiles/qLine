@@ -14,7 +14,6 @@ Per-call steps (preamble handled by run_obs_hook):
   8. Register artifact via register_artifact()
   9. Update custom/.read_state.json with last_write_seq for this file
 """
-import json
 import os
 from typing import Any
 
@@ -23,8 +22,7 @@ from obs_utils import (
     append_event,
     register_artifact,
     record_error,
-    _load_read_state,
-    _save_read_state,
+    record_write_seq,
 )
 
 _HOOK_NAME = "obs-posttool-write"
@@ -154,17 +152,8 @@ def _handle(input_data: dict, session_id: str, package_root: str) -> None:
         patch_hash=patch_hash,
     )
 
-    # ------------------------------------------------------------------
-    # Step 7: Update read_state sidecar with last_write_seq
-    # ------------------------------------------------------------------
-    state_path = os.path.join(custom_dir, ".read_state.json")
-    state = _load_read_state(state_path)
-
-    # Preserve any existing entry (e.g., read_count, last_read_seq)
-    existing: dict = state.get(file_path, {})
-    existing["last_write_seq"] = seq
-    state[file_path] = existing
-    _save_read_state(state_path, state)
+    # Step 7: Update read_state sidecar with last_write_seq (shared helper).
+    record_write_seq(custom_dir, file_path, seq)
 
 
 if __name__ == "__main__":
