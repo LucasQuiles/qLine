@@ -218,12 +218,27 @@ def produce_handoff(inp: dict) -> dict | None:
     return {"handoff_note": note} if note else None
 
 
+# --- recapture (V6A) --------------------------------------------------------
+
+def produce_recapture(inp: dict) -> dict | None:
+    from precompact_config import recapture_enabled, recapture_roots
+    if not recapture_enabled():
+        return None
+    try:
+        import recapture_producer
+        section = recapture_producer.scan(recapture_roots())
+    except Exception:
+        return None  # fail-open: any exception -> null section
+    return {"stale_recapture": section} if section else None
+
+
 PRODUCERS = {
     "preserve": produce_preserve,
     "git": produce_git,
     "failures": produce_failures,
     "stats": produce_stats,
     "handoff": produce_handoff,
+    "recapture": produce_recapture,
 }
 
 

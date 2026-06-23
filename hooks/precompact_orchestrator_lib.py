@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from precompact_capsule import merge_capsule
 from precompact_config import per_producer_deadline_s as _deadline
 
-PRODUCER_ORDER = ["preserve", "git", "failures", "stats", "handoff"]
+PRODUCER_ORDER = ["preserve", "git", "failures", "stats", "handoff", "recapture"]
 PER_PRODUCER_DEADLINE_S = _deadline()
 _PRODUCERS_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  "precompact_producers.py")

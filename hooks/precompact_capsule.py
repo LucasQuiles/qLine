@@ -22,6 +22,7 @@ SECTION_KEYS = (
     "unresolved_failures",  # failures
     "session_stats",    # stats
     "handoff_note",     # handoff
+    "stale_recapture",  # recapture
 )
 
 _ENVELOPE_KEYS = {"_producers_ok", "_producers_failed", "_empty", "_ms", "schema_version"}
@@ -96,6 +97,20 @@ def render_systemmessage(capsule: dict) -> str | None:
     if capsule.get("handoff_note"):
         lines.append("Handoff note (agent-authored):")
         lines.append(capsule["handoff_note"])
+    if capsule.get("stale_recapture"):
+        sr = capsule["stale_recapture"]
+        if sr.get("stale"):
+            lines.append("Stale recapture evidence "
+                         "(do not cite as current proof until recaptured):")
+            for s in sr["stale"][:20]:
+                lines.append(
+                    f"  - [{s.get('stale_action','warn')}] {s.get('path','?')} "
+                    f"(owner {s.get('owner','?')}; {s.get('reason','?')})")
+        if sr.get("missing_fields"):
+            lines.append("Recapture metadata incomplete (backfill V6A fields):")
+            for m in sr["missing_fields"][:20]:
+                miss = ", ".join(m.get("missing", []))
+                lines.append(f"  - {m.get('path','?')} (missing: {miss})")
     if len(lines) == 1:
         return None
     return "\n".join(lines)

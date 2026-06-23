@@ -106,3 +106,18 @@ def max_repos() -> int:
 
 def max_failures() -> int:
     return _env_int("PRECOMPACT_MAX_FAILURES", 10)
+
+
+# --- recapture producer (V6A) ----------------------------------------------
+
+def recapture_enabled() -> bool:
+    return _env_int("PRECOMPACT_RECAPTURE_ENABLED", 0) == 1
+
+
+def recapture_roots() -> list[str]:
+    raw = _env_str("PRECOMPACT_RECAPTURE_ROOTS", _home())
+    return [p for p in raw.split(":") if p]
+
+
+def recapture_default_window_days() -> int:
+    return _env_int("PRECOMPACT_RECAPTURE_DEFAULT_WINDOW_DAYS", 7)
