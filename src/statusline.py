@@ -75,6 +75,7 @@ NO_COLOR = bool(os.environ.get("NO_COLOR"))
 PROC_DIR = os.environ.get("QLINE_PROC_DIR", "/proc")
 CACHE_PATH = os.environ.get("QLINE_CACHE_PATH", "/tmp/qline-cache.json")
 CACHE_MAX_AGE_S = 60.0
+CACHE_STALE_MAX_AGE_S = 300.0
 _alert_state: dict[str, Any] = {}  # in-process cache (reset per invocation)
 # NOTE: Since the script runs once and exits per CC call, _alert_state
 # must be loaded from / saved to the disk cache for persistence.
@@ -1635,6 +1636,48 @@ def _apply_cached(state: dict, cache: dict, name: str, now: float) -> None:
         state[f"{name}_stale"] = True
 
 
+def _apply_fresh_cached(state: dict, cache: dict, name: str, now: float) -> bool:
+    """Apply a valid fresh module entry without marking it stale."""
+    entry = cache.get(name)
+    if not isinstance(entry, dict):
+        return False
+    ts = entry.get("timestamp")
+    if not isinstance(ts, (int, float)) or ts > now:
+        return False
+    if now - ts > CACHE_MAX_AGE_S:
+        return False
+    values = entry.get("value")
+    if not isinstance(values, dict):
+        return False
+    keys = _CACHE_KEYS.get(name, [])
+    if not any(key in values for key in keys):
+        return False
+    state.update({key: values[key] for key in keys if key in values})
+    return True
+
+
+def _apply_stale_cached(state: dict, cache: dict, name: str, now: float) -> bool:
+    """Apply bounded old evidence after a refresh failure."""
+    entry = cache.get(name)
+    if not isinstance(entry, dict):
+        return False
+    ts = entry.get("timestamp")
+    if not isinstance(ts, (int, float)) or ts > now:
+        return False
+    if now - ts > CACHE_STALE_MAX_AGE_S:
+        return False
+    values = entry.get("value")
+    if not isinstance(values, dict):
+        return False
+    keys = _CACHE_KEYS.get(name, [])
+    selected = {key: values[key] for key in keys if key in values}
+    if not selected:
+        return False
+    state.update(selected)
+    state[f"{name}_stale"] = True
+    return True
+
+
 # --- System Data Orchestrator ---
 
 
@@ -1647,11 +1690,8 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
         return
     cache = load_cache()
     now = time.time()
-    new_cache: dict[str, Any] = {}
-
-    # Preserve obs namespace across cache rebuilds
-    if "_obs" in cache:
-        new_cache["_obs"] = cache["_obs"]
+    new_cache: dict[str, Any] = dict(cache)
+    cache_changed = False
 
     collectors = [
         ("git", collect_git),
@@ -1666,15 +1706,22 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
         cfg = theme.get(name, {})
         if not cfg.get("enabled", True):
             continue
+        if _apply_fresh_cached(state, cache, name, now):
+            continue
         if name == "disk":
             collect_disk._path = cfg.get("path", "/")
         try:
             fn(state)
+            previous = new_cache.get(name)
             _cache_module(new_cache, state, name, now)
+            if new_cache.get(name) == previous:
+                _apply_stale_cached(state, cache, name, now)
+            cache_changed = cache_changed or new_cache.get(name) != previous
         except Exception:
-            _apply_cached(state, cache, name, now)
+            _apply_stale_cached(state, cache, name, now)
 
-    save_cache(new_cache)
+    if cache_changed:
+        save_cache(new_cache)
 
 
 # --- Module Renderers (system) ---
