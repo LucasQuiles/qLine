@@ -1314,6 +1314,74 @@ assert_contains "CACHE-07a: cpu cached" "$OUT" "cpu_val:55"
 assert_contains "CACHE-07b: mem cached" "$OUT" "mem_val:70"
 assert_contains "CACHE-07c: has timestamp" "$OUT" "has_ts:True"
 
+# CACHE-08: fresh module cache is the hot path — no collectors or durable write
+OUT=$(run_py "
+import statusline, time
+now = time.time()
+cache = {
+    name: {'value': {key: value}, 'timestamp': now}
+    for name, key, value in (
+        ('git', 'git_branch', 'main'),
+        ('cpu', 'cpu_percent', 42),
+        ('memory', 'memory_percent', 55),
+        ('disk', 'disk_percent', 12),
+        ('agents', 'agent_count', 3),
+        ('tmux', 'tmux_sessions', 2),
+    )
+}
+calls = []
+for name in ('git', 'cpu', 'memory', 'disk', 'agents', 'tmux'):
+    setattr(statusline, 'collect_' + name, lambda state, n=name: calls.append(n))
+writes = []
+statusline.load_cache = lambda: cache
+statusline.save_cache = lambda value: writes.append(value)
+state = {}
+statusline.collect_system_data(state, statusline.DEFAULT_THEME)
+print('calls:' + ','.join(calls))
+print('writes:' + str(len(writes)))
+print('cpu:' + str(state.get('cpu_percent')))
+print('fresh:' + str(state.get('cpu_stale', False)))
+")
+assert_contains "CACHE-08a: fresh cache skips collectors" "$OUT" "calls:"
+assert_not_contains "CACHE-08b: no collector names" "$OUT" "cpu,"
+assert_contains "CACHE-08c: fresh cache skips durable write" "$OUT" "writes:0"
+assert_contains "CACHE-08d: fresh value applied" "$OUT" "cpu:42"
+assert_contains "CACHE-08e: fresh value is not stale" "$OUT" "fresh:False"
+
+# CACHE-09: an expired collector failure uses bounded stale evidence, not a zero
+OUT=$(run_py "
+import statusline, time
+now = time.time()
+cache = {
+    'cpu': {'value': {'cpu_percent': 42}, 'timestamp': now - 120},
+    'memory': {'value': {'memory_percent': 55}, 'timestamp': now},
+    'disk': {'value': {'disk_percent': 12}, 'timestamp': now},
+    'agents': {'value': {'agent_count': 3}, 'timestamp': now},
+    'tmux': {'value': {'tmux_sessions': 2}, 'timestamp': now},
+    'git': {'value': {'git_branch': 'main'}, 'timestamp': now},
+}
+calls = []
+def failed_cpu(state):
+    calls.append('cpu')
+    raise RuntimeError('collector failed')
+statusline.collect_cpu = failed_cpu
+for name in ('git', 'memory', 'disk', 'agents', 'tmux'):
+    setattr(statusline, 'collect_' + name, lambda state, n=name: calls.append(n))
+writes = []
+statusline.load_cache = lambda: cache
+statusline.save_cache = lambda value: writes.append(value)
+state = {}
+statusline.collect_system_data(state, statusline.DEFAULT_THEME)
+print('calls:' + ','.join(calls))
+print('writes:' + str(len(writes)))
+print('cpu:' + str(state.get('cpu_percent')))
+print('stale:' + str(state.get('cpu_stale', False)))
+")
+assert_contains "CACHE-09a: only expired collector runs" "$OUT" "calls:cpu"
+assert_contains "CACHE-09b: failed refresh does not rewrite" "$OUT" "writes:0"
+assert_contains "CACHE-09c: bounded old value retained" "$OUT" "cpu:42"
+assert_contains "CACHE-09d: fallback is marked stale" "$OUT" "stale:True"
+
 echo ""
 fi
 
