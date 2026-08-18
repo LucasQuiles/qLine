@@ -10,6 +10,8 @@ Import pattern (avoids circular imports):
 """
 from __future__ import annotations
 
+__version__ = "3.0.0"
+
 import json
 import os
 import time
@@ -448,17 +450,27 @@ def _read_transcript_tail(path: str, window_size: int = 5, diag_root: str | None
     }
 
 
-def _read_transcript_anchor(path: str, diag_root: str | None = None) -> int | None:
-    """Read the first-turn cache_creation from the start of a transcript.
+def _read_transcript_first_turn_field(
+    path: str,
+    field: str,
+    diag_tag: str,
+    diag_root: str | None = None,
+) -> int | None:
+    """Read first non-zero int from `field` in any transcript turn's usage.
 
     Reads first 128KB — transcripts start with metadata entries
     (permission-mode, file-history-snapshot, user messages, attachments)
     before the first assistant message with usage data appears.
     Attachments alone can be 35KB+, pushing first API response past 64KB.
-    Returns cache_creation_input_tokens or None.
+
+    Used by both anchor variants:
+      - cache_creation_input_tokens (cold-start anchor)
+      - cache_read_input_tokens (warm-restart anchor)
 
     Args:
         path: Path to transcript JSONL file.
+        field: Usage field to read (e.g. "cache_creation_input_tokens").
+        diag_tag: Tag for parse diagnostic sidecar entries.
         diag_root: Optional package root for parse diagnostic sidecar (OPP-14).
     """
     try:
@@ -475,52 +487,29 @@ def _read_transcript_anchor(path: str, diag_root: str | None = None) -> int | No
             entry = json.loads(line)
         except (json.JSONDecodeError, ValueError) as exc:
             if diag_root:
-                _write_parse_diag(diag_root, "transcript_anchor", f"JSONDecodeError: {exc}", line)
+                _write_parse_diag(diag_root, diag_tag, f"JSONDecodeError: {exc}", line)
             continue
         usage, _rid = _extract_usage(entry)
         if usage is None:
             continue
-        cc = usage.get("cache_creation_input_tokens")
-        if cc is not None and int(cc) > 0:
-            return int(cc)
+        v = usage.get(field)
+        if v is not None and int(v) > 0:
+            return int(v)
     return None
+
+
+def _read_transcript_anchor(path: str, diag_root: str | None = None) -> int | None:
+    """Read first-turn cache_creation from transcript (cold-start anchor)."""
+    return _read_transcript_first_turn_field(
+        path, "cache_creation_input_tokens", "transcript_anchor", diag_root
+    )
 
 
 def _read_transcript_anchor_with_read(path: str, diag_root: str | None = None) -> int | None:
-    """Read the first-turn system overhead from cache_read on warm restarts.
-
-    When a session starts with a warm cache (cache_creation < 5000),
-    the real system overhead is in cache_read_input_tokens — that's what
-    the API read from the existing cache. Reads first 128KB to find it
-    (transcript starts with metadata entries + attachments before first API response).
-
-    Args:
-        path: Path to transcript JSONL file.
-        diag_root: Optional package root for parse diagnostic sidecar (OPP-14).
-    """
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            chunk = f.read(131072)
-    except OSError:
-        return None
-
-    for line in chunk.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except (json.JSONDecodeError, ValueError) as exc:
-            if diag_root:
-                _write_parse_diag(diag_root, "transcript_anchor_with_read", f"JSONDecodeError: {exc}", line)
-            continue
-        usage, _rid = _extract_usage(entry)
-        if usage is None:
-            continue
-        cr = usage.get("cache_read_input_tokens")
-        if cr is not None and int(cr) > 0:
-            return int(cr)
-    return None
+    """Read first-turn cache_read for warm-restart anchors."""
+    return _read_transcript_first_turn_field(
+        path, "cache_read_input_tokens", "transcript_anchor_with_read", diag_root
+    )
 
 
 def _read_manifest_anchor(package_root: str | None) -> int | None:

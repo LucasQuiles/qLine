@@ -1382,6 +1382,42 @@ assert_contains "CACHE-09b: failed refresh does not rewrite" "$OUT" "writes:0"
 assert_contains "CACHE-09c: bounded old value retained" "$OUT" "cpu:42"
 assert_contains "CACHE-09d: fallback is marked stale" "$OUT" "stale:True"
 
+# CACHE-10: render latency telemetry is sampled, not fsynced on every render
+OUT=$(run_py "
+import statusline
+statusline.CACHE_PATH = '/tmp/qline-latency-sampling-test.json'
+statusline.time.time = lambda: 1000.0
+writes = []
+statusline._load_cache_unlocked = lambda: {
+    '_render_latency_last_sample_ts': 998.0,
+    '_render_latency_history': [10],
+}
+statusline._save_cache_unlocked = lambda value: writes.append(value)
+statusline._record_render_latency(20)
+print('writes:' + str(len(writes)))
+")
+assert_contains "CACHE-10: latency write skipped inside sample interval" "$OUT" "writes:0"
+
+# CACHE-11: a due latency sample updates history and the due marker once
+OUT=$(run_py "
+import statusline
+statusline.CACHE_PATH = '/tmp/qline-latency-due-test.json'
+statusline.time.time = lambda: 1000.0
+writes = []
+statusline._load_cache_unlocked = lambda: {
+    '_render_latency_last_sample_ts': 990.0,
+    '_render_latency_history': [10],
+}
+statusline._save_cache_unlocked = lambda value: writes.append(value.copy())
+statusline._record_render_latency(20)
+print('writes:' + str(len(writes)))
+print('history:' + str(writes[0].get('_render_latency_history')))
+print('sampled:' + str(writes[0].get('_render_latency_last_sample_ts')))
+")
+assert_contains "CACHE-11a: due latency sample writes once" "$OUT" "writes:1"
+assert_contains "CACHE-11b: due latency sample retained" "$OUT" "history:[10, 20]"
+assert_contains "CACHE-11c: latency due marker advances" "$OUT" "sampled:1000.0"
+
 echo ""
 fi
 
