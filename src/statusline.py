@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/opt/homebrew/bin/python3.12
 """Claude Code status-line command — qLine.
 
 Reads Claude status JSON from stdin, emits exactly one styled stdout
@@ -19,15 +19,19 @@ Contract:
 """
 from __future__ import annotations
 
+__version__ = "3.0.0"
+
+import fcntl
 import hashlib
 import json
 import os
 import re
 import select
-import shutil
+import struct
 import subprocess
 import sys
 import tempfile
+import termios
 import time
 try:
     import tomllib
@@ -41,6 +45,51 @@ from typing import Any
 
 from context_overhead import inject_context_overhead
 
+
+def _check_versions() -> None:
+    """Warn when statusline/context_overhead are older than obs_utils."""
+    try:
+        import obs_utils as _obs_mod
+        import context_overhead as _co_mod
+        if not hasattr(_obs_mod, "__version__"):
+            import warnings
+            warnings.warn(
+                f"qLine: stale obs_utils.py at {_obs_mod.__file__} — "
+                f"expected version 2.1.0+. Run: cp hooks/obs_utils.py ~/.claude/obs_utils.py",
+                stacklevel=2,
+            )
+            return
+
+        def _t(v: Any) -> tuple[int, int]:
+            parts = str(v).split(".")[:2]
+            vals: list[int] = []
+            for p in parts:
+                try:
+                    vals.append(int(p))
+                except (TypeError, ValueError):
+                    vals.append(0)
+            while len(vals) < 2:
+                vals.append(0)
+            return vals[0], vals[1]
+
+        obs_v = getattr(_obs_mod, "__version__", "0.0.0")
+        sl_v = __version__
+        co_v = getattr(_co_mod, "__version__", "0.0.0")
+        if _t(sl_v) < _t(obs_v) or _t(co_v) < _t(obs_v):
+            import warnings
+            warnings.warn(
+                f"qLine: stale statusline ({sl_v}) or context_overhead ({co_v}) "
+                f"vs obs_utils ({obs_v}). Run ./update.sh.",
+                stacklevel=2,
+            )
+    except Exception as _exc:
+        import warnings
+        warnings.warn(
+            f"qLine: version check failed: {type(_exc).__name__}",
+            stacklevel=2,
+        )
+
+
 # --- Observability integration (guarded import) ---
 try:
     _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -52,16 +101,7 @@ try:
         if os.path.isdir(_obs_path) and _obs_path not in sys.path:
             sys.path.insert(0, _obs_path)
     from obs_utils import resolve_package_root_env, update_health, _atomic_jsonl_append, load_manifest
-    # Detect stale copies: obs_utils.__version__ was added in 2.1.0.
-    # If it's missing, the import resolved to a pre-2.1.0 copy.
-    import obs_utils as _obs_mod
-    if not hasattr(_obs_mod, "__version__"):
-        import warnings
-        warnings.warn(
-            f"qLine: stale obs_utils.py at {_obs_mod.__file__} — "
-            f"expected version 2.1.0+. Run: cp hooks/obs_utils.py ~/.claude/obs_utils.py",
-            stacklevel=1,
-        )
+    _check_versions()
     _OBS_AVAILABLE = True
 except Exception:
     _OBS_AVAILABLE = False
@@ -76,6 +116,7 @@ PROC_DIR = os.environ.get("QLINE_PROC_DIR", "/proc")
 CACHE_PATH = os.environ.get("QLINE_CACHE_PATH", "/tmp/qline-cache.json")
 CACHE_MAX_AGE_S = 60.0
 CACHE_STALE_MAX_AGE_S = 300.0
+RENDER_LATENCY_SAMPLE_INTERVAL_S = 5.0
 _alert_state: dict[str, Any] = {}  # in-process cache (reset per invocation)
 # NOTE: Since the script runs once and exits per CC call, _alert_state
 # must be loaded from / saved to the disk cache for persistence.
@@ -86,21 +127,44 @@ _FAULT_LEDGER_PATH = os.path.join(
 )
 _FAULT_SCAN_BYTES = 32768  # fast reverse scan: read last 32KB
 
+def _get_controlling_tty_width() -> int | None:
+    """Return the controlling terminal width, even when stdin/stdout are pipes."""
+    fd: int | None = None
+    try:
+        fd = os.open("/dev/tty", os.O_RDONLY)
+        packed = fcntl.ioctl(fd, termios.TIOCGWINSZ, struct.pack("HHHH", 0, 0, 0, 0))
+        _rows, cols, _xpixels, _ypixels = struct.unpack("HHHH", packed)
+        if cols > 0:
+            return int(cols)
+    except Exception:
+        return None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+    return None
+
+
 def _get_term_width(theme: dict | None = None) -> int:
     """Get effective terminal width for module wrapping.
 
-    CC runs the statusline as a piped subprocess with no TTY — shutil.get_terminal_size
-    always returns the fallback. Window resizes are invisible to us. The only way to
-    control width is via layout.max_width in ~/.config/qline.toml.
+    CC runs the statusline as a piped subprocess, so stdout/stdin size checks
+    see only pipes. A controlling terminal can still exist, and /dev/tty tracks
+    live window resizes when available.
 
-    Priority: layout.max_width config > COLUMNS env var > 200 fallback.
+    Priority: layout.max_width config > /dev/tty > COLUMNS env var > 200 fallback.
     """
     if theme:
         cfg_max = theme.get("layout", {}).get("max_width", 0)
         if cfg_max > 0:
             return cfg_max
+    tty_width = _get_controlling_tty_width()
+    if tty_width:
+        return tty_width
     # COLUMNS env var: some terminals/shells export this on resize.
-    # CC doesn't, but other callers might.
+    # CC may not, but other callers might.
     cols = os.environ.get("COLUMNS")
     if cols and cols.isdigit() and int(cols) > 0:
         return int(cols)
@@ -600,6 +664,10 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     """Create a normalized internal state from the raw payload."""
     state: dict[str, Any] = {}
 
+    session_id = payload.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        state["_session_id"] = session_id
+
     # Model name
     model = payload.get("model")
     if isinstance(model, dict):
@@ -741,6 +809,45 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
     worktree = payload.get("worktree")
     if isinstance(worktree, bool):
         state["is_worktree"] = worktree
+
+    # Optional: documented payload extras
+    rate_limits = payload.get("rate_limits")
+    if isinstance(rate_limits, dict):
+        five_hour = rate_limits.get("five_hour")
+        if isinstance(five_hour, dict):
+            pct = five_hour.get("used_percentage")
+            resets = five_hour.get("resets_at")
+            if isinstance(pct, (int, float)):
+                state["rl_5h_pct"] = float(pct)
+            if isinstance(resets, (int, float)):
+                state["rl_5h_resets_at"] = int(resets)
+        seven_day = rate_limits.get("seven_day")
+        if isinstance(seven_day, dict):
+            pct = seven_day.get("used_percentage")
+            resets = seven_day.get("resets_at")
+            if isinstance(pct, (int, float)):
+                state["rl_7d_pct"] = float(pct)
+            if isinstance(resets, (int, float)):
+                state["rl_7d_resets_at"] = int(resets)
+
+    exceeds_200k = payload.get("exceeds_200k_tokens")
+    if isinstance(exceeds_200k, bool):
+        state["exceeds_200k"] = exceeds_200k
+
+    if isinstance(workspace, dict):
+        project_dir = workspace.get("project_dir")
+        if isinstance(project_dir, str) and project_dir:
+            state["project_dir"] = project_dir
+
+    agent = payload.get("agent")
+    if isinstance(agent, dict):
+        agent_name = agent.get("name")
+        if isinstance(agent_name, str) and agent_name:
+            state["agent_name"] = agent_name
+
+    session_name = payload.get("session_name")
+    if isinstance(session_name, str) and session_name:
+        state["session_name"] = session_name
 
     # Optional: current_usage (per-turn cache tokens from context_window)
     current_usage = None
@@ -1567,7 +1674,27 @@ def collect_tmux(state: dict[str, Any]) -> None:
 # --- Cache Layer ---
 
 
-def load_cache() -> dict[str, Any]:
+_LATENCY_CACHE_KEYS = (
+    "_render_latency_ms",
+    "_render_latency_history",
+    "_render_latency_p95",
+    "_render_latency_read_error",
+    "_render_latency_write_error",
+    "_render_latency_last_sample_ts",
+)
+
+
+def _cache_lock_path() -> str:
+    return CACHE_PATH + ".lock"
+
+
+def _ensure_lock_dir(lock_path: str) -> None:
+    lock_dir = os.path.dirname(lock_path)
+    if lock_dir:
+        os.makedirs(lock_dir, exist_ok=True)
+
+
+def _load_cache_unlocked() -> dict[str, Any]:
     """Load cache file, return empty dict on any failure."""
     try:
         with open(CACHE_PATH) as f:
@@ -1581,8 +1708,12 @@ def load_cache() -> dict[str, Any]:
         return {}
 
 
-def save_cache(cache: dict[str, Any]) -> None:
-    """Atomically save cache to disk. Silent on failure."""
+def load_cache() -> dict[str, Any]:
+    """Load cache file, return empty dict on any failure."""
+    return _load_cache_unlocked()
+
+
+def _save_cache_unlocked(cache: dict[str, Any]) -> None:
     try:
         data = {"version": CACHE_VERSION, "modules": cache}
         fd = tempfile.NamedTemporaryFile(
@@ -1600,6 +1731,155 @@ def save_cache(cache: dict[str, Any]) -> None:
                 os.unlink(fd.name)
             except OSError:
                 pass
+    except Exception:
+        pass
+
+
+def _preserve_current_latency_fields(cache: dict[str, Any], current: dict[str, Any]) -> None:
+    for key in _LATENCY_CACHE_KEYS:
+        if key in current:
+            cache[key] = current[key]
+
+
+def save_cache(cache: dict[str, Any]) -> None:
+    """Atomically save cache to disk. Silent on failure."""
+    try:
+        lock_path = _cache_lock_path()
+        _ensure_lock_dir(lock_path)
+        with open(lock_path, "a") as lock_fd:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+            try:
+                current = _load_cache_unlocked()
+                _preserve_current_latency_fields(cache, current)
+                _save_cache_unlocked(cache)
+            finally:
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+
+
+def _record_render_latency(latency_ms: int) -> None:
+    """Record a bounded-rate render latency sample under an exclusive lock."""
+    lock_path = _cache_lock_path()
+    _ensure_lock_dir(lock_path)
+    with open(lock_path, "a") as lock_fd:
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+        try:
+            cache = _load_cache_unlocked()
+            now = time.time()
+            last_sample = cache.get("_render_latency_last_sample_ts")
+            if (
+                isinstance(last_sample, (int, float))
+                and 0 <= now - last_sample < RENDER_LATENCY_SAMPLE_INTERVAL_S
+            ):
+                return
+            cache["_render_latency_ms"] = latency_ms
+            history = cache.get("_render_latency_history", [])
+            if not isinstance(history, list):
+                history = []
+            history.append(latency_ms)
+            history = history[-50:]
+            cache["_render_latency_history"] = history
+            idx = max(0, min(len(history) - 1, int(len(history) * 0.95)))
+            cache["_render_latency_p95"] = sorted(history)[idx] if history else 0
+            cache["_render_latency_last_sample_ts"] = now
+            _save_cache_unlocked(cache)
+        finally:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+
+
+def _write_statusline_diag(package_root: str | None, event: str, detail: str) -> bool:
+    """Append a statusline diagnostic JSONL record. Returns False on failure."""
+    if not package_root:
+        return False
+    try:
+        diag_dir = os.path.join(package_root, "native", "statusline")
+        os.makedirs(diag_dir, exist_ok=True)
+        diag_path = os.path.join(diag_dir, "diagnostics.jsonl")
+        rec = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "detail": detail,
+        }
+        with open(diag_path, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+        return True
+    except Exception:
+        return False
+
+
+def _invariant_signature(violations: list[str]) -> str:
+    keys = sorted({str(v).split(":", 1)[0] for v in violations})
+    return json.dumps(keys, sort_keys=True, separators=(",", ":"))
+
+
+def _write_invariant_signature(sig_path: str, sig: str) -> bool:
+    directory = os.path.dirname(sig_path)
+    fd = tempfile.NamedTemporaryFile(
+        mode="w", dir=directory or None, prefix=".invariants-", suffix=".tmp", delete=False,
+    )
+    try:
+        fd.write(sig)
+        fd.flush()
+        os.fsync(fd.fileno())
+        fd.close()
+        os.replace(fd.name, sig_path)
+        return True
+    except Exception:
+        fd.close()
+        try:
+            os.unlink(fd.name)
+        except OSError:
+            pass
+        return False
+
+
+def _log_invariant_record(inv_path: str, record: dict[str, Any]) -> bool:
+    """Append an invariant record once per distinct violation key set."""
+    try:
+        directory = os.path.dirname(inv_path)
+        os.makedirs(directory, exist_ok=True)
+        violations = record.get("violations")
+        if not isinstance(violations, list):
+            violations = []
+        sig = _invariant_signature([str(v) for v in violations])
+        sig_path = inv_path + ".last"
+        lock_path = inv_path + ".lock"
+        with open(lock_path, "a") as lock_fd:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+            try:
+                try:
+                    with open(sig_path) as f:
+                        if f.read() == sig:
+                            return False
+                except FileNotFoundError:
+                    pass
+
+                if not _atomic_jsonl_append(inv_path, record):
+                    return False
+                return _write_invariant_signature(sig_path, sig)
+            finally:
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        return False
+
+
+def _reset_invariant_debounce(inv_path: str) -> None:
+    """Clear invariant debounce state after a clean render."""
+    try:
+        directory = os.path.dirname(inv_path)
+        os.makedirs(directory, exist_ok=True)
+        sig_path = inv_path + ".last"
+        lock_path = inv_path + ".lock"
+        with open(lock_path, "a") as lock_fd:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+            try:
+                try:
+                    os.unlink(sig_path)
+                except FileNotFoundError:
+                    pass
+            finally:
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
     except Exception:
         pass
 
@@ -1650,9 +1930,10 @@ def _apply_fresh_cached(state: dict, cache: dict, name: str, now: float) -> bool
     if not isinstance(values, dict):
         return False
     keys = _CACHE_KEYS.get(name, [])
-    if not any(key in values for key in keys):
+    selected = {key: values[key] for key in keys if key in values}
+    if not selected:
         return False
-    state.update({key: values[key] for key in keys if key in values})
+    state.update(selected)
     return True
 
 
@@ -2365,8 +2646,9 @@ def _render_line2_piped(state: dict[str, Any], theme: dict[str, Any],
 def _check_invariants(state: dict[str, Any]) -> list[str]:
     """Check metric invariants. Returns list of violations (empty = clean).
 
-    Runs automatically when QLINE_DEBUG=1. Violations are logged to stderr
-    but never crash the statusline.
+    Runs unconditionally on every render. Violations are appended to
+    <package_root>/native/statusline/invariants.jsonl. Debug runs also mirror
+    violations to stderr. Never crashes the statusline.
     """
     violations: list[str] = []
 
@@ -2378,6 +2660,11 @@ def _check_invariants(state: dict[str, Any]) -> list[str]:
         computed = round(ctx_used * 100 / ctx_total)
         if abs(computed - raw_pct) > 1:
             violations.append(f"pct_drift: raw={raw_pct} computed={computed}")
+
+    # Latency budget: refresh=1 risks CC's 300ms in-flight cancellation.
+    p95 = state.get("_render_latency_p95")
+    if isinstance(p95, (int, float)) and p95 > 200:
+        violations.append(f"latency_budget: p95={p95}ms exceeds 200ms (CC 300ms debounce)")
 
     # free + used == total (within rounding)
     free = max(0, ctx_total - ctx_used)
@@ -2426,13 +2713,37 @@ def render(state: dict[str, Any], theme: dict[str, Any] | None = None) -> str:
     if theme is None:
         theme = DEFAULT_THEME
 
-    # Invariant checking (QLINE_DEBUG=1 enables)
-    if os.environ.get("QLINE_DEBUG") == "1":
-        violations = _check_invariants(state)
-        if violations:
+    violations = _check_invariants(state)
+    if violations:
+        if os.environ.get("QLINE_DEBUG") == "1":
             import sys as _sys
             for v in violations:
                 _sys.stderr.write(f"qline-invariant: {v}\n")
+        try:
+            if _OBS_AVAILABLE:
+                sid = state.get("_session_id")
+                if isinstance(sid, str) and sid:
+                    package_root = resolve_package_root_env(sid)
+                    if package_root:
+                        inv_path = os.path.join(package_root, "native", "statusline", "invariants.jsonl")
+                        _log_invariant_record(inv_path, {
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "session_id": sid,
+                            "violations": violations,
+                        })
+        except Exception as _exc:
+            state["_invariant_log_error"] = type(_exc).__name__
+    else:
+        try:
+            if _OBS_AVAILABLE:
+                sid = state.get("_session_id")
+                if isinstance(sid, str) and sid:
+                    package_root = resolve_package_root_env(sid)
+                    if package_root:
+                        inv_path = os.path.join(package_root, "native", "statusline", "invariants.jsonl")
+                        _reset_invariant_debounce(inv_path)
+        except Exception as _exc:
+            state["_invariant_log_error"] = type(_exc).__name__
 
     layout = theme.get("layout", {})
     force_single = layout.get("force_single_line", False)
@@ -3051,12 +3362,37 @@ def _try_obs_snapshot(payload: dict, state: dict) -> None:
 
 def main() -> None:
     """Status-line entrypoint. Read, normalize, collect, render, emit."""
+    _t0 = time.monotonic()
     theme = load_config()
     payload = read_stdin_bounded()
     if payload is None:
         return
     state = normalize(payload)
+    dump_dir = os.environ.get("QLINE_DUMP_PAYLOAD")
+    if dump_dir:
+        try:
+            os.makedirs(dump_dir, exist_ok=True)
+            dump_path = os.path.join(
+                dump_dir,
+                f"payload-{int(time.time() * 1000)}.json",
+            )
+            with open(dump_path, "w") as f:
+                json.dump(payload, f, indent=2, default=str)
+        except Exception as _exc:
+            state["_payload_dump_error"] = type(_exc).__name__
+            try:
+                sid = payload.get("session_id")
+                pkg = resolve_package_root_env(sid) if _OBS_AVAILABLE and isinstance(sid, str) and sid else None
+                _write_statusline_diag(pkg, "payload_dump_write", type(_exc).__name__)
+            except Exception as _diag_exc:
+                state["_payload_dump_diag_error"] = type(_diag_exc).__name__
     collect_system_data(state, theme)
+    try:
+        _lat_cache = load_cache()
+        state["_render_latency_p95"] = _lat_cache.get("_render_latency_p95")
+    except Exception as _exc:
+        state["_render_latency_p95"] = None
+        state["_render_latency_read_error"] = type(_exc).__name__
     _inject_obs_counters(state, payload)
     _cache_ctx = {
         "load_cache": load_cache,
@@ -3068,6 +3404,17 @@ def main() -> None:
     inject_context_overhead(state, payload, theme, _cache_ctx)
     line = render(state, theme)
     _try_obs_snapshot(payload, state)
+    try:
+        latency_ms = int((time.monotonic() - _t0) * 1000)
+        _record_render_latency(latency_ms)
+    except Exception as _exc:
+        state["_render_latency_write_error"] = type(_exc).__name__
+        try:
+            sid = payload.get("session_id")
+            pkg = resolve_package_root_env(sid) if _OBS_AVAILABLE and isinstance(sid, str) and sid else None
+            _write_statusline_diag(pkg, "render_latency_write", type(_exc).__name__)
+        except Exception as _diag_exc:
+            state["_render_latency_diag_error"] = type(_diag_exc).__name__
     if line:
         # Trailing reset prevents bg color bleeding into CC's UI
         if not NO_COLOR:
