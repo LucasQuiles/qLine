@@ -1,8 +1,35 @@
+---
+title: "qLine"
+doc_schema: "q-doc-v1"
+status: "current"
+authority: "reference"
+owner_surface: "."
+created: "2026-06-14"
+updated: "2026-09-03"
+requires_recapture: true
+action_boundary: >
+  Opening this file alone does not authorize install, update, uninstall, hook
+  installation, Claude settings mutation, plugin symlink changes, command execution,
+  repo mutation, cleanup, external action, or treating stale status claims as current.
+---
+
 # qLine
+
+> Direct-open boundary: documentation reference only. Opening this file alone does
+> not authorize install, update, uninstall, hook installation, Claude settings
+> mutation, plugin symlink changes, command execution, repo mutation, cleanup,
+> external action, or treating stale status claims as current.
+
+Updated: 2026-09-03
 
 A rich status-line renderer for [Claude Code](https://docs.anthropic.com/en/docs/build-with-claude/computer-use). Reads Claude's status JSON on stdin, renders 3-line ANSI output with context health, observability counters, session metrics, and system monitoring.
 
-```
+Commands, paths, hook references, plugin examples, test counts, metrics, and runtime
+screenshots in this file are descriptive examples only; recapture current state and
+obtain a separate named approval before using them against live Claude settings,
+hooks, plugins, or repositories.
+
+```text
 󰚩 Opus4.6[1M]│▲780k│▼520k│██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░󰋑85%~│󰓅99%│󰥔5h3m
 󰑖44.0k™│©604k™|󰍻+293™│󰐕48│󰑇591│®94%│󰙏214│󰆍612│󰀩48│󰌘12│󰀦23│󰕥│󰀨5│+2.8k/-900│#1│󰃭$167│$929/wk│⏱53%│$/k0.33│io:0.7x
 󰝰 qLine│main@abc1234│󰓌 ░░░░░7%│󰍛 ██░░░55%│󰋊 █░░░░24%│tok/t10.8k│▼150kfree│gro:393/t│󰉋53│fail:3.2%│󰔠34%
@@ -110,7 +137,7 @@ complete `QLV-*` error taxonomy are documented in
 
 ## Architecture
 
-```
+```text
 stdin (JSON) → normalize() → collect_system_data() → _inject_obs_counters()
             → inject_context_overhead() → render() → 3-line ANSI output
 ```
@@ -141,6 +168,17 @@ stdin (JSON) → normalize() → collect_system_data() → _inject_obs_counters(
 ```
 
 Plugin mode: symlink `~/.claude/plugins/qline → /path/to/qLine`. The installer detects this and skips file copying (imports directly from the plugin dir).
+
+## Stop Lines
+
+- Do not run `install.sh`, `update.sh`, `uninstall.sh`, tests, or hook commands based
+  on this README alone.
+- Do not mutate Claude settings, install hooks, create or remove plugin symlinks,
+  copy files, pull remotes, or modify repositories without a separate named operator
+  task.
+- Treat module counts, test counts, example metrics, cost figures, status output, and
+  Claude Code API references as stale until verified against the current checkout and
+  live runtime.
 
 ## License
 
