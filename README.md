@@ -78,12 +78,12 @@ See `qline.example.toml` for all options.
 ## Tests
 
 ```bash
-bash tests/test-statusline.sh                       # all 300 tests
+bash tests/test-statusline.sh                       # full shell regression suite
 bash tests/test-statusline.sh --section renderer     # one section
 bash tests/test-statusline.sh --section invariants   # metric consistency proofs
 ```
 
-300 tests across 16+ sections: parser, normalizer, renderer, config, ansi, command, layout, collector, cache, stale, obs, overhead, new_metrics, derived_metrics, alerts, schema_version, anchor_invalidated, transcript_schema, OPP features, invariants.
+Hundreds of assertions across 16+ sections: parser, normalizer, renderer, config, ansi, command, layout, collector, cache, stale, obs, overhead, new_metrics, derived_metrics, alerts, schema_version, anchor_invalidated, transcript_schema, OPP features, invariants.
 
 ## Architecture
 
@@ -106,7 +106,7 @@ stdin (JSON) → normalize() → collect_system_data() → _inject_obs_counters(
 | `hooks/hook_utils.py` | ~420 | Hook utilities — stdin, fail-open, circuit breaker |
 | `hooks/obs_utils.py` | ~660 | Session packages — events, manifest, health |
 | `hooks/obs-*.py` | 12 files | Lifecycle hooks — reads, writes, bash, cache, etc. |
-| `tests/test-statusline.sh` | ~4000 | Test harness — 300 assertions |
+| `tests/test-statusline.sh` | ~4000 | Shell regression test harness |
 | `docs/modules.md` | ~180 | Complete module reference |
 
 ## Install / Update / Uninstall

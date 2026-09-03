@@ -2224,17 +2224,21 @@ def render_turns(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 def render_obs_health(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
     h = state.get("obs_health")
     cfg = theme.get("obs_health", {})
+    glyph = cfg.get("glyph", "\U000f0565 ").rstrip()  # nf-md-shield_check
+    if state.get("_obs_unavailable"):
+        # Helpers are unavailable or incompatible: name that state rather than
+        # rendering nothing, which is indistinguishable from healthy silence.
+        return _pill(f"{glyph} obs off", cfg, theme=theme, dim=True)
     if not h or h == "unknown":
         # Show dimmed indicator only if we have a session (obs is expected)
         if state.get("_has_session_id"):
-            return _pill(f"\U000f0565 \u2015", cfg, theme=theme, dim=True)
+            return _pill(f"{glyph} \u2015", cfg, theme=theme, dim=True)
         return None
-    glyph = cfg.get("glyph", "\U000f0565 ")  # nf-md-shield_check
     if h == "healthy":
-        return _pill(glyph.rstrip(), cfg, cfg.get("color", "#86efac"), theme=theme)
+        return _pill(glyph, cfg, cfg.get("color", "#86efac"), theme=theme)
     if h == "degraded":
-        return _pill(glyph.rstrip(), cfg, cfg.get("degraded_color", "#f0d399"), True, theme)
-    return _pill(glyph.rstrip(), cfg, cfg.get("failed_color", "#d06070"), True, theme)
+        return _pill(glyph, cfg, cfg.get("degraded_color", "#f0d399"), True, theme)
+    return _pill(glyph, cfg, cfg.get("failed_color", "#d06070"), True, theme)
 
 
 def render_lines_changed(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -3117,6 +3121,10 @@ def _scan_cost_and_sessions() -> tuple[float, float, int]:
 def _inject_obs_counters(state: dict, payload: dict) -> None:
     """Inject obs event counters into state for module renderers. Never raises."""
     if not _OBS_AVAILABLE:
+        # Distinct from _has_session_id, which means "obs is expected here".
+        # This flag means the guarded helpers are unavailable or incompatible,
+        # so no health will ever be reported and the degraded state is invisible.
+        state["_obs_unavailable"] = True
         return
     try:
         session_id = payload.get("session_id")
