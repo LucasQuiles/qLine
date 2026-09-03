@@ -226,11 +226,11 @@ Shows `tmux 3s/12p` (3 sessions, 12 panes).
 
 ## Observability modules
 
-All disabled by default. All share the same basic config shape:
+Ten of the eleven observability modules are enabled by default; only `obs_failures` is disabled. All share the same basic config shape:
 
 | Key | Default | What |
 |---|---|---|
-| `enabled` | `false` | |
+| `enabled` | `true` (`false` for `obs_failures`) | |
 | `glyph` | (varies) | |
 | `color` | (varies) | |
 | `bg` | `"#2e3440"` | |
@@ -240,17 +240,18 @@ Modules with thresholds also have `warn_threshold`, `critical_threshold`, `warn_
 | Module | Glyph | Tracks | Extra config |
 |---|---|---|---|
 | `obs_reads` | `"󰑇 "` | File read count | — |
-| `obs_rereads` | `"󰓦 "` | Reread percentage | warn 30, critical 50 |
+| `obs_rereads` | `"® "` | Reread percentage | warn 30, critical 50 |
 | `obs_writes` | `"󰙏 "` | File write count | — |
 | `obs_bash` | `"󰆍 "` | Bash command count | — |
 | `obs_prompts` | `"󰅺 "` | User prompt count | — |
-| `obs_tasks` | `"󰄷 "` | Completed task count | — |
-| `obs_subagents` | `"󰓁 "` | Subagent spawn count (historical) | — |
+| `obs_tasks` | `"󰌘 "` | Completed task count | — |
+| `obs_subagents` | `"󰀦 "` | Subagent completion count | — |
 | `obs_failures` | `"󰀩 "` | Tool failure count | warn 1, critical 5 |
-| `obs_compactions` | `"󱃧 "` | Context compaction count | — |
+| `obs_compactions` | `"󰔠 "` | Context compaction count | — |
 | `obs_health` | `"󰕥 "` | Session health badge | `degraded_color`, `failed_color` |
+| `obs_hook_faults` | `"󰀨 "` | Lifecycle hook fault count | warn 1, critical 5 |
 
-`obs_health` shows a colored shield icon: green for healthy, yellow for degraded, red for failed/incomplete.
+`obs_health` shows a colored shield icon: green for healthy, yellow for degraded, red for failed/incomplete. If its observability helpers are missing or incompatible, qLine renders a dim `obs off` pill instead of silently hiding the module.
 
 ---
 

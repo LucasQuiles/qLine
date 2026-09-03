@@ -2,7 +2,7 @@
 
 Reference for the 41 modules in the default 3-line layout, plus optional modules available via config.
 
-Most modules return `None` when their data is absent or zero, hiding themselves. Exceptions: `obs_health` shows a dim placeholder when health is unknown but a session exists; `cpu`, `memory`, and `disk` render whenever their data fields are present, including at 0%.
+Most modules return `None` when their data is absent or zero, hiding themselves. Exceptions: `obs_health` shows a dim placeholder when health is unknown but a session exists and a dim `obs off` pill when its helpers are missing or incompatible; `cpu`, `memory`, and `disk` render whenever their data fields are present, including at 0%.
 
 ## Configuration
 
@@ -82,9 +82,9 @@ Sources vary per module. Most are from `hook_events.jsonl` but reads, health, an
 | `obs_prompts` | 󰅺 | prompts | `metadata/hook_events.jsonl` | `prompt.observed` | User prompt submissions |
 | `obs_tasks` | 󰌘 | tasks | `metadata/hook_events.jsonl` | `task.completed` | Task completions |
 | `obs_subagents` | 󰀦 | agents | `metadata/hook_events.jsonl` | `subagent.stopped` | Subagent completions |
-| `obs_health` | 󰕥 | health | `manifest.json` | `health.overall` | Obs subsystem health: healthy (green), degraded (yellow), failed (red). Glyph-only when healthy. Shows dim placeholder `󰕥 ―` when health is unknown but session exists. |
+| `obs_health` | 󰕥 | health | `manifest.json` | `health.overall` | Obs subsystem health: healthy (green), degraded (yellow), failed (red). Glyph-only when healthy. Shows dim placeholder `󰕥 ―` when health is unknown but session exists, and dim `󰕥 obs off` when the observability helpers are missing or incompatible. |
 | `obs_compactions` | 󰔠 | compact | `metadata/hook_events.jsonl` | `compact.started` | Context compaction count. Prefix `x`. Hidden when 0. |
-| `obs_hook_faults` | 󰀩 | faults | `~/.claude/logs/lifecycle-hook-faults.jsonl` | `level == "fault"` within last hour | Hook crashes. 32KB reverse scan with timestamp filter. Warn at 1, critical at 5. **Caveat:** only scans the last 32KB of the ledger; bursty logging can push older-but-still-within-the-hour records beyond the scan window, causing undercounts. |
+| `obs_hook_faults` | 󰀨 | faults | `~/.claude/logs/lifecycle-hook-faults.jsonl` | `level == "fault"` within last hour | Hook crashes. 32KB reverse scan with timestamp filter. Warn at 1, critical at 5. **Caveat:** only scans the last 32KB of the ledger; bursty logging can push older-but-still-within-the-hour records beyond the scan window, causing undercounts. |
 
 ### Session Metrics
 
