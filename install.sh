@@ -45,7 +45,7 @@ if [ -z "$PYTHON" ]; then
     exit 1
 fi
 
-read PY_MAJOR PY_MINOR <<< $("$PYTHON" -c 'import sys; v=sys.version_info; print(v.major, v.minor)')
+read -r PY_MAJOR PY_MINOR <<< "$("$PYTHON" -c 'import sys; v=sys.version_info; print(v.major, v.minor)')"
 PY_VERSION="$PY_MAJOR.$PY_MINOR"
 
 if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then

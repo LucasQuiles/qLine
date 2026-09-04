@@ -27,15 +27,19 @@ import fcntl
 import heapq
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
 
+from hook_utils import now_iso  # canonical timestamp; keeps dependency direction correct
+
 # Version checked by statusline.py to detect stale copies.
 # Bump this when adding/changing public API.
 __version__ = "2.1.0"
-
-from hook_utils import now_iso  # canonical timestamp; defined in hook_utils to keep dependency direction correct
+MANIFEST_SCHEMA_VERSION = "1.1.0"
+LEGACY_MANIFEST_SCHEMA_VERSION = "1.0.0"
+_SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -65,6 +69,19 @@ _INITIAL_HEALTH: dict[str, Any] = {
     "warnings": [],
     "errors": [],
 }
+
+
+def classify_manifest_schema(manifest: dict[str, Any]) -> dict[str, str]:
+    """Classify additive v1 manifests; missing means the legacy v1.0 schema."""
+    value = manifest.get("schema_version")
+    if value is None:
+        return {"version": LEGACY_MANIFEST_SCHEMA_VERSION, "state": "legacy"}
+    if not isinstance(value, str) or not _SEMVER_RE.fullmatch(value):
+        return {"version": "", "state": "invalid"}
+    if value.split(".", 1)[0] != MANIFEST_SCHEMA_VERSION.split(".", 1)[0]:
+        return {"version": value, "state": "unsupported_major"}
+    state = "current" if value == MANIFEST_SCHEMA_VERSION else "supported"
+    return {"version": value, "state": state}
 
 
 def _load_read_state(state_path: str) -> dict[str, Any]:
@@ -203,7 +220,7 @@ def create_package(
 
     # Write manifest.json — Tier 0: raise on failure
     manifest: dict[str, Any] = {
-        "schema_version": "1.0.0",
+        "schema_version": MANIFEST_SCHEMA_VERSION,
         "session_id": session_id,
         "cwd": cwd,
         "source": source,
@@ -420,21 +437,33 @@ def register_artifact(
 # ---------------------------------------------------------------------------
 
 
-def _read_manifest(manifest_path: str, f: Any) -> dict[str, Any]:
-    """Read and parse manifest from an open file object. Returns {} on error."""
+def _read_manifest(manifest_path: str, f: Any) -> dict[str, Any] | None:
+    """Read a writable v1 manifest, returning ``None`` when mutation is unsafe."""
+    del manifest_path
     try:
         f.seek(0)
-        return json.load(f)
+        manifest = json.load(f)
     except (json.JSONDecodeError, ValueError):
-        return {}
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    if classify_manifest_schema(manifest)["state"] in {"invalid", "unsupported_major"}:
+        return None
+    return manifest
 
 
 def load_manifest(package_root: str) -> dict:
-    """Load and parse manifest.json from package root. Returns {} on error."""
+    """Load a legacy or additive-v1 manifest; reject invalid/future major schemas."""
     manifest_path = os.path.join(package_root, "manifest.json")
     try:
         with open(manifest_path) as f:
-            return json.load(f)
+            manifest = json.load(f)
+        if not isinstance(manifest, dict):
+            return {}
+        schema = classify_manifest_schema(manifest)
+        if schema["state"] in {"invalid", "unsupported_major"}:
+            return {}
+        return manifest
     except (OSError, json.JSONDecodeError):
         return {}
 
@@ -451,6 +480,8 @@ def update_manifest(package_root: str, updates: dict) -> None:
             fcntl.flock(f, fcntl.LOCK_EX)
             try:
                 manifest = _read_manifest(manifest_path, f)
+                if manifest is None:
+                    return
                 manifest.update(updates)
                 f.seek(0)
                 f.write(json.dumps(manifest, indent=2))
@@ -473,6 +504,8 @@ def update_manifest_array(package_root: str, key: str, entry: dict) -> None:
             fcntl.flock(f, fcntl.LOCK_EX)
             try:
                 manifest = _read_manifest(manifest_path, f)
+                if manifest is None:
+                    return
                 arr = manifest.get(key)
                 if not isinstance(arr, list):
                     arr = []
@@ -586,6 +619,8 @@ def update_manifest_if_absent_batch(
             fcntl.flock(f, fcntl.LOCK_EX)
             try:
                 manifest = _read_manifest(manifest_path, f)
+                if manifest is None:
+                    return False
                 if gate_key in manifest:
                     return False
                 manifest.update(updates)
@@ -661,6 +696,8 @@ def update_health(
             fcntl.flock(f, fcntl.LOCK_EX)
             try:
                 manifest = _read_manifest(manifest_path, f)
+                if manifest is None:
+                    return
                 health = manifest.setdefault("health", {})
                 subsystems = health.setdefault("subsystems", {})
                 warnings_list = health.setdefault("warnings", [])

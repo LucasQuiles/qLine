@@ -27,12 +27,17 @@ import json
 import os
 import re
 import select
+import stat
 import struct
 import subprocess
 import sys
 import tempfile
 import termios
 import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
 try:
     import tomllib
 except ModuleNotFoundError:
@@ -40,10 +45,14 @@ except ModuleNotFoundError:
         import tomli as tomllib  # type: ignore[no-redef]  # pip install tomli (Python <3.11)
     except ModuleNotFoundError:
         tomllib = None  # type: ignore[assignment]  # TOML config disabled; defaults used
-from datetime import datetime, timezone
-from typing import Any
 
-from context_overhead import inject_context_overhead
+from context_overhead import (
+    inject_context_overhead,
+    read_diagnostic_summary,
+    write_diagnostic,
+)
+
+_OBS_UNAVAILABLE_REASON = ""
 
 
 def _check_versions() -> None:
@@ -103,8 +112,12 @@ try:
     from obs_utils import resolve_package_root_env, update_health, _atomic_jsonl_append, load_manifest
     _check_versions()
     _OBS_AVAILABLE = True
-except Exception:
+except ModuleNotFoundError as _obs_exc:
     _OBS_AVAILABLE = False
+    _OBS_UNAVAILABLE_REASON = "obs_import_missing"
+except Exception as _obs_exc:
+    _OBS_AVAILABLE = False
+    _OBS_UNAVAILABLE_REASON = "obs_import_incompatible"
 
 # --- Constants ---
 
@@ -117,6 +130,16 @@ CACHE_PATH = os.environ.get("QLINE_CACHE_PATH", "/tmp/qline-cache.json")
 CACHE_MAX_AGE_S = 60.0
 CACHE_STALE_MAX_AGE_S = 300.0
 RENDER_LATENCY_SAMPLE_INTERVAL_S = 5.0
+ALERT_STATE_DIR = os.environ.get(
+    "QLINE_ALERT_DIR",
+    os.path.join(tempfile.gettempdir(), f"qline-alerts-{os.getuid()}"),
+)
+ALERT_STATE_MAX_BYTES = 4096
+ALERT_STATE_MAX_AGE_S = 7 * 24 * 60 * 60
+ALERT_STATE_CLEANUP_LIMIT = 16
+ALERT_STATE_SCAN_LIMIT = 128
+_ALERT_STATE_NAME_RE = re.compile(r"^alert-[0-9a-f]{64}\.json$")
+_RUNTIME_DIAGNOSTICS: dict[str, str] = {}
 _alert_state: dict[str, Any] = {}  # in-process cache (reset per invocation)
 # NOTE: Since the script runs once and exits per CC call, _alert_state
 # must be loaded from / saved to the disk cache for persistence.
@@ -126,6 +149,216 @@ _FAULT_LEDGER_PATH = os.path.join(
     os.path.expanduser("~"), ".claude", "logs", "lifecycle-hook-faults.jsonl"
 )
 _FAULT_SCAN_BYTES = 32768  # fast reverse scan: read last 32KB
+
+
+def _record_runtime_diagnostic(code: str, detail: str) -> None:
+    """Keep one bounded reason per code for the current statusline process."""
+    if len(_RUNTIME_DIAGNOSTICS) >= 16 and code not in _RUNTIME_DIAGNOSTICS:
+        return
+    _RUNTIME_DIAGNOSTICS.setdefault(str(code)[:64], str(detail)[:128])
+
+
+def _alert_state_path(session_id: str) -> Path | None:
+    """Return the non-identifying state path for one session."""
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    return Path(ALERT_STATE_DIR) / f"alert-{digest}.json"
+
+
+def _private_alert_dir(*, create: bool) -> Path | None:
+    """Return the alert directory only when it is private and owned by this user."""
+    root = Path(ALERT_STATE_DIR)
+    if create:
+        try:
+            os.mkdir(root, 0o700)
+        except FileExistsError:
+            pass
+        except OSError:
+            return None
+    try:
+        info = os.lstat(root)
+    except OSError:
+        return None
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        return None
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        return None
+    return root
+
+
+def _safe_alert_file(path: Path) -> os.stat_result | None:
+    """Validate a persisted alert file without following links."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+        return None
+    if stat.S_IMODE(info.st_mode) != 0o600:
+        return None
+    if info.st_size > ALERT_STATE_MAX_BYTES:
+        return None
+    return info
+
+
+def _load_alert_state(session_id: str) -> dict[str, Any]:
+    """Read one private alert record without following a symlink."""
+    if _private_alert_dir(create=False) is None:
+        return {}
+    path = _alert_state_path(session_id)
+    if path is None:
+        return {}
+    before = _safe_alert_file(path)
+    if before is None:
+        return {}
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+        try:
+            opened = os.fstat(fd)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_uid != os.getuid()
+                or stat.S_IMODE(opened.st_mode) != 0o600
+                or opened.st_size > ALERT_STATE_MAX_BYTES
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            ):
+                return {}
+            blob = os.read(fd, ALERT_STATE_MAX_BYTES + 1)
+        finally:
+            os.close(fd)
+    except OSError:
+        return {}
+    if len(blob) > ALERT_STATE_MAX_BYTES:
+        return {}
+    try:
+        data = json.loads(blob.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _cleanup_alert_state(*, now: float | None = None) -> int:
+    """Delete a bounded number of old, private alert records."""
+    root = _private_alert_dir(create=False)
+    if root is None:
+        return 0
+    cutoff = (time.time() if now is None else now) - ALERT_STATE_MAX_AGE_S
+    deleted = 0
+    scanned = 0
+    try:
+        entries = os.scandir(root)
+    except OSError:
+        return 0
+    with entries:
+        for entry in entries:
+            if scanned >= ALERT_STATE_SCAN_LIMIT or deleted >= ALERT_STATE_CLEANUP_LIMIT:
+                break
+            if not _ALERT_STATE_NAME_RE.fullmatch(entry.name):
+                continue
+            scanned += 1
+            try:
+                info = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_mtime >= cutoff
+            ):
+                continue
+            try:
+                os.unlink(entry.path)
+            except OSError:
+                continue
+            deleted += 1
+    return deleted
+
+
+def _write_alert_state(session_id: str, data: dict[str, Any]) -> bool:
+    """Atomically write one private alert record and prune bounded stale state."""
+    root = _private_alert_dir(create=True)
+    path = _alert_state_path(session_id)
+    if root is None or path is None or not isinstance(data, dict):
+        return False
+    try:
+        blob = json.dumps(data, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError):
+        return False
+    if len(blob) > ALERT_STATE_MAX_BYTES:
+        return False
+    try:
+        existing = os.lstat(path)
+    except FileNotFoundError:
+        existing = None
+    except OSError:
+        return False
+    if existing is not None and (
+        not stat.S_ISREG(existing.st_mode)
+        or existing.st_uid != os.getuid()
+        or stat.S_IMODE(existing.st_mode) != 0o600
+    ):
+        return False
+
+    fd = -1
+    tmp_path = ""
+    try:
+        fd, tmp_path = tempfile.mkstemp(prefix=".alert-", suffix=".tmp", dir=root)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            fd = -1
+            handle.write(blob)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        tmp_path = ""
+    except OSError:
+        return False
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    _cleanup_alert_state()
+    return True
+
+
+def _clear_alert_state(session_id: str) -> bool:
+    """Remove one session's safe regular state file; never follow a link."""
+    if _private_alert_dir(create=False) is None:
+        return True
+    path = _alert_state_path(session_id)
+    if path is None:
+        return True
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) != 0o600
+    ):
+        return False
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
 
 def _get_controlling_tty_width() -> int | None:
     """Return the controlling terminal width, even when stdin/stdout are pipes."""
@@ -270,7 +503,7 @@ DEFAULT_THEME: dict[str, Any] = {
                   "turns", "obs_reads", "obs_rereads", "obs_writes",
                   "obs_bash", "obs_failures", "obs_tasks",
                   "obs_subagents", "obs_health", "obs_compactions",
-                  "obs_hook_faults", "daily_cost", "weekly_cost"],
+                  "obs_hook_faults", "degraded", "daily_cost", "weekly_cost"],
         "line3": ["dir", "git", "cpu", "memory", "disk",
                   "lines_changed", "session_count",
                   "api_efficiency", "cost_per_ktok",
@@ -428,6 +661,13 @@ DEFAULT_THEME: dict[str, Any] = {
         "bg": "#2e3440",
         "degraded_color": "#f0d399",
         "failed_color": "#d06070",
+    },
+    "degraded": {
+        "label": "diag",
+        "enabled": True,
+        "glyph": "\u26a0",
+        "color": "#f0d399",
+        "bg": "#3b4252",
     },
     "obs_hook_faults": {
         "label": "faults",
@@ -1128,9 +1368,6 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     # ── Render as separate pills ──
 
     bg_hex = cfg.get("bg")
-    oh_color = "#81a1c1"   # nord9 blue — system overhead
-    rate_color = "#8fbcbb"  # nord7 teal — cache hit rate
-
     # Cache writes color by threshold
     last_cc = state.get("last_cache_create")
     cw_color = "#8fbcbb"  # default teal
@@ -1182,36 +1419,22 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
     elif state.get("cache_degraded") is True:
         alert_key = "degraded"
 
-    # Track onset via disk file (script runs once per CC call, no in-memory state)
-    _ALERT_FILE = "/tmp/qline-alert.json"
+    # Track onset across one session without sharing or exposing its identifier.
     alert_glyph_str = None
     alert_crit = False
-    _sid = state.get("_session_id", "")
-
-    def _load_alert():
-        try:
-            with open(_ALERT_FILE) as f:
-                return json.load(f)
-        except Exception:
-            return {}
-
-    def _save_alert(d):
-        try:
-            with open(_ALERT_FILE, "w") as f:
-                json.dump(d, f)
-        except Exception:
-            pass
+    raw_sid = state.get("_session_id", "")
+    _sid = raw_sid if isinstance(raw_sid, str) else ""
 
     if alert_key:
         now = time.time()
-        persisted = _load_alert()
+        persisted = _load_alert_state(_sid)
         # Treat stale session alert as new: different session_id means a new CC
         # process has started; the old onset time is irrelevant.
         if _sid and persisted.get("session_id", "") != _sid:
             persisted = {}
         if alert_key != persisted.get("key"):
             persisted = {"key": alert_key, "onset": now, "session_id": _sid}
-            _save_alert(persisted)
+            _write_alert_state(_sid, persisted)
         elapsed = now - persisted.get("onset", now)
         gdef = _ALERT_DEFS.get(alert_key, _ALERT_DEFS["degraded"])
         alert_glyph_str, alert_crit = gdef[0], gdef[1]
@@ -1225,7 +1448,7 @@ def render_context_bar(state: dict[str, Any], theme: dict[str, Any]) -> str | No
                 msg = gdef[2]
             state["_alert_banner"] = f"{alert_glyph_str} {msg}"
     else:
-        _save_alert({})
+        _clear_alert_state(_sid)
 
     if not NO_COLOR:
         pills = []
@@ -1648,7 +1871,7 @@ def collect_agents(state: dict[str, Any]) -> None:
     count = 0
     codex_out = _run_cmd(["pgrep", "-x", "codex"], timeout=0.05)
     if codex_out:
-        codex_lines = [l for l in codex_out.splitlines() if l.strip()]
+        codex_lines = [line for line in codex_out.splitlines() if line.strip()]
         count += len(codex_lines)
     if count > 0:
         state["agent_count"] = count
@@ -1659,13 +1882,13 @@ def collect_tmux(state: dict[str, Any]) -> None:
     sessions_out = _run_cmd(["tmux", "list-sessions"], timeout=0.025)
     if sessions_out is None:
         return
-    session_lines = [l for l in sessions_out.splitlines() if l.strip()]
+    session_lines = [line for line in sessions_out.splitlines() if line.strip()]
     if not session_lines:
         return
     state["tmux_sessions"] = len(session_lines)
     panes_out = _run_cmd(["tmux", "list-panes", "-a"], timeout=0.025)
     if panes_out is not None:
-        pane_lines = [l for l in panes_out.splitlines() if l.strip()]
+        pane_lines = [line for line in panes_out.splitlines() if line.strip()]
         state["tmux_panes"] = len(pane_lines)
     else:
         state["tmux_panes"] = 0
@@ -1695,16 +1918,28 @@ def _ensure_lock_dir(lock_path: str) -> None:
 
 
 def _load_cache_unlocked() -> dict[str, Any]:
-    """Load cache file, return empty dict on any failure."""
+    """Load cache file, retaining a closed reason code on failure."""
     try:
         with open(CACHE_PATH) as f:
             data = json.load(f)
         if not isinstance(data, dict):
+            _record_runtime_diagnostic("cache_read_invalid", "root_not_object")
             return {}
         if data.get("version") != CACHE_VERSION:
+            _record_runtime_diagnostic("cache_schema_unknown", str(data.get("version")))
             return {}
-        return data.get("modules", {})
-    except Exception:
+        modules = data.get("modules", {})
+        if not isinstance(modules, dict):
+            _record_runtime_diagnostic("cache_read_invalid", "modules_not_object")
+            return {}
+        return modules
+    except FileNotFoundError:
+        return {}
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        _record_runtime_diagnostic("cache_read_invalid", type(exc).__name__)
+        return {}
+    except OSError as exc:
+        _record_runtime_diagnostic("cache_read_failed", type(exc).__name__)
         return {}
 
 
@@ -1725,14 +1960,15 @@ def _save_cache_unlocked(cache: dict[str, Any]) -> None:
             os.fsync(fd.fileno())
             fd.close()
             os.rename(fd.name, CACHE_PATH)
-        except Exception:
+        except Exception as exc:
+            _record_runtime_diagnostic("cache_write_failed", type(exc).__name__)
             fd.close()
             try:
                 os.unlink(fd.name)
             except OSError:
                 pass
-    except Exception:
-        pass
+    except Exception as exc:
+        _record_runtime_diagnostic("cache_write_failed", type(exc).__name__)
 
 
 def _preserve_current_latency_fields(cache: dict[str, Any], current: dict[str, Any]) -> None:
@@ -1754,8 +1990,8 @@ def save_cache(cache: dict[str, Any]) -> None:
                 _save_cache_unlocked(cache)
             finally:
                 fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-    except Exception:
-        pass
+    except Exception as exc:
+        _record_runtime_diagnostic("cache_write_failed", type(exc).__name__)
 
 
 def _record_render_latency(latency_ms: int) -> None:
@@ -1789,23 +2025,10 @@ def _record_render_latency(latency_ms: int) -> None:
 
 
 def _write_statusline_diag(package_root: str | None, event: str, detail: str) -> bool:
-    """Append a statusline diagnostic JSONL record. Returns False on failure."""
+    """Append a canonical statusline diagnostic record."""
     if not package_root:
         return False
-    try:
-        diag_dir = os.path.join(package_root, "native", "statusline")
-        os.makedirs(diag_dir, exist_ok=True)
-        diag_path = os.path.join(diag_dir, "diagnostics.jsonl")
-        rec = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "event": event,
-            "detail": detail,
-        }
-        with open(diag_path, "a") as f:
-            f.write(json.dumps(rec) + "\n")
-        return True
-    except Exception:
-        return False
+    return write_diagnostic(package_root, "statusline", event, "warning", detail)
 
 
 def _invariant_signature(violations: list[str]) -> str:
@@ -2228,7 +2451,10 @@ def render_obs_health(state: dict[str, Any], theme: dict[str, Any]) -> str | Non
     if state.get("_obs_unavailable"):
         # Helpers are unavailable or incompatible: name that state rather than
         # rendering nothing, which is indistinguishable from healthy silence.
-        return _pill(f"{glyph} obs off", cfg, theme=theme, dim=True)
+        suffix = ""
+        if os.environ.get("QLINE_DIAGNOSTICS_VERBOSE") == "1" and _OBS_UNAVAILABLE_REASON:
+            suffix = f":{_OBS_UNAVAILABLE_REASON}"
+        return _pill(f"{glyph} obs off{suffix}", cfg, theme=theme, dim=True)
     if not h or h == "unknown":
         # Show dimmed indicator only if we have a session (obs is expected)
         if state.get("_has_session_id"):
@@ -2239,6 +2465,25 @@ def render_obs_health(state: dict[str, Any], theme: dict[str, Any]) -> str | Non
     if h == "degraded":
         return _pill(glyph, cfg, cfg.get("degraded_color", "#f0d399"), True, theme)
     return _pill(glyph, cfg, cfg.get("failed_color", "#d06070"), True, theme)
+
+
+def render_degraded(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
+    """Render a bounded summary of fail-open runtime diagnostics."""
+    merged: dict[str, str] = dict(_RUNTIME_DIAGNOSTICS)
+    for item in state.get("_diagnostics", []):
+        if not isinstance(item, dict):
+            continue
+        code = item.get("code")
+        if isinstance(code, str) and code:
+            merged.setdefault(code[:64], str(item.get("detail", ""))[:128])
+    if not merged:
+        return None
+    cfg = theme.get("degraded", {})
+    glyph = cfg.get("glyph", "\u26a0")
+    text = f"{glyph} diag {len(merged)}"
+    if os.environ.get("QLINE_DIAGNOSTICS_VERBOSE") == "1":
+        text += ":" + ",".join(sorted(merged)[:4])
+    return _pill(text, cfg, cfg.get("color", "#f0d399"), True, theme)
 
 
 def render_lines_changed(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
@@ -2475,6 +2720,7 @@ MODULE_RENDERERS: dict[str, Any] = {
     "obs_compactions": render_obs_compactions,
     "obs_prompts": render_obs_prompts,
     "obs_health": render_obs_health,
+    "degraded": render_degraded,
     "obs_hook_faults": render_obs_hook_faults,
     "turns": render_turns,
     "lines_changed": render_lines_changed,
@@ -2500,7 +2746,7 @@ DEFAULT_LINE2 = ["sys_overhead_pill", "cache_read", "cache_delta",
                  "turns", "obs_reads", "obs_rereads", "obs_writes",
                  "obs_bash", "obs_failures", "obs_tasks",
                  "obs_subagents", "obs_health", "obs_compactions",
-                 "obs_hook_faults", "daily_cost", "weekly_cost"]
+                 "obs_hook_faults", "degraded", "daily_cost", "weekly_cost"]
 DEFAULT_LINE3 = ["dir", "git", "cpu", "memory", "disk",
                  "lines_changed", "session_count",
                  "api_efficiency", "cost_per_ktok",
@@ -2556,7 +2802,6 @@ def _render_wrapped(state: dict[str, Any], theme: dict[str, Any],
     if not parts:
         return ""
 
-    layout_cfg = theme.get("layout", {})
     term_width = _get_term_width(theme)
 
     # Pack modules into rows
@@ -2868,36 +3113,102 @@ def _compute_context_pct(state: dict) -> float | None:
 
 
 def _count_obs_events(package_root: str) -> dict[str, int]:
-    """Fast line-scan of hook_events.jsonl for event type counts."""
+    """Parse hook event JSONL and count only top-level string event fields."""
     ledger = os.path.join(package_root, "metadata", "hook_events.jsonl")
     counts: dict[str, int] = {}
     try:
-        with open(ledger) as f:
-            for line in f:
-                idx = line.find('"event": "')
-                if idx >= 0:
-                    start = idx + 10
-                    end = line.find('"', start)
-                    if end > start:
-                        event = line[start:end]
-                        counts[event] = counts.get(event, 0) + 1
-    except Exception:
-        pass
+        with open(ledger, encoding="utf-8", errors="replace") as f:
+            for line_number, line in enumerate(f, 1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except (json.JSONDecodeError, ValueError) as exc:
+                    _record_runtime_diagnostic("ledger_record_malformed", type(exc).__name__)
+                    write_diagnostic(
+                        package_root,
+                        "statusline",
+                        "ledger_record_malformed",
+                        "warning",
+                        type(exc).__name__,
+                        {"line_number": line_number},
+                    )
+                    continue
+                event = record.get("event") if isinstance(record, dict) else None
+                if not isinstance(event, str) or not event:
+                    _record_runtime_diagnostic("ledger_record_malformed", "event_missing")
+                    write_diagnostic(
+                        package_root,
+                        "statusline",
+                        "ledger_record_malformed",
+                        "warning",
+                        "missing top-level string event",
+                        {"line_number": line_number},
+                    )
+                    continue
+                counts[event] = counts.get(event, 0) + 1
+    except OSError as exc:
+        _record_runtime_diagnostic("ledger_unreadable", type(exc).__name__)
+        write_diagnostic(
+            package_root,
+            "statusline",
+            "ledger_unreadable",
+            "warning",
+            type(exc).__name__,
+        )
     return counts
 
 
 def _count_rereads(package_root: str) -> tuple[int, int]:
-    """Returns (total_reads, reread_count) from reads.jsonl."""
+    """Return valid read rows and rereads from bounded-schema JSONL records."""
     reads_path = os.path.join(package_root, "custom", "reads.jsonl")
     total = reread = 0
     try:
-        with open(reads_path) as f:
-            for line in f:
+        with open(reads_path, encoding="utf-8", errors="replace") as f:
+            for line_number, line in enumerate(f, 1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except (json.JSONDecodeError, ValueError) as exc:
+                    detail = type(exc).__name__
+                    _record_runtime_diagnostic("read_record_malformed", detail)
+                    write_diagnostic(
+                        package_root,
+                        "statusline",
+                        "read_record_malformed",
+                        "warning",
+                        detail,
+                        {"line_number": line_number},
+                    )
+                    continue
+                value = record.get("is_reread") if isinstance(record, dict) else None
+                if not isinstance(value, bool):
+                    _record_runtime_diagnostic("read_record_malformed", "is_reread_missing")
+                    write_diagnostic(
+                        package_root,
+                        "statusline",
+                        "read_record_malformed",
+                        "warning",
+                        "missing boolean is_reread",
+                        {"line_number": line_number},
+                    )
+                    continue
                 total += 1
-                if '"is_reread": true' in line:
+                if value:
                     reread += 1
-    except Exception:
-        pass
+    except FileNotFoundError:
+        return 0, 0
+    except OSError as exc:
+        detail = type(exc).__name__
+        _record_runtime_diagnostic("read_ledger_unreadable", detail)
+        write_diagnostic(
+            package_root,
+            "statusline",
+            "read_ledger_unreadable",
+            "warning",
+            detail,
+        )
     return total, reread
 
 
@@ -2934,6 +3245,7 @@ def _count_recent_faults(max_age_s: float = 3600) -> int:
             try:
                 rec = json.loads(line)
             except (json.JSONDecodeError, ValueError):
+                _record_runtime_diagnostic("fault_ledger_record_malformed", "json_invalid")
                 continue
             if rec.get("level") != "fault":
                 continue
@@ -2945,25 +3257,31 @@ def _count_recent_faults(max_age_s: float = 3600) -> int:
                 if ts_val >= cutoff:
                     count += 1
             except (ValueError, OSError):
+                _record_runtime_diagnostic("fault_ledger_record_malformed", "timestamp_invalid")
                 continue
         return count
-    except Exception:
+    except FileNotFoundError:
+        return 0
+    except OSError as exc:
+        _record_runtime_diagnostic("fault_ledger_unreadable", type(exc).__name__)
+        return 0
+    except Exception as exc:
+        _record_runtime_diagnostic("fault_ledger_unreadable", type(exc).__name__)
         return 0
 
 
 def _count_parse_errors(package_root: str) -> int:
-    """Count entries in the parse diagnostic sidecar. Returns 0 if file absent or unreadable."""
-    try:
-        diag_path = os.path.join(package_root, "native", "statusline", "diagnostics.jsonl")
-        count = 0
-        with open(diag_path, "r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    count += 1
-        return count
-    except Exception:
-        return 0
+    """Count only transcript parse failures in the bounded diagnostic tail."""
+    summary = read_diagnostic_summary(package_root)
+    if summary["unknown_schema"]:
+        _record_runtime_diagnostic(
+            "diagnostic_schema_unknown", str(summary["unknown_schema"])
+        )
+    if summary["malformed"]:
+        _record_runtime_diagnostic("diagnostic_record_malformed", str(summary["malformed"]))
+    if summary["unreadable"]:
+        _record_runtime_diagnostic("diagnostic_sidecar_unreadable", "read_failed")
+    return int(summary["counts"].get("transcript_json_invalid", 0))
 
 
 def _compute_session_insights(package_root: str) -> dict:
@@ -3263,7 +3581,7 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
                         fsize = f.tell()
                         f.seek(max(0, fsize - 4096))
                         tail = f.read().decode("utf-8", errors="replace")
-                    snap_lines = [l for l in tail.strip().splitlines() if l.strip()]
+                    snap_lines = [line for line in tail.strip().splitlines() if line.strip()]
                     if len(snap_lines) >= 4:
                         first = json.loads(snap_lines[0])
                         mid = json.loads(snap_lines[len(snap_lines) // 2])
@@ -3293,8 +3611,8 @@ def _inject_obs_counters(state: dict, payload: dict) -> None:
         parse_errors = session_cache.get("parse_error_count", 0)
         if parse_errors > 0:
             state["obs_parse_errors"] = parse_errors
-    except Exception:
-        pass
+    except Exception as exc:
+        _record_runtime_diagnostic("obs_counter_failed", type(exc).__name__)
 
 
 def _try_obs_snapshot(payload: dict, state: dict) -> None:
