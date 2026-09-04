@@ -42,7 +42,7 @@ Labels only apply to modules that have a `"label"` key in their theme section. M
 
 ### Context Bar Alert System
 
-When an alert condition is detected, the bar's inline glyph flashes and a full-text banner replaces lines 2-3 for 5 seconds (onset tracked in `/tmp/qline-alert.json` with session_id isolation). After 5s, the banner collapses to the inline glyph.
+When an alert condition is detected, the bar's inline glyph flashes and a full-text banner replaces lines 2-3 for 5 seconds. Onset is tracked in a full-SHA-256 session file under the private `${TMPDIR}/qline-alerts-<uid>/` directory. Files are created mode 0600 with atomic replacement, symlinks are refused, clearing unlinks the current session file, and stale cleanup is bounded. After 5s, the banner collapses to the inline glyph.
 
 | Priority | Key | Trigger | Severity |
 |----------|-----|---------|----------|
@@ -179,10 +179,16 @@ CC stdin (JSON) ──→ normalize() ──→ state dict
 | Daily/weekly cost, session count | 60s | Same cache, `last_cost_scan_ts` gate |
 | Context overhead, cache metrics | 5s | Same cache, `overhead_ts` gate |
 | System collectors (cpu/mem/disk/git) | 60s (`CACHE_MAX_AGE_S`) | Same cache, per-module timestamps |
-| Alert onset | Persistent | `/tmp/qline-alert.json` (session_id isolated) |
+| Alert onset | Persistent | Private `${TMPDIR}/qline-alerts-<uid>/alert-<sha256>.json`; mode 0600, atomic, session-scoped |
 
 ### Error Handling
 
 System collectors (`collect_system_data`) wrap each collector in `try/except Exception`. On exception, stale cached values are applied if within the 60s TTL. However, collectors that return early without data (e.g., missing `/proc/loadavg` on macOS) do not raise — they leave state empty, and the module hides. This means a collector that silently fails will cause its module to disappear rather than show stale data.
 
-The obs injection (`_inject_obs_counters`), overhead injection (`inject_context_overhead`), and snapshot writer (`_try_obs_snapshot`) each have top-level `try/except Exception: pass` wrappers. Individual sub-operations (file reads, JSON parsing, cache writes) also swallow exceptions. The statusline will never crash CC — but individual modules may disappear if their data source becomes unreadable.
+The renderer remains fail-open so it cannot break the host status line. Cache,
+ledger, parse-sidecar, and obs-counter failures now retain bounded closed reason
+codes and render a diagnostic count. `QLINE_DIAGNOSTICS_VERBOSE=1` reveals up to
+four codes without exposing exception text. The shared diagnostics JSONL uses
+`{schema_version, ts, producer, code, severity, detail, payload}`, caps writes
+per process, and stops at one MiB. Event and reread ledgers are parsed as JSON;
+malformed records are classified rather than counted as evidence.

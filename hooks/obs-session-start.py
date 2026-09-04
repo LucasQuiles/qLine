@@ -1,12 +1,77 @@
 #!/usr/bin/env python3
 """SessionStart observability hook: creates session package and publishes runtime mapping."""
 import json
+import hashlib
 import os
+import re
+import shlex
 import sys
 from datetime import datetime, timezone
 
 from hook_utils import read_hook_input, run_fail_open, now_iso, validate_session_id
 from obs_utils import create_package, append_event, resolve_package_root_env, update_health, record_error
+
+
+_CONTROLLED_HOOK_VARS = frozenset({"CLAUDE_PLUGIN_ROOT", "HOME"})
+_HOOK_VAR_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+
+
+def _expand_hook_token(token: str, env: dict[str, str]) -> str | None:
+    """Expand only the two path variables owned by this inventory contract."""
+    invalid = False
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal invalid
+        name = match.group(1) or match.group(2)
+        if name not in _CONTROLLED_HOOK_VARS or name not in env:
+            invalid = True
+            return match.group(0)
+        return env[name]
+
+    expanded = _HOOK_VAR_RE.sub(replace, token)
+    if invalid or "$" in expanded:
+        return None
+    if expanded.startswith("~/") and "HOME" in env:
+        expanded = os.path.join(env["HOME"], expanded[2:])
+    return expanded
+
+
+def _resolve_hook_command(
+    command: str,
+    hooks_dir: str,
+    env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Resolve exactly one Python hook path to a closed path-safety state."""
+    known = dict(env or {})
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return {"state": "ambiguous"}
+    candidates: list[str] = []
+    for token in tokens:
+        expanded = _expand_hook_token(token, known)
+        if expanded is not None and expanded.endswith(".py"):
+            candidates.append(expanded)
+    if len(candidates) != 1 or not os.path.isabs(candidates[0]):
+        return {"state": "ambiguous"}
+
+    root = os.path.realpath(hooks_dir)
+    candidate = os.path.realpath(candidates[0])
+    try:
+        inside = os.path.commonpath([root, candidate]) == root
+    except ValueError:
+        inside = False
+    if not inside:
+        return {"state": "outside_root", "path": candidate}
+    if not os.path.isfile(candidate):
+        return {"state": "missing", "path": candidate}
+    try:
+        info = os.stat(candidate)
+    except OSError:
+        return {"state": "unreadable", "path": candidate}
+    if info.st_mode & 0o444 == 0:
+        return {"state": "unreadable", "path": candidate}
+    return {"state": "resolved", "path": candidate}
 
 
 def _file_stats(path: str) -> dict | None:
@@ -85,39 +150,48 @@ def _scan_inventory(package_root: str, cwd: str) -> None:
     # --- Hook coverage (OPP-17) ---
     hook_coverage: dict = {}
     try:
-        hooks_dir = os.path.dirname(os.path.abspath(__file__))
+        hooks_dir = os.path.realpath(os.path.dirname(os.path.abspath(__file__)))
 
         # Build expected set: all obs-*.py files in the hooks directory
         expected_set: set[str] = set()
         try:
             for name in os.listdir(hooks_dir):
                 if name.startswith("obs-") and name.endswith(".py"):
-                    expected_set.add(os.path.join(hooks_dir, name))
+                    expected_set.add(os.path.realpath(os.path.join(hooks_dir, name)))
         except OSError:
             pass
 
         # Build registered set: hook script paths from settings that point into hooks_dir
         registered_set: set[str] = set()
+        resolutions: list[dict] = []
+        resolver_env = {
+            "CLAUDE_PLUGIN_ROOT": os.path.dirname(hooks_dir),
+            "HOME": home,
+        }
         for event, entries in hooks_cfg.items():
             if not isinstance(entries, list):
                 continue
-            for matcher_block in entries:
+            for matcher_index, matcher_block in enumerate(entries):
                 if not isinstance(matcher_block, dict):
                     continue
-                for hook_entry in matcher_block.get("hooks", []):
+                for hook_index, hook_entry in enumerate(matcher_block.get("hooks", [])):
                     if not isinstance(hook_entry, dict):
                         continue
                     cmd = hook_entry.get("command", "")
                     if not isinstance(cmd, str):
                         continue
-                    # Extract the script path — command may be "python3 /path/to/script.py"
-                    # or just "/path/to/script.py". Find the first .py path in the command.
-                    for token in cmd.split():
-                        if token.endswith(".py"):
-                            abs_token = os.path.abspath(token)
-                            if abs_token.startswith(hooks_dir):
-                                registered_set.add(abs_token)
-                            break
+                    resolution = _resolve_hook_command(cmd, hooks_dir, resolver_env)
+                    row = {
+                        "event": event,
+                        "index_path": ["hooks", event, matcher_index, "hooks", hook_index],
+                        "state": resolution["state"],
+                        "command_sha256": hashlib.sha256(cmd.encode("utf-8")).hexdigest(),
+                    }
+                    if "path" in resolution:
+                        row["path"] = resolution["path"]
+                    resolutions.append(row)
+                    if resolution["state"] == "resolved":
+                        registered_set.add(resolution["path"])
 
         # Normalize to basenames for readability, but keep full paths in lists
         missing = sorted(expected_set - registered_set)
@@ -127,6 +201,7 @@ def _scan_inventory(package_root: str, cwd: str) -> None:
             "expected": sorted(expected_set),
             "missing": missing,
             "extra": extra,
+            "resolutions": resolutions,
         }
     except Exception:
         pass  # Fail-open: skip coverage if anything goes wrong

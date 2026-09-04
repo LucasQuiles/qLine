@@ -1,0 +1,133 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qline-verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Python ${{ matrix.python-version }}
+    runs-on: macos-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.12"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install shellcheck
+          actual_shellcheck="$(shellcheck --version | awk '/^version:/{print $2}')"
+          test "$actual_shellcheck" = "0.11.0"
+
+      - name: Install pinned development dependencies
+        run: python -m pip install --disable-pip-version-check --require-hashes -r requirements-dev.lock
+
+      - name: Inspect verification prerequisites
+        run: python scripts/verify.py doctor --verbose
+
+      - name: Run canonical verification gate
+        shell: bash
+        run: |
+          set -uo pipefail
+          report="${{ runner.temp }}/qline-verify-report-${{ matrix.python-version }}.json"
+          set +e
+          QLINE_BASE_REF="refs/remotes/origin/${{ github.base_ref || 'main' }}" python scripts/verify.py run --timeout-seconds 600 --log-dir "${{ runner.temp }}/qline-verify-${{ matrix.python-version }}" --format json > "$report"
+          gate_exit=$?
+          set -e
+
+          report_blocked() {
+            echo "::error title=QLV-000 report::Verification report missing or invalid; treat this run as blocked."
+            {
+              echo "## qLine verification (Python ${{ matrix.python-version }})"
+              echo
+              echo '**Verdict:** `blocked` — verification report missing or invalid'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 2
+          }
+          [ -s "$report" ] || report_blocked
+
+          if ! QLINE_REPORT="$report" QLINE_PYTHON="${{ matrix.python-version }}" python - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["QLINE_REPORT"], encoding="utf-8") as handle:
+              report = json.load(handle)
+
+          def command_escape(value):
+              return (
+                  str(value)
+                  .replace("%", "%25")
+                  .replace("\r", "%0D")
+                  .replace("\n", "%0A")
+              )
+
+          rows = []
+          print(
+              "qLine verification: "
+              f"{report['verdict']} "
+              f"passed={report['summary']['passed']} "
+              f"failed={report['summary']['failed']} "
+              f"blocked={report['summary']['blocked']}"
+          )
+          for check in report["checks"]:
+              error = check.get("error", {})
+              kind = error.get("kind", "")
+              rows.append(
+                  f"| `{check['code']}` | {check['name']} | {check['status']} | {kind} |"
+              )
+              print(f"{check['code']} {check['name']}: {check['status']} {kind}".rstrip())
+              if check["status"] == "pass":
+                  continue
+              title = command_escape(f"{check['code']} {check['name']}")
+              body = command_escape(
+                  f"{kind}: {error.get('message', '')} Hint: {error.get('hint', '')}"
+              )
+              if check["status"] == "fail":
+                  print(f"::error title={title}::{body}")
+              else:
+                  print(f"::warning title={title}::{body}")
+
+          summary = [
+              f"## qLine verification (Python {os.environ['QLINE_PYTHON']})",
+              "",
+              f"**Verdict:** `{report['verdict']}`",
+              "",
+              "| Code | Check | Status | Error kind |",
+              "|---|---|---|---|",
+              *rows,
+              "",
+              "Full private logs were not uploaded. See the grouped bounded report above.",
+          ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\n".join(summary) + "\n")
+          PY
+          then
+            report_blocked
+          fi
+          exit "$gate_exit"

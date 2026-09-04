@@ -7,7 +7,6 @@ of work (changed files, test references). Does NOT block completion.
 Payload shape (verified from fixtures):
     session_id, transcript_path, cwd, hook_event_name, task_id, task_subject, task_description
 """
-import json
 import os
 import subprocess
 import sys

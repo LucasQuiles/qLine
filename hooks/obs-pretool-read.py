@@ -11,7 +11,6 @@ Per-call steps (preamble handled by run_obs_hook):
   5. Append file.read event to event ledger via append_event()
   6. Update read_state with the seq from the event
 """
-import json
 import os
 from typing import Any
 

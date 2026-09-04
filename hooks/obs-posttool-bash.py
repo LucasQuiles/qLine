@@ -15,7 +15,6 @@ Per-call steps (preamble handled by run_obs_hook):
   5. Append detail record to custom/bash_commands.jsonl
   6. Update bash_capture health subsystem
 """
-import json
 import os
 from typing import Any
 

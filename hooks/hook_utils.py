@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 
 MAX_STDIN_BYTES = 1_048_576  # 1 MB
+HOOK_PERF_SCHEMA_VERSION = "1.0.0"
 
 
 def now_iso() -> str:
@@ -118,7 +119,10 @@ def _write_hook_perf(
         if not package_root:
             return
         record = {
+            "schema_version": HOOK_PERF_SCHEMA_VERSION,
             "ts": now_iso(),
+            "producer": "hook_utils",
+            "code": "hook_duration",
             "hook": hook_name,
             "event": event_name,
             "duration_ms": round(elapsed_ms, 1),

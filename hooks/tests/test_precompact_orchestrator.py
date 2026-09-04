@@ -81,23 +81,23 @@ class TestProducerFailure:
 
 class TestConcurrentBudget:
     def test_producers_run_concurrently_not_serially(self):
-        # 5 producers each "taking" 0.3s must finish well under the serial
-        # sum (1.5s); concurrency bounds wall-clock to ~one producer.
-        import time
         import importlib
+        import threading
+
         orch = importlib.import_module("precompact_orchestrator_lib")
+        producers = ["preserve", "git", "failures", "stats", "handoff"]
+        rendezvous = threading.Barrier(len(producers))
 
         def slow_runner(name, inp, deadline_s):
-            time.sleep(0.3)
+            # A serial implementation cannot place every producer at this
+            # rendezvous. The barrier proves overlap without a wall-clock sleep.
+            rendezvous.wait(timeout=1.0)
             return None
 
-        t0 = time.monotonic()
         results, failed = orch.run_producers(
             {"session_id": "s"},
-            producers=["preserve", "git", "failures", "stats", "handoff"],
+            producers=producers,
             runner=slow_runner,
         )
-        elapsed = time.monotonic() - t0
-        assert elapsed < 1.0, f"serial-looking: {elapsed:.2f}s for 5x0.3s"
         assert failed == []
-        assert set(results) == {"preserve", "git", "failures", "stats", "handoff"}
+        assert set(results) == set(producers)
