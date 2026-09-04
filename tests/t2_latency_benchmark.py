@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import json
 import os
+import statistics
 import sys
 import time
-import hashlib
-import statistics
 
 # Add source paths
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,13 +25,13 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "hooks"))
 # Prevent live collection
 os.environ["QLINE_NO_COLLECT"] = "1"
 
-from context_overhead import (
+from context_overhead import (  # noqa: E402 - source paths and isolation precede imports
     _read_transcript_tail,
     _read_manifest_anchor,
     _estimate_static_overhead,
     inject_context_overhead,
 )
-from obs_utils import resolve_package_root, resolve_package_root_env
+from obs_utils import resolve_package_root, resolve_package_root_env  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Session registry — real sessions at different scales
@@ -342,15 +341,6 @@ def bench_full_pipeline(session_id, transcript_path, package_root, theme):
                         reread += 1
         except Exception:
             pass
-
-        # Health
-        manifest = os.path.join(pkg, "manifest.json")
-        try:
-            with open(manifest) as f:
-                m = json.load(f)
-            health = m.get("health", {}).get("overall", "unknown")
-        except Exception:
-            health = "unknown"
 
         state["obs_reads"] = total
         state["obs_reread_count"] = reread

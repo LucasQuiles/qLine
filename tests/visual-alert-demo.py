@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Visual demo of all qLine alert states. Run in terminal to see colors."""
-import sys, os, time
+import os
+import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 if 'NO_COLOR' in os.environ:

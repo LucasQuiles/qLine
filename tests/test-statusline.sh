@@ -25,21 +25,84 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 SRC="$REPO_DIR/src/statusline.py"
 FIXTURES="$SCRIPT_DIR/fixtures/statusline"
 
-# Resolve Python 3.10+ using the same priority as install.sh / run-hook
+# The canonical verifier pins its own interpreter so CI matrix jobs exercise
+# the version named by the job. Direct invocations retain the installer/run-hook
+# discovery order.
 PYTHON=""
-for _candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
-    if command -v "$_candidate" > /dev/null 2>&1; then
-        read _major _minor <<< $("$_candidate" -c 'import sys; print(sys.version_info.major, sys.version_info.minor)' 2>/dev/null || echo "0 0")
-        if [ "$_major" -eq 3 ] && [ "$_minor" -ge 10 ]; then
-            PYTHON="$_candidate"
-            break
-        fi
+if [ -n "${QLINE_TEST_PYTHON:-}" ]; then
+    case "$QLINE_TEST_PYTHON" in
+        /*) ;;
+        *) echo "FATAL: QLINE_TEST_PYTHON must name Python 3.10+ by absolute path" >&2; exit 1 ;;
+    esac
+    if [ ! -x "$QLINE_TEST_PYTHON" ]; then
+        echo "FATAL: QLINE_TEST_PYTHON must name Python 3.10+" >&2
+        exit 1
     fi
-done
+    if ! _version=$("$QLINE_TEST_PYTHON" -c 'import sys; print(sys.version_info.major, sys.version_info.minor)'); then
+        echo "FATAL: QLINE_TEST_PYTHON must name Python 3.10+" >&2
+        exit 1
+    fi
+    read -r _major _minor <<< "$_version"
+    if [ "$_major" -ne 3 ] || [ "$_minor" -lt 10 ]; then
+        echo "FATAL: QLINE_TEST_PYTHON must name Python 3.10+" >&2
+        exit 1
+    fi
+    PYTHON="$QLINE_TEST_PYTHON"
+else
+    for _candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
+        if command -v "$_candidate" > /dev/null 2>&1; then
+            read -r _major _minor <<< "$("$_candidate" -c 'import sys; print(sys.version_info.major, sys.version_info.minor)' 2>/dev/null || echo "0 0")"
+            if [ "$_major" -eq 3 ] && [ "$_minor" -ge 10 ]; then
+                PYTHON="$_candidate"
+                break
+            fi
+        fi
+    done
+fi
 if [ -z "$PYTHON" ]; then
     echo "FATAL: No Python 3.10+ found in PATH" >&2
     exit 1
 fi
+
+TEST_DIAGNOSTIC_LOG=$(mktemp "${TMPDIR:-/tmp}/qline-statusline-test.XXXXXX") || {
+    echo "FATAL: Unable to create the private test diagnostic log" >&2
+    exit 2
+}
+chmod 600 "$TEST_DIAGNOSTIC_LOG" || {
+    echo "FATAL: Unable to protect the private test diagnostic log" >&2
+    rm -f "$TEST_DIAGNOSTIC_LOG"
+    exit 2
+}
+ALERT_TEST_DIR=$(mktemp -d "${TMPDIR:-/tmp}/qline-alert-test.XXXXXX") || {
+    echo "FATAL: Unable to create the private alert-state test directory" >&2
+    rm -f "$TEST_DIAGNOSTIC_LOG"
+    exit 2
+}
+chmod 700 "$ALERT_TEST_DIR" || {
+    echo "FATAL: Unable to protect the private alert-state test directory" >&2
+    rm -f "$TEST_DIAGNOSTIC_LOG"
+    rmdir "$ALERT_TEST_DIR"
+    exit 2
+}
+export QLINE_ALERT_DIR="$ALERT_TEST_DIR"
+
+# ShellCheck cannot see this trap-only call site.
+# shellcheck disable=SC2329
+cleanup_test_artifacts() {
+    rm -f "$TEST_DIAGNOSTIC_LOG"
+    find "$ALERT_TEST_DIR" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
+    rmdir "$ALERT_TEST_DIR" 2>/dev/null || true
+}
+trap cleanup_test_artifacts EXIT
+
+show_diagnostics() {
+    if [ -s "$TEST_DIAGNOSTIC_LOG" ]; then
+        echo "    retained subprocess stderr:" >&2
+        sed 's/^/      /' "$TEST_DIAGNOSTIC_LOG" >&2
+    else
+        echo "    retained subprocess stderr: (empty)" >&2
+    fi
+}
 
 PASS=0
 FAIL=0
@@ -57,6 +120,7 @@ assert_equals() {
         echo "  FAIL: $label"
         echo "    expected: '$expected'"
         echo "    got:      '$actual'"
+        show_diagnostics
         FAIL=$((FAIL + 1))
     fi
 }
@@ -69,6 +133,7 @@ assert_contains() {
         PASS=$((PASS + 1))
     else
         echo "  FAIL: $label (expected '$expected' in output)"
+        show_diagnostics
         FAIL=$((FAIL + 1))
     fi
 }
@@ -78,6 +143,7 @@ assert_not_contains() {
     TOTAL=$((TOTAL + 1))
     if printf '%s' "$output" | grep -Fq -- "$unexpected"; then
         echo "  FAIL: $label (unexpected '$unexpected' found in output)"
+        show_diagnostics
         FAIL=$((FAIL + 1))
     else
         echo "  PASS: $label"
@@ -93,6 +159,7 @@ assert_empty() {
         PASS=$((PASS + 1))
     else
         echo "  FAIL: $label (expected empty, got: $(echo "$output" | head -1))"
+        show_diagnostics
         FAIL=$((FAIL + 1))
     fi
 }
@@ -105,6 +172,7 @@ assert_exit_zero() {
         PASS=$((PASS + 1))
     else
         echo "  FAIL: $label (expected exit 0, got $exit_code)"
+        show_diagnostics
         FAIL=$((FAIL + 1))
     fi
 }
@@ -117,6 +185,7 @@ assert_not_empty() {
         PASS=$((PASS + 1))
     else
         echo "  FAIL: $label (expected non-empty output)"
+        show_diagnostics
         FAIL=$((FAIL + 1))
     fi
 }
@@ -136,6 +205,7 @@ assert_single_line() {
         PASS=$((PASS + 1))
     else
         echo "  FAIL: $label (expected 1 line, got $line_count)"
+        show_diagnostics
         FAIL=$((FAIL + 1))
     fi
 }
@@ -151,6 +221,7 @@ run_statusline() {
     LAST_STDOUT=$(cat "$tmpout")
     LAST_STDERR=$(cat "$tmpderr")
     LAST_EXIT=$exit_code
+    cat "$tmpderr" >> "$TEST_DIAGNOSTIC_LOG"
     rm -f "$tmpout" "$tmpderr"
 }
 
@@ -165,6 +236,7 @@ run_statusline_color() {
     LAST_STDOUT=$(cat "$tmpout")
     LAST_STDERR=$(cat "$tmpderr")
     LAST_EXIT=$exit_code
+    cat "$tmpderr" >> "$TEST_DIAGNOSTIC_LOG"
     rm -f "$tmpout" "$tmpderr"
 }
 
@@ -173,7 +245,7 @@ run_py() {
     NO_COLOR=1 "$PYTHON" -c "
 import sys; sys.path.insert(0, '$REPO_DIR/src')
 $1
-" 2>&1
+" 2>>"$TEST_DIAGNOSTIC_LOG"
 }
 
 # Helper: run a Python snippet with ANSI colors enabled (NO_COLOR not set)
@@ -181,7 +253,7 @@ run_py_color() {
     env -u NO_COLOR "$PYTHON" -c "
 import sys; sys.path.insert(0, '$REPO_DIR/src')
 $1
-" 2>&1
+" 2>>"$TEST_DIAGNOSTIC_LOG"
 }
 
 # Helper: emit a Unicode codepoint as UTF-8 (works on any bash version)
@@ -517,7 +589,7 @@ assert_contains "R-02a: model with glyph" "$OUT" "$(uc '\U000f06a9') Opus"
 assert_contains "R-02b: dir with glyph" "$OUT" "$(uc '\U000f0770') qLine"
 assert_contains "R-02c: bar present" "$OUT" "50%"
 assert_contains "R-02d: tokens present" "$OUT" "12.3k"
-assert_contains "R-02e: cost with glyph" "$OUT" '$1.23'
+assert_contains "R-02e: cost with glyph" "$OUT" "\$1.23"
 assert_contains "R-02f: duration with glyph" "$OUT" "$(uc '\U000f0954')45s"
 assert_contains "R-02g: separator" "$OUT" "│"
 
@@ -1529,7 +1601,9 @@ print(json.dumps(d))
 # T-obs-1: snapshot appended on first invocation
 echo ""
 echo "--- T-obs-1: snapshot appended ---"
-printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" "$PYTHON" "$SRC" > /dev/null 2>&1
+printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" "$PYTHON" "$SRC" > /dev/null 2>>"$TEST_DIAGNOSTIC_LOG"
+OBS_EXIT_1=$?
+assert_exit_zero "T-obs-1: statusline invocation" "$OBS_EXIT_1"
 SNAP_FILE="$OBS_PKG_ROOT/native/statusline/snapshots.jsonl"
 SNAP_COUNT=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-1: snapshot appended" "$SNAP_COUNT" "1"
@@ -1551,13 +1625,15 @@ elif r.get('cost_usd') != 5.50:
     print(f'BAD_COST: {r.get(\"cost_usd\")}')
 else:
     print('OK')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-obs-2: correct fields" "$FIELDS_CHECK" "OK"
 
 # T-obs-3: throttle skips duplicate within 30s
 echo ""
 echo "--- T-obs-3: throttle ---"
-printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" "$PYTHON" "$SRC" > /dev/null 2>&1
+printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" "$PYTHON" "$SRC" > /dev/null 2>>"$TEST_DIAGNOSTIC_LOG"
+OBS_EXIT_3=$?
+assert_exit_zero "T-obs-3: statusline invocation" "$OBS_EXIT_3"
 SNAP_COUNT2=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-3: throttle skips duplicate" "$SNAP_COUNT2" "1"
 
@@ -1581,7 +1657,9 @@ d = {
 }
 print(json.dumps(d))
 ")
-printf '%s' "$OBS_PAYLOAD_CHANGED" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" "$PYTHON" "$SRC" > /dev/null 2>&1
+printf '%s' "$OBS_PAYLOAD_CHANGED" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE" "$PYTHON" "$SRC" > /dev/null 2>>"$TEST_DIAGNOSTIC_LOG"
+OBS_EXIT_4=$?
+assert_exit_zero "T-obs-4: statusline invocation" "$OBS_EXIT_4"
 SNAP_COUNT3=$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ' || echo 0)
 assert_equals "T-obs-4: meaningful change bypasses throttle" "$SNAP_COUNT3" "2"
 
@@ -1594,7 +1672,7 @@ with open('$OBS_PKG_ROOT/manifest.json') as f:
     m = json.load(f)
 sc = m.get('health', {}).get('subsystems', {}).get('statusline_capture')
 print(sc if sc else 'ABSENT')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-obs-5: statusline_capture = healthy" "$HEALTH_CHECK" "healthy"
 
 # T-obs-6: missing session_id
@@ -1602,7 +1680,9 @@ echo ""
 echo "--- T-obs-6: missing session_id ---"
 OBS_TEST_ROOT_6=$(mktemp -d)
 NO_SID_PAYLOAD='{"model": {"id": "test"}, "cost": {"total_cost_usd": 1}}'
-printf '%s' "$NO_SID_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT_6" QLINE_CACHE_PATH="$(mktemp)" "$PYTHON" "$SRC" > /dev/null 2>&1
+printf '%s' "$NO_SID_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT_6" QLINE_CACHE_PATH="$(mktemp)" "$PYTHON" "$SRC" > /dev/null 2>>"$TEST_DIAGNOSTIC_LOG"
+OBS_EXIT_6=$?
+assert_exit_zero "T-obs-6: statusline invocation" "$OBS_EXIT_6"
 NO_SID_SNAP=$(find "$OBS_TEST_ROOT_6" -name "snapshots.jsonl" 2>/dev/null | wc -l | tr -d ' ')
 assert_equals "T-obs-6: no snapshot without session_id" "$NO_SID_SNAP" "0"
 rm -rf "$OBS_TEST_ROOT_6"
@@ -1615,9 +1695,10 @@ import json
 d = {'session_id': 'nonexistent-session', 'model': {'id': 'test'}}
 print(json.dumps(d))
 ")
-printf '%s' "$NO_PKG_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$(mktemp)" "$PYTHON" "$SRC" > /dev/null 2>&1
+printf '%s' "$NO_PKG_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$(mktemp)" "$PYTHON" "$SRC" > /dev/null 2>>"$TEST_DIAGNOSTIC_LOG"
+OBS_EXIT_7=$?
 # Should not crash — test that it exited 0
-assert_equals "T-obs-7: no crash without package" "$?" "0"
+assert_exit_zero "T-obs-7: no crash without package" "$OBS_EXIT_7"
 
 # T-obs-8: _obs cache survives collect_system_data rebuild
 echo ""
@@ -1642,7 +1723,9 @@ import json
 d = {'session_id': '$OBS_SESSION_8', 'model': {'id': 'test', 'display_name': 'Test'}, 'cost': {'total_cost_usd': 1, 'total_duration_ms': 1000}, 'context_window': {'total_input_tokens': 1000, 'total_output_tokens': 500, 'context_window_size': 100000, 'used_percentage': 1, 'remaining_percentage': 99}}
 print(json.dumps(d))
 ")
-printf '%s' "$OBS_PAYLOAD_8" | NO_COLOR=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE_8" "$PYTHON" "$SRC" > /dev/null 2>&1
+printf '%s' "$OBS_PAYLOAD_8" | NO_COLOR=1 OBS_ROOT="$OBS_TEST_ROOT" QLINE_CACHE_PATH="$OBS_TEST_CACHE_8" "$PYTHON" "$SRC" > /dev/null 2>>"$TEST_DIAGNOSTIC_LOG"
+OBS_EXIT_8=$?
+assert_exit_zero "T-obs-8: statusline invocation" "$OBS_EXIT_8"
 # Verify _obs survived the cache rebuild
 CACHE_SURVIVAL=$("$PYTHON" -c "
 import json
@@ -1650,7 +1733,7 @@ with open('$OBS_TEST_CACHE_8') as f:
     d = json.load(f)
 obs = d.get('modules', {}).get('_obs', {})
 print('OK' if '$OBS_SESSION_8' in obs else f'MISSING: {list(obs.keys())}')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-obs-8: _obs survives cache rebuild" "$CACHE_SURVIVAL" "OK"
 rm -f "$OBS_TEST_CACHE_8"
 
@@ -1659,12 +1742,13 @@ echo ""
 echo "--- T-obs-9: fail-silent ---"
 OBS_READONLY=$(mktemp -d)
 chmod 444 "$OBS_READONLY"
-OUTPUT_9=$(printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_READONLY" QLINE_CACHE_PATH="$(mktemp)" "$PYTHON" "$SRC" 2>/dev/null)
+OUTPUT_9=$(printf '%s' "$OBS_PAYLOAD" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$OBS_READONLY" QLINE_CACHE_PATH="$(mktemp)" "$PYTHON" "$SRC" 2>>"$TEST_DIAGNOSTIC_LOG")
+OUTPUT_9_EXIT=$?
 chmod 755 "$OBS_READONLY"
 rm -rf "$OBS_READONLY"
-# Statusline should still produce output even when obs fails
-# (output may be empty if NO_COLOR strips it — just verify no crash)
-assert_equals "T-obs-9: exits 0 when obs fails" "$?" "0"
+# Statusline should still succeed and render when observability storage fails.
+assert_exit_zero "T-obs-9: exits 0 when obs fails" "$OUTPUT_9_EXIT"
+assert_not_empty "T-obs-9: renders when obs fails" "$OUTPUT_9"
 
 rm -rf "$OBS_TEST_ROOT" "$OBS_TEST_CACHE"
 echo ""
@@ -2342,7 +2426,7 @@ INPUT=$(cat <<ENDJSON
 ENDJSON
 )
 
-LAST_STDOUT=$(printf '%s' "$INPUT" | NO_COLOR=1 QLINE_NO_COLLECT=1 "$PYTHON" "$SRC" 2>/dev/null)
+LAST_STDOUT=$(printf '%s' "$INPUT" | NO_COLOR=1 QLINE_NO_COLLECT=1 "$PYTHON" "$SRC" 2>>"$TEST_DIAGNOSTIC_LOG")
 LAST_EXIT=$?
 assert_exit_zero "integration pipeline" "$LAST_EXIT"
 assert_not_empty "integration output" "$LAST_STDOUT"
@@ -2585,13 +2669,13 @@ import os
 with open(os.path.join(pkg, 'manifest.json')) as f:
     m = json.load(f)
 print(m.get('schema_version', 'MISSING'))
-" 2>/dev/null || echo "ERROR")
-assert_equals "T-sv-1: schema_version in manifest" "$SV_RESULT" "1.0.0"
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
+assert_equals "T-sv-1: schema_version in manifest" "$SV_RESULT" "1.1.0"
 rm -rf "$SV_TEST_ROOT"
 
-# T-sv-2: schema_version value is exactly "1.0.0"
+# T-sv-2: schema_version value is exactly "1.1.0"
 echo ""
-echo "--- T-sv-2: schema_version value is 1.0.0 ---"
+echo "--- T-sv-2: schema_version value is 1.1.0 ---"
 SV_TEST_ROOT2=$(mktemp -d)
 SV_RESULT2=$("$PYTHON" -c "
 import sys, json
@@ -2602,9 +2686,9 @@ import os
 with open(os.path.join(pkg, 'manifest.json')) as f:
     m = json.load(f)
 v = m.get('schema_version', '')
-print('OK' if v == '1.0.0' else f'WRONG:{v}')
-" 2>/dev/null || echo "ERROR")
-assert_equals "T-sv-2: schema_version is 1.0.0" "$SV_RESULT2" "OK"
+print('OK' if v == '1.1.0' else f'WRONG:{v}')
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
+assert_equals "T-sv-2: schema_version is 1.1.0" "$SV_RESULT2" "OK"
 rm -rf "$SV_TEST_ROOT2"
 
 fi
@@ -2643,7 +2727,7 @@ with open(ledger) as f:
         except Exception:
             pass
 print('OK' if 'compact.anchor_invalidated' in events else 'MISSING:' + str(events))
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-ai-1: compact.anchor_invalidated emitted" "$AI_RESULT" "OK"
 rm -rf "$AI_TEST_ROOT"
 
@@ -2662,7 +2746,9 @@ from obs_utils import create_package, append_event
 session_id = '$AI_SESSION_2'
 pkg = create_package(session_id, '/tmp', '/tmp/t.jsonl', 'startup', obs_root='$AI_TEST_ROOT2')
 append_event(pkg, 'compact.anchor_invalidated', session_id, {'trigger': 'manual', 'compact_seq': 1}, origin_type='native_snapshot', hook='obs-precompact')
-" 2>/dev/null
+" 2>>"$TEST_DIAGNOSTIC_LOG"
+AI_SETUP_EXIT=$?
+assert_exit_zero "T-ai-2: package setup" "$AI_SETUP_EXIT"
 # Seed cache with overhead_ts and turn_1_anchor to simulate warm state
 "$PYTHON" -c "
 import json, time
@@ -2681,14 +2767,18 @@ cache = {
 }
 with open('$AI_CACHE2', 'w') as f:
     json.dump(cache, f)
-"
+" 2>>"$TEST_DIAGNOSTIC_LOG"
+AI_CACHE_SEED_EXIT=$?
+assert_exit_zero "T-ai-2: cache seed" "$AI_CACHE_SEED_EXIT"
 # Run full statusline invocation with env vars set for the subprocess
 AI_PAYLOAD2=$("$PYTHON" -c "
 import json
 d = {'session_id': '$AI_SESSION_2', 'model': {'id': 'test', 'display_name': 'Test'}, 'cost': {'total_cost_usd': 1, 'total_duration_ms': 1000}, 'context_window': {'total_input_tokens': 1000, 'total_output_tokens': 500, 'context_window_size': 100000, 'used_percentage': 1, 'remaining_percentage': 99}}
 print(json.dumps(d))
 ")
-printf '%s' "$AI_PAYLOAD2" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$AI_TEST_ROOT2" QLINE_CACHE_PATH="$AI_CACHE2" "$PYTHON" "$SRC" > /dev/null 2>&1
+printf '%s' "$AI_PAYLOAD2" | NO_COLOR=1 QLINE_NO_COLLECT=1 OBS_ROOT="$AI_TEST_ROOT2" QLINE_CACHE_PATH="$AI_CACHE2" "$PYTHON" "$SRC" > /dev/null 2>>"$TEST_DIAGNOSTIC_LOG"
+AI_STATUS_EXIT=$?
+assert_exit_zero "T-ai-2: statusline invocation" "$AI_STATUS_EXIT"
 # Check that turn_1_anchor was cleared and invalidation counter incremented.
 # Note: overhead_ts may be re-set by the overhead estimator in the same run.
 AI_RESULT2=$("$PYTHON" -c "
@@ -2702,7 +2792,7 @@ has_anchor = 'turn_1_anchor' in sc
 inval_count = sc.get('last_known_anchor_inval_count', 0)
 ok = not has_anchor and inval_count >= 1
 print('OK' if ok else f'FAIL: anchor={has_anchor} inval_count={inval_count} keys={list(sc.keys())}')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-ai-2: turn_1_anchor cleared, inval_count incremented" "$AI_RESULT2" "OK"
 rm -rf "$AI_TEST_ROOT2"
 rm -f "$AI_CACHE2"
@@ -2723,7 +2813,7 @@ echo ""
 echo "--- T-ts-1: _read_transcript_tail keys on cold-start-simple ---"
 TS_RESULT1=$("$PYTHON" -c "
 import sys
-sys.path.insert(0, '$(dirname $SRC)')
+sys.path.insert(0, '$(dirname "$SRC")')
 from context_overhead import _read_transcript_tail
 result = _read_transcript_tail('$REPLAY_DIR/cold-start-simple.jsonl')
 assert result is not None, 'Expected dict, got None'
@@ -2731,7 +2821,7 @@ assert 'turn_1_anchor' in result, f'Missing turn_1_anchor, keys={list(result.key
 assert 'trailing_turns' in result, f'Missing trailing_turns, keys={list(result.keys())}'
 assert 'cache_hit_rate' in result, f'Missing cache_hit_rate, keys={list(result.keys())}'
 print('OK')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-ts-1: _read_transcript_tail has expected keys" "$TS_RESULT1" "OK"
 
 # T-ts-2: _read_transcript_tail returns valid types on warm-start-varied
@@ -2739,7 +2829,7 @@ echo ""
 echo "--- T-ts-2: _read_transcript_tail types on warm-start-varied ---"
 TS_RESULT2=$("$PYTHON" -c "
 import sys
-sys.path.insert(0, '$(dirname $SRC)')
+sys.path.insert(0, '$(dirname "$SRC")')
 from context_overhead import _read_transcript_tail
 result = _read_transcript_tail('$REPLAY_DIR/warm-start-varied.jsonl')
 assert result is not None, 'Expected dict, got None'
@@ -2750,7 +2840,7 @@ assert isinstance(anchor, (int, float)) or anchor is None, f'turn_1_anchor bad t
 assert isinstance(trailing, list), f'trailing_turns should be list, got {type(trailing)}'
 assert isinstance(hit_rate, float), f'cache_hit_rate should be float, got {type(hit_rate)}'
 print('OK')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-ts-2: _read_transcript_tail valid types" "$TS_RESULT2" "OK"
 
 # T-ts-3: extract_usage_full returns 4-tuple with correct structure on real entries
@@ -2780,7 +2870,7 @@ with open('$REPLAY_DIR/cold-start-long.jsonl') as f:
             break
 assert entries_tested > 0, 'No usable entries found in transcript'
 print(f'OK:{entries_tested}')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 # Accept OK:N where N > 0
 if echo "$TS_RESULT3" | grep -q "^OK:"; then
     assert_equals "T-ts-3: extract_usage_full tuple shape" "OK" "OK"
@@ -2808,7 +2898,7 @@ import statusline
 statusline._FAULT_LEDGER_PATH = '/tmp/nonexistent-faults-$(date +%s).jsonl'
 count = statusline._count_recent_faults()
 print('OK' if count == 0 else f'FAIL: got {count}')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp18-1: zero count for missing ledger" "$OPP18_RESULT1" "OK"
 
 # T-opp18-2: _count_recent_faults counts recent fault entries
@@ -2839,7 +2929,7 @@ count = statusline._count_recent_faults()
 os.unlink(tf.name)
 # Expect 3: 2 recent faults + 1 more recent fault = 3 (not the old one, not diagnostic)
 print('OK' if count == 3 else f'FAIL: expected 3, got {count}')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp18-2: counts recent fault entries" "$OPP18_RESULT2" "OK"
 
 # T-opp18-3: _count_recent_faults is fail-open on corrupt ledger
@@ -2856,7 +2946,7 @@ statusline._FAULT_LEDGER_PATH = tf.name
 count = statusline._count_recent_faults()
 os.unlink(tf.name)
 print('OK' if count == 0 else f'FAIL: got {count}')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp18-3: fail-open on corrupt ledger" "$OPP18_RESULT3" "OK"
 
 # T-opp18-4: render_obs_hook_faults returns None when no faults
@@ -2871,7 +2961,7 @@ state = {}
 theme = statusline.DEFAULT_THEME
 result = statusline.render_obs_hook_faults(state, theme)
 print('OK' if result is None else f'FAIL: got {result!r}')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp18-4: render returns None when no faults" "$OPP18_RESULT4" "OK"
 
 # T-opp18-5: render_obs_hook_faults renders non-zero fault count
@@ -2886,7 +2976,7 @@ state = {'obs_hook_faults': 2}
 theme = statusline.DEFAULT_THEME
 result = statusline.render_obs_hook_faults(state, theme)
 print('OK' if result and '2' in result else f'FAIL: got {result!r}')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp18-5: render returns pill for fault count" "$OPP18_RESULT5" "OK"
 
 # T-opp18-6: render_obs_hook_faults in MODULE_RENDERERS
@@ -2897,7 +2987,7 @@ import sys
 sys.path.insert(0, '$REPO_DIR/src')
 import statusline
 print('OK' if 'obs_hook_faults' in statusline.MODULE_RENDERERS else 'FAIL')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp18-6: obs_hook_faults in MODULE_RENDERERS" "$OPP18_RESULT6" "OK"
 
 fi
@@ -2924,7 +3014,7 @@ try:
 except SystemExit:
     pass
 print('OK' if called else 'FAIL: main_fn not called')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp12-1: backward compat (no session_id)" "$OPP12_RESULT1" "OK"
 
 # T-opp12-2: _write_hook_perf is fail-open when obs_utils unavailable
@@ -2940,7 +3030,7 @@ try:
     print('OK')
 except Exception as exc:
     print(f'FAIL: raised {exc!r}')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp12-2: _write_hook_perf fail-open" "$OPP12_RESULT2" "OK"
 
 # T-opp12-3: run_fail_open with session_id writes timing record
@@ -2994,7 +3084,7 @@ print('OK' if ok else f'FAIL: bad record {rec!r}')
 # cleanup
 import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
 del os.environ['OBS_ROOT']
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp12-3: perf record written with session_id" "$OPP12_RESULT3" "OK"
 
 # T-opp12-4: run_fail_open timing applies even when main_fn raises
@@ -3034,7 +3124,7 @@ print('OK' if ok else f'FAIL: records={records!r}')
 
 import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
 del os.environ['OBS_ROOT']
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp12-4: timing still writes on main_fn exception" "$OPP12_RESULT4" "OK"
 
 fi
@@ -3069,15 +3159,19 @@ try:
         sys.exit(0)
     rec = records[0]
     ok = (
-        rec.get('source') == 'transcript_tail' and
-        'JSONDecodeError' in rec.get('error', '') and
-        rec.get('line_preview') == 'bad json line' and
+        rec.get('schema_version') == '1.0.0' and
+        rec.get('producer') == 'context_overhead' and
+        rec.get('code') == 'transcript_json_invalid' and
+        rec.get('severity') == 'warning' and
+        'JSONDecodeError' in rec.get('detail', '') and
+        rec.get('payload', {}).get('source') == 'transcript_tail' and
+        rec.get('payload', {}).get('line_preview') == 'bad json line' and
         'ts' in rec
     )
     print('OK' if ok else f'FAIL: bad record {rec!r}')
 finally:
     import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp14-1: _write_parse_diag writes record" "$OPP14_RESULT1" "OK"
 
 # T-opp14-2: cap at _DIAG_MAX_PER_INVOCATION (10)
@@ -3099,7 +3193,7 @@ try:
     print('OK' if count == 10 else f'FAIL: expected 10 records, got {count}')
 finally:
     import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp14-2: diagnostic write cap at 10" "$OPP14_RESULT2" "OK"
 
 # T-opp14-3: line_preview is capped at 100 chars
@@ -3118,11 +3212,11 @@ try:
     diag_path = os.path.join(pkg_dir, 'native', 'statusline', 'diagnostics.jsonl')
     with open(diag_path) as f:
         rec = json.loads(f.readline())
-    preview_len = len(rec.get('line_preview', ''))
+    preview_len = len(rec.get('payload', {}).get('line_preview', ''))
     print('OK' if preview_len == 100 else f'FAIL: expected 100, got {preview_len}')
 finally:
     import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp14-3: line_preview capped at 100 chars" "$OPP14_RESULT3" "OK"
 
 # T-opp14-4: fail-open when diag_root is invalid path
@@ -3140,7 +3234,7 @@ try:
     print('OK')
 except Exception as e:
     print(f'FAIL: raised {e}')
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp14-4: fail-open on invalid diag_root" "$OPP14_RESULT4" "OK"
 
 # T-opp14-5: _read_transcript_tail logs parse failures when diag_root given
@@ -3172,7 +3266,7 @@ try:
 finally:
     os.unlink(tmp_transcript.name)
     import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp14-5: _read_transcript_tail logs parse failures" "$OPP14_RESULT5" "OK"
 
 # T-opp14-6: _count_parse_errors returns 0 for missing file
@@ -3189,7 +3283,7 @@ try:
     print('OK' if count == 0 else f'FAIL: got {count}')
 finally:
     import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp14-6: _count_parse_errors returns 0 for missing file" "$OPP14_RESULT6" "OK"
 
 # T-opp14-7: _count_parse_errors counts non-empty lines
@@ -3212,7 +3306,7 @@ try:
     print('OK' if count == 3 else f'FAIL: got {count}')
 finally:
     import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp14-7: _count_parse_errors counts entries" "$OPP14_RESULT7" "OK"
 
 fi
@@ -3275,7 +3369,7 @@ try:
 finally:
     import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
     os.environ.pop('OBS_INVENTORY_SETTINGS_PATH', None)
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp17-1: hook_coverage written to inventory" "$OPP17_RESULT1" "OK"
 
 # T-opp17-2: missing hooks detected correctly
@@ -3319,7 +3413,7 @@ try:
 finally:
     import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
     os.environ.pop('OBS_INVENTORY_SETTINGS_PATH', None)
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp17-2: missing hooks detected" "$OPP17_RESULT2" "OK"
 
 # T-opp17-3: fail-open when settings.json unreadable
@@ -3352,7 +3446,7 @@ try:
 finally:
     import shutil; shutil.rmtree(pkg_dir, ignore_errors=True)
     os.environ.pop('OBS_INVENTORY_SETTINGS_PATH', None)
-" 2>/dev/null || echo "ERROR")
+" 2>>"$TEST_DIAGNOSTIC_LOG" || echo "ERROR")
 assert_equals "T-opp17-3: fail-open (exception propagates to outer wrapper)" "$OPP17_RESULT3" "OK"
 
 fi
@@ -3632,8 +3726,11 @@ assert_equals "AL-08: degraded trigger glyph" "$AL08" "HAS_ALERT"
 echo ""
 echo "--- AL-09: priority bust > degraded ---"
 AL09=$(run_py "
-import unittest.mock as mock
+import tempfile
+import statusline
 from statusline import render_context_bar, DEFAULT_THEME
+_alert_tmp = tempfile.TemporaryDirectory()
+statusline.ALERT_STATE_DIR = _alert_tmp.name
 state = {
     'context_used': 200000,
     'context_total': 1000000,
@@ -3643,24 +3740,8 @@ state = {
     'cache_degraded': True,
     '_session_id': 'test-al09',
 }
-import builtins, json as _json
-_orig_open = builtins.open
-_saved = {}
-def _fake_open(path, mode='r', **kw):
-    if '/tmp/qline-alert' in str(path):
-        if 'w' in mode:
-            import io
-            class _Buf(io.StringIO):
-                def __exit__(self, *a):
-                    _saved['data'] = self.getvalue()
-                    super().__exit__(*a)
-            return _Buf()
-        else:
-            raise FileNotFoundError
-    return _orig_open(path, mode, **kw)
-with mock.patch('builtins.open', side_effect=_fake_open):
-    result = render_context_bar(state, DEFAULT_THEME)
-saved_key = _json.loads(_saved.get('data', '{}')).get('key', 'NONE')
+result = render_context_bar(state, DEFAULT_THEME)
+saved_key = statusline._load_alert_state('test-al09').get('key', 'NONE')
 print(f'KEY:{saved_key}')
 ")
 assert_equals "AL-09: bust wins over degraded (key=bust)" "$AL09" "KEY:bust"
@@ -3763,12 +3844,16 @@ assert_equals "AL-12: turns banner has count and TURNS LEFT" "$AL12" "OK"
 echo ""
 echo "--- AL-13: session isolation ---"
 AL13=$(run_py "
-import json, unittest.mock as mock, time as _t
+import tempfile, time as _t
+import statusline
 from statusline import render_context_bar, DEFAULT_THEME
+_alert_tmp = tempfile.TemporaryDirectory()
+statusline.ALERT_STATE_DIR = _alert_tmp.name
 
-# Simulate pre-existing alert file from a DIFFERENT session (old session)
+# Persist an old alert in its own session-scoped file.
 old_onset = _t.time() - 100  # 100 seconds ago (well past 5s banner window)
 old_alert = {'key': 'bust', 'onset': old_onset, 'session_id': 'old-session-xyz'}
+statusline._write_alert_state('old-session-xyz', old_alert)
 
 state = {
     'context_used': 200000,
@@ -3779,35 +3864,17 @@ state = {
     '_session_id': 'new-session-abc',  # Different from old_alert's session_id
 }
 
-import builtins
-_orig_open = builtins.open
-_saved = {}
-def _fake_open(path, mode='r', **kw):
-    if '/tmp/qline-alert' in str(path):
-        if 'w' in mode:
-            import io
-            class _Buf(io.StringIO):
-                def __exit__(self, *a):
-                    _saved['data'] = self.getvalue()
-                    super().__exit__(*a)
-            return _Buf()
-        else:
-            # Return old alert data from 'different session'
-            import io
-            return io.StringIO(json.dumps(old_alert))
-    return _orig_open(path, mode, **kw)
-
-with mock.patch('builtins.open', side_effect=_fake_open):
-    render_context_bar(state, DEFAULT_THEME)
+render_context_bar(state, DEFAULT_THEME)
 
 # With session isolation fix: new session ignores old onset, writes new onset
 # Banner should appear (elapsed ~0, not 100s)
 banner = state.get('_alert_banner', '')
-saved = json.loads(_saved.get('data', '{}'))
+saved = statusline._load_alert_state('new-session-abc')
 new_sid = saved.get('session_id', 'MISSING')
 has_banner = bool(banner)
-# New alert should be saved with new session_id
-print('OK' if has_banner and new_sid == 'new-session-abc' else f'FAIL: has_banner={has_banner} new_sid={new_sid!r} banner={banner!r}')
+# The old session record must remain distinct from the new session record.
+old_still_old = statusline._load_alert_state('old-session-xyz') == old_alert
+print('OK' if has_banner and new_sid == 'new-session-abc' and old_still_old else f'FAIL: has_banner={has_banner} new_sid={new_sid!r} old_still_old={old_still_old} banner={banner!r}')
 ")
 assert_equals "AL-13: session isolation resets onset" "$AL13" "OK"
 
@@ -3815,8 +3882,11 @@ assert_equals "AL-13: session isolation resets onset" "$AL13" "OK"
 echo ""
 echo "--- AL-14: alert file includes session_id ---"
 AL14=$(run_py "
-import json, unittest.mock as mock
+import tempfile
+import statusline
 from statusline import render_context_bar, DEFAULT_THEME
+_alert_tmp = tempfile.TemporaryDirectory()
+statusline.ALERT_STATE_DIR = _alert_tmp.name
 
 state = {
     'context_used': 200000,
@@ -3827,26 +3897,9 @@ state = {
     '_session_id': 'test-sid-check',
 }
 
-import builtins
-_orig_open = builtins.open
-_saved = {}
-def _fake_open(path, mode='r', **kw):
-    if '/tmp/qline-alert' in str(path):
-        if 'w' in mode:
-            import io
-            class _Buf(io.StringIO):
-                def __exit__(self, *a):
-                    _saved['data'] = self.getvalue()
-                    super().__exit__(*a)
-            return _Buf()
-        else:
-            raise FileNotFoundError
-    return _orig_open(path, mode, **kw)
+render_context_bar(state, DEFAULT_THEME)
 
-with mock.patch('builtins.open', side_effect=_fake_open):
-    render_context_bar(state, DEFAULT_THEME)
-
-saved = json.loads(_saved.get('data', '{}'))
+saved = statusline._load_alert_state('test-sid-check')
 sid = saved.get('session_id', 'MISSING')
 key = saved.get('key', 'MISSING')
 print('OK' if sid == 'test-sid-check' and key == 'bust' else f'FAIL: sid={sid!r} key={key!r}')

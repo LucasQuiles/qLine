@@ -13,7 +13,9 @@ from __future__ import annotations
 __version__ = "3.0.0"
 
 import json
+import fcntl
 import os
+import stat
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -22,10 +24,139 @@ from typing import Any
 #
 # When transcript JSONL lines fail JSON parsing, write a diagnostic record
 # to {package_root}/native/statusline/diagnostics.jsonl for post-mortem.
-# Max 10 writes per invocation to prevent unbounded growth.
+# The shared file has two independent bounds: ten records per process and one
+# MiB on disk. Writers stop at either bound instead of rotating evidence while
+# another statusline process may be appending to it.
 
-_DIAG_MAX_PER_INVOCATION = 10
+DIAGNOSTIC_SCHEMA_VERSION = "1.0.0"
+DIAGNOSTIC_MAX_PER_INVOCATION = 10
+DIAGNOSTIC_MAX_FILE_BYTES = 1_048_576
+DIAGNOSTIC_MAX_RECORD_BYTES = 4096
+DIAGNOSTIC_READ_BYTES = 65_536
+_DIAG_MAX_PER_INVOCATION = DIAGNOSTIC_MAX_PER_INVOCATION  # compatibility alias
 _diag_write_count = 0  # module-level counter, reset per process lifetime
+
+
+def _diagnostic_path(diag_root: str) -> str:
+    return os.path.join(diag_root, "native", "statusline", "diagnostics.jsonl")
+
+
+def write_diagnostic(
+    diag_root: str,
+    producer: str,
+    code: str,
+    severity: str,
+    detail: str,
+    payload: dict[str, Any] | None = None,
+) -> bool:
+    """Append one bounded, versioned diagnostic record; never raise."""
+    global _diag_write_count
+    if _diag_write_count >= DIAGNOSTIC_MAX_PER_INVOCATION:
+        return False
+    if severity not in {"info", "warning", "error"}:
+        return False
+    if not producer or not code or not all(c.islower() or c.isdigit() or c == "_" for c in code):
+        return False
+    record = {
+        "schema_version": DIAGNOSTIC_SCHEMA_VERSION,
+        "ts": datetime.now(tz=timezone.utc).isoformat(),
+        "producer": str(producer)[:64],
+        "code": code[:64],
+        "severity": severity,
+        "detail": str(detail)[:512],
+        "payload": payload if isinstance(payload, dict) else {},
+    }
+    try:
+        line = (json.dumps(record, sort_keys=True, default=str) + "\n").encode("utf-8")
+    except (TypeError, ValueError):
+        return False
+    if len(line) > DIAGNOSTIC_MAX_RECORD_BYTES:
+        return False
+    try:
+        diag_path = _diagnostic_path(diag_root)
+        os.makedirs(os.path.dirname(diag_path), mode=0o700, exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(diag_path, flags, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                return False
+            if stat.S_IMODE(info.st_mode) != 0o600:
+                os.fchmod(fd, 0o600)
+            if info.st_size + len(line) > DIAGNOSTIC_MAX_FILE_BYTES:
+                return False
+            if os.write(fd, line) != len(line):
+                return False
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(fd)
+        _diag_write_count += 1
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def read_diagnostic_summary(diag_root: str) -> dict[str, Any]:
+    """Classify a bounded tail of canonical and legacy diagnostic records."""
+    summary: dict[str, Any] = {
+        "counts": {},
+        "malformed": 0,
+        "unknown_schema": 0,
+        "legacy": 0,
+        "unreadable": False,
+    }
+    path = _diagnostic_path(diag_root)
+    try:
+        size = os.path.getsize(path)
+        start = max(0, size - DIAGNOSTIC_READ_BYTES)
+        with open(path, "rb") as handle:
+            handle.seek(start)
+            blob = handle.read(DIAGNOSTIC_READ_BYTES)
+    except FileNotFoundError:
+        return summary
+    except OSError:
+        summary["unreadable"] = True
+        return summary
+    lines = blob.decode("utf-8", errors="replace").splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]
+    counts: dict[str, int] = {}
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            summary["malformed"] += 1
+            continue
+        if not isinstance(record, dict):
+            summary["malformed"] += 1
+            continue
+        version = record.get("schema_version")
+        if version is None:
+            if isinstance(record.get("source"), str) and isinstance(record.get("error"), str):
+                code = "transcript_json_invalid"
+            elif isinstance(record.get("event"), str) and isinstance(record.get("detail"), str):
+                code = record["event"]
+            else:
+                summary["malformed"] += 1
+                continue
+            summary["legacy"] += 1
+        else:
+            if not isinstance(version, str) or version.split(".", 1)[0] != "1":
+                summary["unknown_schema"] += 1
+                continue
+            code = record.get("code")
+            if not isinstance(code, str) or not code:
+                summary["malformed"] += 1
+                continue
+        counts[code] = counts.get(code, 0) + 1
+    summary["counts"] = dict(sorted(counts.items()))
+    return summary
 
 
 def _write_parse_diag(diag_root: str, source: str, error: str, line_preview: str) -> None:
@@ -34,28 +165,14 @@ def _write_parse_diag(diag_root: str, source: str, error: str, line_preview: str
     Fail-open: any OS/IO error is silently swallowed.
     Hard cap: at most _DIAG_MAX_PER_INVOCATION writes per process.
     """
-    global _diag_write_count
-    if _diag_write_count >= _DIAG_MAX_PER_INVOCATION:
-        return
-    try:
-        diag_dir = os.path.join(diag_root, "native", "statusline")
-        os.makedirs(diag_dir, exist_ok=True)
-        diag_path = os.path.join(diag_dir, "diagnostics.jsonl")
-        ts = datetime.now(tz=timezone.utc).isoformat()
-        record = json.dumps({
-            "ts": ts,
-            "source": source,
-            "error": error,
-            "line_preview": line_preview[:100],
-        })
-        fd = os.open(diag_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-        try:
-            os.write(fd, (record + "\n").encode("utf-8"))
-        finally:
-            os.close(fd)
-        _diag_write_count += 1
-    except Exception:
-        pass  # Strictly fail-open
+    write_diagnostic(
+        diag_root,
+        "context_overhead",
+        "transcript_json_invalid",
+        "warning",
+        error,
+        {"source": source, "line_preview": line_preview[:100]},
+    )
 
 # ── Overhead Monitor: Static Estimation (Phase 1) ───────────────────
 #

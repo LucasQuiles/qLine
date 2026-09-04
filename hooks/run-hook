@@ -19,7 +19,7 @@ fi
 # Probe in descending order, same priority as install.sh
 for candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
     if command -v "$candidate" >/dev/null 2>&1; then
-        read major minor <<< $("$candidate" -c 'import sys; print(sys.version_info.major, sys.version_info.minor)' 2>/dev/null || echo "0 0")
+        read -r major minor <<< "$("$candidate" -c 'import sys; print(sys.version_info.major, sys.version_info.minor)' 2>/dev/null || echo "0 0")"
         if [ "$major" -eq 3 ] && [ "$minor" -ge 10 ]; then
             command -v "$candidate" > "$CACHE" 2>/dev/null || true
             exec "$candidate" "$@"

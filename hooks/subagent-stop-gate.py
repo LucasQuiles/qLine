@@ -8,8 +8,6 @@ Payload shape (verified from fixtures):
     session_id, transcript_path, cwd, permission_mode, agent_id, agent_type,
     hook_event_name, stop_hook_active, agent_transcript_path, last_assistant_message
 """
-import json
-import os
 import sys
 
 from hook_utils import read_hook_input, is_strict, block_stop, log_hook_diagnostic, run_fail_open

@@ -2,11 +2,17 @@
 import json
 import os
 import sys
-import time
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _call_recorder(calls):
+    def record(input_data, session_id, package_root):
+        calls.append((input_data, session_id, package_root))
+
+    return record
 
 
 class TestValidateSessionId:
@@ -64,13 +70,24 @@ class TestValidatePayloadStructure:
         from hook_utils import validate_payload_structure
         assert validate_payload_structure({"anything": 1}, set()) is True
 
+    def test_required_keys_allow_additional_payload_fields(self):
+        from hook_utils import validate_payload_structure
+
+        payload = {"session_id": "s1", "tool_name": "Read", "future_field": 1}
+        assert validate_payload_structure(
+            payload, {"session_id", "tool_name"}
+        ) is True
+
 
 class TestDeadline:
-    def test_remaining_decreases(self):
-        from hook_utils import Deadline
-        d = Deadline(1.0)
+    def test_remaining_decreases(self, monkeypatch):
+        import hook_utils as hu
+
+        now = [100.0]
+        monkeypatch.setattr(hu.time, "monotonic", lambda: now[0])
+        d = hu.Deadline(1.0)
         r1 = d.remaining()
-        time.sleep(0.05)
+        now[0] += 0.05
         assert d.remaining() < r1
 
     def test_remaining_never_negative(self):
@@ -84,10 +101,19 @@ class TestDeadline:
         with pytest.raises(TimeoutError, match="budget exhausted"):
             d.check("test_op")
 
-    def test_check_ok_when_remaining(self):
+    def test_check_timeout_names_requested_operation(self):
         from hook_utils import Deadline
-        d = Deadline(10.0)
+
+        with pytest.raises(TimeoutError, match="requested_operation"):
+            Deadline(0.0).check("requested_operation")
+
+    def test_check_ok_when_remaining(self, monkeypatch):
+        import hook_utils as hu
+
+        monkeypatch.setattr(hu.time, "monotonic", lambda: 100.0)
+        d = hu.Deadline(10.0)
         d.check("should_not_raise")
+        assert d.remaining() == 10.0
 
     def test_not_a_context_manager(self):
         from hook_utils import Deadline
@@ -156,6 +182,14 @@ class TestCircuitBreaker:
         for _ in range(3):
             hu.record_circuit_result("pinecone", False)
         assert hu.circuit_is_open("pinecone") is True
+
+    def test_stays_closed_before_threshold(self, tmp_path, monkeypatch):
+        import hook_utils as hu
+
+        monkeypatch.setattr(hu, "_CIRCUIT_PATH", str(tmp_path / "cb.json"))
+        for _ in range(hu._CIRCUIT_OPEN_THRESHOLD - 1):
+            hu.record_circuit_result("pinecone", False)
+        assert hu.circuit_is_open("pinecone") is False
 
     def test_resets_on_success(self, tmp_path, monkeypatch):
         import hook_utils as hu
@@ -290,8 +324,7 @@ class TestRunObsHook:
 
         called = []
 
-        def fake_handler(input_data, session_id, package_root):
-            called.append(True)
+        fake_handler = _call_recorder(called)
 
         payload = {"tool_name": "Bash"}  # no session_id
         monkeypatch.setattr(hu, "read_hook_input", lambda timeout_seconds=2: payload)
@@ -307,8 +340,7 @@ class TestRunObsHook:
 
         called = []
 
-        def fake_handler(input_data, session_id, package_root):
-            called.append(True)
+        fake_handler = _call_recorder(called)
 
         monkeypatch.setattr(hu, "read_hook_input", lambda timeout_seconds=2: None)
 
@@ -323,8 +355,7 @@ class TestRunObsHook:
 
         called = []
 
-        def fake_handler(input_data, session_id, package_root):
-            called.append(True)
+        fake_handler = _call_recorder(called)
 
         payload = {"session_id": "test-session-456"}
         monkeypatch.setattr(hu, "read_hook_input", lambda timeout_seconds=2: payload)

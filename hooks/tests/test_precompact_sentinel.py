@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 class TestEvaluateCapsule:
     def test_flags_rot_when_expected_producer_missing(self):
-        from precompact_sentinel_lib import evaluate_capsule, EXPECTED_PRODUCERS
+        from precompact_sentinel_lib import evaluate_capsule
         cap = {"_producers_ok": ["preserve"], "_producers_failed": ["git"],
                "_empty": False, "_ms": 10}
         alerts = evaluate_capsule(cap)

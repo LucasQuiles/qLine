@@ -65,7 +65,7 @@ See `qline.example.toml` for all options.
 
 **Line 1 (6):** model, input tokens, output tokens, context bar, cache rate, active duration
 
-**Line 2 (30):** sys overhead, cache read, cache delta, turns, reads, rereads, writes, bash, failures, tasks, subagents, health, compactions, hook faults, lines changed, session count, daily cost, weekly cost, API efficiency, cost/ktok, I/O ratio, tokens/turn, free context, growth rate, unique files, fail rate, think %, cost/turn, burn trend, cost + $/hr
+**Line 2 (31):** sys overhead, cache read, cache delta, turns, reads, rereads, writes, bash, failures, tasks, subagents, health, compactions, hook faults, diagnostics, lines changed, session count, daily cost, weekly cost, API efficiency, cost/ktok, I/O ratio, tokens/turn, free context, growth rate, unique files, fail rate, think %, cost/turn, burn trend, cost + $/hr
 
 **Line 3 (5 + overflow):** directory, git, CPU, memory, disk
 
@@ -73,17 +73,40 @@ See `qline.example.toml` for all options.
 
 ### Alert System
 
-8-priority alert cascade for context health (bust → expired → micro → bloat → heavy → compact → turns → degraded). Banner shows for 5s then collapses to inline glyph. Thresholds use CC-verified autocompact percentage when available, falling back to 75%/90% defaults.
+8-priority alert cascade for context health (bust → expired → micro → bloat → heavy → compact → turns → degraded). Banner shows for 5s then collapses to inline glyph. Alert onset is stored per session under a private temporary directory using a SHA-256 name, an atomic mode-0600 write, and bounded stale-file cleanup. Thresholds use CC-verified autocompact percentage when available, falling back to 75%/90% defaults.
+
+Observability diagnostics share a versioned, one-MiB-bounded JSONL envelope.
+The status line shows a compact diagnostic count; set
+`QLINE_DIAGNOSTICS_VERBOSE=1` to include closed reason codes. New session
+manifests use additive schema `1.1.0`; readers accept missing and `1.x`
+versions as compatible and reject unknown major versions.
 
 ## Tests
 
 ```bash
-bash tests/test-statusline.sh                       # full shell regression suite
-bash tests/test-statusline.sh --section renderer     # one section
-bash tests/test-statusline.sh --section invariants   # metric consistency proofs
+python3 -m pip install -r requirements-dev.txt
+python3 scripts/verify.py doctor                    # prerequisites, no checks run
+python3 scripts/verify.py run                       # canonical local/CI gate
 ```
 
-Hundreds of assertions across 16+ sections: parser, normalizer, renderer, config, ansi, command, layout, collector, cache, stale, obs, overhead, new_metrics, derived_metrics, alerts, schema_version, anchor_invalidated, transcript_schema, OPP features, invariants.
+The gate parses tracked Python, runs Ruff without cache, runs full ShellCheck on
+tracked shell entrypoints, runs the Python, shell, and installer suites, checks
+both working-tree and committed-range whitespace, and rejects masked diagnostics,
+exit-masking pipelines, wall-clock sleeps, and assertion-free Python tests.
+Its shell regression receives the verifier's exact Python interpreter, so the
+3.10/3.12 CI matrix does not silently fall back to another installed version.
+It exits 0 on pass, 1 for completed check failures, and 2 when verification is
+blocked or inconclusive. Focus one component when iterating:
+
+```bash
+python3 scripts/verify.py run --check pytest
+bash tests/test-statusline.sh --section renderer
+python3 scripts/verify.py run --format json --fields summary,effects
+```
+
+Contributor workflow, failure semantics, private full-log handling, and the
+complete `QLV-*` error taxonomy are documented in
+[docs/VERIFICATION.md](docs/VERIFICATION.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Architecture
 
