@@ -1,0 +1,6 @@
+{
+  "name": "qline-details",
+  "version": "0.1.0",
+  "description": "Inspect existing qLine session metrics in an on-demand pane.",
+  "author": { "name": "q" }
+}

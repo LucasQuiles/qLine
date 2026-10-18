@@ -48,13 +48,17 @@ hooks, plugins, or repositories.
 ## Quick Start
 
 ```bash
-git clone https://github.com/LucasQuiles/qLine.git
+git clone git@github.com:LucasQuiles/qLine.git
 cd qLine
 ./install.sh        # installs statusline + observability hooks
 # Restart Claude Code
 ```
 
 Optional: customize with `cp qline.example.toml ~/.config/qline.toml`
+
+An optional terminal pane shows recorded metrics on demand through `/qline`.
+See [the qLine details mod](mods/qline-details/README.md) for a process-local
+trial and its tested runtime. The ordinary status line remains available.
 
 ## Requirements
 
@@ -138,7 +142,8 @@ complete `QLV-*` error taxonomy are documented in
 ## Architecture
 
 ```text
-stdin (JSON) → normalize() → collect_system_data() → _inject_obs_counters()
+stdin (JSON) → throttle cache → renderer on transcript change or cache expiry
+renderer: normalize() → collect_system_data() → _inject_obs_counters()
             → inject_context_overhead() → render() → 3-line ANSI output
 ```
 
@@ -151,6 +156,7 @@ stdin (JSON) → normalize() → collect_system_data() → _inject_obs_counters(
 
 | File | Lines | Purpose |
 |------|-------|---------|
+| `src/statusline-throttle.zsh` | — | Throttle front end; reuses output for an unchanged transcript within the cache lifetime |
 | `src/statusline.py` | ~2900 | Main renderer — all modules, themes, rendering |
 | `src/context_overhead.py` | ~900 | Transcript analysis — overhead, cache, turns |
 | `hooks/hook_utils.py` | ~420 | Hook utilities — stdin, fail-open, circuit breaker |
@@ -168,6 +174,65 @@ stdin (JSON) → normalize() → collect_system_data() → _inject_obs_counters(
 ```
 
 Plugin mode: symlink `~/.claude/plugins/qline → /path/to/qLine`. The installer detects this and skips file copying (imports directly from the plugin dir).
+
+The core deployment uses `scripts/install-core-guarded.sh`. On the throttled
+path, `src/statusline-throttle.zsh` becomes `statusline.py` and the Python
+renderer becomes `statusline_full.py`; `context_overhead.py` stays beside them.
+Where `/bin/zsh` is unavailable, installation keeps direct Python rendering at
+`statusline.py`. The guarded installer also supports `--status-source full` for
+an explicit direct-renderer installation. The optional throttle is therefore
+not a new required dependency for Linux installations.
+The installer checks expected deployed digests, stages the replacements, and
+retains backups for recovery. It preserves an existing `statusLine` binding and
+its `refreshInterval`. The throttle defaults to a ten-second cache lifetime and
+invalidates on transcript modification time or size changes. This cache lifetime
+is separate from Claude Code's refresh setting.
+
+### Guarded core helper
+
+Use the helper only for the three-file core transaction, and only after recording
+the current destination preimages. Its complete interface is:
+
+```bash
+scripts/install-core-guarded.sh \
+  --dest <existing-destination-directory> \
+  --backup-dir <new-backup-directory> \
+  --expect-status <lowercase-sha256-or-absent> \
+  --expect-full <lowercase-sha256-or-absent> \
+  --expect-context <lowercase-sha256-or-absent> \
+  [--status-source auto|throttle|full]
+```
+
+`--dest`, `--backup-dir`, `--expect-status`, `--expect-full`, and
+`--expect-context` are required. Each expected value is either `absent` or a
+64-character lowercase SHA-256 digest of the current regular destination file.
+`--backup-dir` must not already exist. `--status-source` defaults to `auto`;
+it chooses `throttle` when `/bin/zsh` is executable and otherwise chooses
+`full`. Explicit `throttle` refuses when zsh is unavailable. The helper rejects
+unknown arguments, unsafe source or destination paths, an existing backup path,
+and any preimage mismatch before it writes a destination file.
+
+`--expect-full` is a required compatibility change. A former two-digest command
+stops with usage error before any replacement. The transaction replaces only
+`statusline.py`, `statusline_full.py`, and `context_overhead.py`. On an error
+after replacement begins, it restores those three preimages when possible, or
+removes a file whose expected preimage was `absent`. If restoration fails, it
+reports `rollback incomplete` and retains the backup directory for manual
+recovery.
+
+The rollback boundary ends at those three files. It does not undo the enclosing
+`install.sh` effects: fallback `obs_utils.py` and `hook_utils.py` copies or
+stale-copy removal, the status-line settings write, copied lifecycle hooks, or
+hook registration. `./install.sh` without `--no-obs` is a separate full install:
+when the qLine plugin is not already active, it copies support files and registers
+the 16 observability hooks in `settings.json`. Use
+`./install.sh --no-obs` only when its remaining fallback-helper and status-line
+settings effects are also intended. The optional details mod has its own
+process-local or persistent activation decision.
+
+Do not use old handoff commands that copy `src/statusline.py` directly over the
+throttle. Source checkout, core deployment, hook deployment, and the optional
+details mod are separate states; a source change does not deploy itself.
 
 ## Stop Lines
 

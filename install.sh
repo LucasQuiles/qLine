@@ -8,18 +8,21 @@ SETTINGS="$DEST_DIR/settings.json"
 
 # --- Parse args ---
 WITH_OBS=true
-for arg in "$@"; do
-    case "$arg" in
-        --no-obs) WITH_OBS=false ;;
+REQUESTED_STATUS_SOURCE=auto
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --no-obs) WITH_OBS=false; shift ;;
+        --status-source) REQUESTED_STATUS_SOURCE=${2:?missing --status-source value}; shift 2 ;;
         --help|-h)
-            echo "Usage: ./install.sh [--no-obs]"
+            echo "Usage: ./install.sh [--no-obs] [--status-source auto|throttle|full]"
             echo ""
             echo "  Default:     Install statusline + observability hooks"
             echo "  --no-obs:    Skip observability hooks"
+            echo "  --status-source: Select auto, throttled, or direct-renderer statusline deployment"
             echo ""
             exit 0
             ;;
-        *) echo "Unknown option: $arg (try --help)"; exit 1 ;;
+        *) echo "Unknown option: $1 (try --help)"; exit 1 ;;
     esac
 done
 
@@ -73,11 +76,51 @@ fi
 
 # --- Install core files ---
 
-cp "$SCRIPT_DIR/src/statusline.py" "$DEST_DIR/statusline.py"
-chmod +x "$DEST_DIR/statusline.py"
-echo "Installed: $DEST_DIR/statusline.py"
+sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
+expected_digest() {
+    if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+        printf '%s' absent
+    else
+        sha256 "$1"
+    fi
+}
 
-cp "$SCRIPT_DIR/src/context_overhead.py" "$DEST_DIR/context_overhead.py"
+case "$REQUESTED_STATUS_SOURCE" in
+    auto)
+        if [ -x /bin/zsh ]; then
+            STATUS_SOURCE=throttle
+        else
+            STATUS_SOURCE=full
+        fi
+        ;;
+    throttle)
+        if [ ! -x /bin/zsh ]; then
+            echo "ERROR: qLine throttle requires an executable /bin/zsh"
+            exit 1
+        fi
+        STATUS_SOURCE=throttle
+        ;;
+    full) STATUS_SOURCE=full ;;
+    *)
+        echo "ERROR: --status-source must be auto, throttle, or full"
+        exit 1
+        ;;
+esac
+mkdir -p "$DEST_DIR/backups"
+CORE_BACKUP="$DEST_DIR/backups/qline-install-$(date +%Y%m%d-%H%M%S)-$$"
+"$SCRIPT_DIR/scripts/install-core-guarded.sh" \
+    --dest "$DEST_DIR" \
+    --backup-dir "$CORE_BACKUP" \
+    --expect-status "$(expected_digest "$DEST_DIR/statusline.py")" \
+    --expect-full "$(expected_digest "$DEST_DIR/statusline_full.py")" \
+    --expect-context "$(expected_digest "$DEST_DIR/context_overhead.py")" \
+    --status-source "$STATUS_SOURCE"
+if [ "$STATUS_SOURCE" = throttle ]; then
+    echo "Installed: $DEST_DIR/statusline.py (throttle)"
+else
+    echo "Installed: $DEST_DIR/statusline.py (direct renderer)"
+fi
+echo "Installed: $DEST_DIR/statusline_full.py (renderer)"
 echo "Installed: $DEST_DIR/context_overhead.py"
 
 # obs_utils + hook_utils: statusline needs these at runtime.
@@ -100,15 +143,23 @@ else
 fi
 
 # Fix shebang if needed
+RENDERER_PATHS=("$DEST_DIR/statusline_full.py")
+if [ "$STATUS_SOURCE" = full ]; then
+    RENDERER_PATHS+=("$DEST_DIR/statusline.py")
+fi
 if ! command -v python3 > /dev/null 2>&1; then
     REAL_PYTHON=$(command -v "$PYTHON")
-    sed -i'' -e "1s|.*|#!$REAL_PYTHON|" "$DEST_DIR/statusline.py"
+    for renderer in "${RENDERER_PATHS[@]}"; do
+        sed -i'' -e "1s|.*|#!$REAL_PYTHON|" "$renderer"
+    done
     echo "Shebang updated to: #!$REAL_PYTHON"
 elif [ "$PYTHON" != "python3" ]; then
     PY3_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo 0)
     if [ "$PY3_MINOR" -lt 10 ]; then
         REAL_PYTHON=$(command -v "$PYTHON")
-        sed -i'' -e "1s|.*|#!$REAL_PYTHON|" "$DEST_DIR/statusline.py"
+        for renderer in "${RENDERER_PATHS[@]}"; do
+            sed -i'' -e "1s|.*|#!$REAL_PYTHON|" "$renderer"
+        done
         echo "Shebang updated to: #!$REAL_PYTHON"
     fi
 fi
@@ -119,8 +170,7 @@ if [ "$JQ_AVAILABLE" = true ] && [ -f "$SETTINGS" ]; then
     if jq -e 'has("statusLine")' "$SETTINGS" > /dev/null 2>&1; then
         echo "statusLine binding already present"
     else
-        BACKUP="$DEST_DIR/backups/qline-install-$(date +%Y%m%d-%H%M%S)"
-        mkdir -p "$BACKUP"
+        BACKUP="$CORE_BACKUP"
         cp "$SETTINGS" "$BACKUP/settings.json.bak"
         echo "Backup: $BACKUP/settings.json.bak"
 
