@@ -153,6 +153,10 @@ The 5-second banner → glyph-only collapse uses `/tmp/qline-alert.json` for ons
 
 ### Architecture
 
+Deployment note, 2026-10-18: the direct renderer-copy instruction below is
+historical. The current installer preserves the throttle/renderer layout and
+existing refresh settings; see [Install / Update / Uninstall](../../README.md#install--update--uninstall).
+
 - **Single-file statusline**: `src/statusline.py` is the entire renderer (~2100 lines). No pip dependencies. `context_overhead.py` is the only import from `src/`. All hooks are separate Python scripts.
 - **Deployment**: `~/.claude/statusline.py` is a standalone COPY (not symlink). Must be manually updated with `cp src/statusline.py ~/.claude/statusline.py`. Hooks use a symlink via `~/.claude/plugins/qline → /Users/q/LAB/qLine`.
 - **Fail-open contract**: Every hook and the statusline itself must exit 0 always. Exceptions are caught and swallowed. Diagnostics go to fault ledger.

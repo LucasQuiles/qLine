@@ -35,7 +35,7 @@ normal highest-supported-version discovery order.
 | `QLV-006` | `git-diff` | Run `git diff --check`. |
 | `QLV-007` | `test-integrity` | Reject masked shell diagnostics and exits, plus wall-clock sleeps and assertion-free tracked Python tests. |
 | `QLV-008` | `base-diff` | Run `git diff --check` over every commit since the configured merge base. |
-| `QLV-009` | `install-regression` | Run the sandboxed `tests/test-install-core.sh` suite. |
+| `QLV-009` | `install-regression` | Run the sandboxed `tests/test-install-core.sh` suite, including throttle behavior, migration, reinstall, digest refusal, and rollback. |
 
 The typed registry in `scripts/verify.py` is the single source for each check's
 name, code, command, purpose, severity, expected failure kind, prerequisites,

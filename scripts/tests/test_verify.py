@@ -81,6 +81,7 @@ def test_schema_json_is_self_contained_and_does_not_run_checks(verifier, capsys)
         "python-ast",
         "ruff",
         "shellcheck",
+        "zsh-syntax",
         "pytest",
         "shell-regression",
         "git-diff",
@@ -854,6 +855,149 @@ def test_unreadable_tracked_shell_entrypoint_blocks_before_shellcheck(
     assert "missing.sh" in check["error"]["details"]["message"]
 
 
+def test_zsh_syntax_accepts_all_tracked_valid_zsh_entrypoints(
+    verifier, repo, capsys
+):
+    first = repo / "a-valid.zsh"
+    second = repo / "z-valid.zsh"
+    first.write_text("#!/bin/zsh\nprint -- first\n", encoding="utf-8")
+    second.write_text("#!/bin/zsh\nprint -- second\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "a-valid.zsh", "z-valid.zsh"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    rc, stdout, stderr = _invoke(
+        verifier,
+        capsys,
+        ["run", "--format", "json", "--check", "zsh-syntax"],
+        repo=repo,
+        runner=verifier._subprocess_runner,
+    )
+
+    assert rc == 0
+    assert stderr == ""
+    check = json.loads(stdout)["checks"][0]
+    assert check["status"] == "pass"
+    assert check["command"][-2:] == ["a-valid.zsh", "z-valid.zsh"]
+
+
+def test_zsh_syntax_rejects_a_tracked_invalid_zsh_entrypoint(
+    verifier, repo, capsys
+):
+    script = repo / "invalid.zsh"
+    script.write_text("#!/bin/zsh\nprint )\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "invalid.zsh"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    rc, stdout, stderr = _invoke(
+        verifier,
+        capsys,
+        ["run", "--format", "json", "--check", "zsh-syntax"],
+        repo=repo,
+        runner=verifier._subprocess_runner,
+    )
+
+    assert rc == 1
+    assert stderr == ""
+    check = json.loads(stdout)["checks"][0]
+    assert check["status"] == "fail"
+    assert check["error"]["kind"] == "shell_lint_failed"
+
+
+def test_zsh_syntax_rejects_a_later_tracked_invalid_zsh_entrypoint(
+    verifier, repo, capsys
+):
+    (repo / "a-valid.zsh").write_text(
+        "#!/bin/zsh\nprint -- valid\n", encoding="utf-8"
+    )
+    (repo / "z-invalid.zsh").write_text(
+        "#!/bin/zsh\nprint )\n", encoding="utf-8"
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "a-valid.zsh", "z-invalid.zsh"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    rc, stdout, stderr = _invoke(
+        verifier,
+        capsys,
+        ["run", "--format", "json", "--check", "zsh-syntax"],
+        repo=repo,
+        runner=verifier._subprocess_runner,
+    )
+
+    assert rc == 1
+    assert stderr == ""
+    check = json.loads(stdout)["checks"][0]
+    assert check["status"] == "fail"
+    assert check["error"]["kind"] == "shell_lint_failed"
+
+
+def test_zsh_syntax_blocks_when_zsh_is_unavailable(
+    verifier, repo, capsys, monkeypatch
+):
+    real_which = verifier.shutil.which
+    monkeypatch.setattr(
+        verifier.shutil,
+        "which",
+        lambda name: None if name == "zsh" else real_which(name),
+    )
+
+    rc, stdout, stderr = _invoke(
+        verifier,
+        capsys,
+        ["run", "--format", "json", "--check", "zsh-syntax"],
+        repo=repo,
+    )
+
+    assert rc == 2
+    assert stderr == ""
+    check = json.loads(stdout)["checks"][0]
+    assert check["status"] == "blocked"
+    assert check["error"]["details"] == {"prerequisite": "zsh"}
+
+
+def test_shellcheck_omits_tracked_zsh_entrypoints(
+    verifier, repo, capsys
+):
+    (repo / "entry.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (repo / "entry.zsh").write_text("#!/bin/zsh\nprint -- valid\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "entry.sh", "entry.zsh"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    commands = []
+
+    def successful(spec, command, timeout_seconds, cwd):
+        del spec, timeout_seconds, cwd
+        commands.append(command)
+        return verifier.RunResult(exit_code=0, stdout="", stderr="", duration_ms=0)
+
+    rc, stdout, stderr = _invoke(
+        verifier,
+        capsys,
+        ["run", "--format", "json", "--check", "shellcheck"],
+        repo=repo,
+        runner=successful,
+    )
+
+    assert rc == 0
+    assert stderr == ""
+    assert commands == [(verifier.shutil.which("shellcheck"), "entry.sh")]
+    assert json.loads(stdout)["checks"][0]["status"] == "pass"
+
+
 def test_unreadable_or_missing_repo_is_structured_exit_2(
     verifier, tmp_path, capsys
 ):
@@ -937,9 +1081,18 @@ def test_every_check_has_stable_typed_effect_and_error_metadata(verifier):
 
 def test_shellcheck_and_test_integrity_are_full_fail_closed_checks(verifier):
     shellcheck = next(spec for spec in verifier.CHECKS if spec.name == "shellcheck")
+    zsh_syntax = next(spec for spec in verifier.CHECKS if spec.name == "zsh-syntax")
     integrity = next(spec for spec in verifier.CHECKS if spec.name == "test-integrity")
 
-    assert shellcheck.command == ("{shellcheck}", "{tracked-shell-entrypoints}")
+    assert shellcheck.command == ("{shellcheck}", "{tracked-shellcheck-entrypoints}")
+    assert zsh_syntax.command == (
+        "{zsh}",
+        "-f",
+        "-c",
+        'for file do "$0" -f -n -- "$file" || exit "$?"; done',
+        "{zsh}",
+        "{tracked-zsh-entrypoints}",
+    )
     assert integrity.code == "QLV-007"
     assert integrity.error_kind == "test_integrity_failed"
     assert integrity.command == ("{python}", "{verify}", "_test_integrity")

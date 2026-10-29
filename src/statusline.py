@@ -2233,7 +2233,7 @@ def collect_system_data(state: dict[str, Any], theme: dict[str, Any]) -> None:
 
 def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
                           state_key: str, theme_key: str,
-                          compact_label: str = "") -> str | None:
+                          compact_label: str = "", normal_label: str = "") -> str | None:
     """Shared renderer for system metric modules (cpu, memory, disk).
 
     Renders a mini progress bar with percentage, e.g. '󰓬 ███░░ 64%'
@@ -2250,7 +2250,7 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
 
     # Mini progress bar
     width = cfg.get("width", 5)
-    filled = (pct * width) // 100
+    filled = min(width, max(0, (pct * width) // 100))
     bar = "\u2588" * filled + "\u2591" * (width - filled)
 
     if state.get("_compact") and compact_label:
@@ -2258,7 +2258,7 @@ def _render_system_metric(state: dict[str, Any], theme: dict[str, Any],
     else:
         glyph = cfg.get("glyph", "")
         # Preserve trailing space in glyph (e.g. "󰓌 " → "󰓌 ░░░7%")
-        text = f"{glyph}{bar}{pct}%"
+        text = f"{glyph}{normal_label}{bar}{pct}%"
 
     is_stale = state.get(f"{theme_key}_stale", False)
     if pct >= crit_t:
@@ -2292,8 +2292,9 @@ def render_git(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
 
 
 def render_cpu(state: dict[str, Any], theme: dict[str, Any]) -> str | None:
-    """Render CPU usage module."""
-    return _render_system_metric(state, theme, "cpu_percent", "cpu", compact_label="C:")
+    """Render one-minute load per logical CPU; retain the legacy config/cache keys."""
+    return _render_system_metric(state, theme, "cpu_percent", "cpu",
+                                 compact_label="L/c:", normal_label="Load/core ")
 
 
 def render_memory(state: dict[str, Any], theme: dict[str, Any]) -> str | None:

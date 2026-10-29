@@ -1037,14 +1037,14 @@ print(result or 'NONE')
 ")
 assert_not_contains "L-12: no marker" "$OUT" $'\u229b'
 
-# L-13: CPU abbreviated in compact mode
+# L-13: Normalized load abbreviated in compact mode
 OUT=$(run_py "
 from statusline import render_cpu, DEFAULT_THEME
 state = {'cpu_percent': 23, '_compact': True}
 result = render_cpu(state, DEFAULT_THEME)
 print(result or 'NONE')
 ")
-assert_contains "L-13: CPU compact" "$OUT" "C:"
+assert_contains "L-13: normalized load compact" "$OUT" "L/c:"
 assert_contains "L-13b: CPU compact pct" "$OUT" "23%"
 
 # L-14: CPU full in normal mode
@@ -1056,6 +1056,16 @@ print(result or 'NONE')
 ")
 assert_contains "L-14: CPU full has bar" "$OUT" "░"
 assert_contains "L-14b: CPU full pct" "$OUT" "23%"
+assert_contains "L-14c: normalized load full label" "$OUT" "Load/core "
+
+OUT=$(run_py "
+from statusline import render_cpu, DEFAULT_THEME
+result = render_cpu({'cpu_percent': 450}, DEFAULT_THEME)
+print(result)
+print('blocks:' + str(result.count('█')))
+")
+assert_contains "L-14d: load can exceed 100 percent" "$OUT" "450%"
+assert_contains "L-14e: load bar remains bounded" "$OUT" "blocks:5"
 
 # L-15: Memory abbreviated in compact mode
 OUT=$(run_py "
