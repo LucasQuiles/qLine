@@ -154,13 +154,31 @@ CHECKS = (
     CheckSpec(
         name="shellcheck",
         code="QLV-003",
-        purpose="Run full ShellCheck over tracked shell entrypoints.",
+        purpose="Run full ShellCheck over tracked non-zsh shell entrypoints.",
         severity="error",
         error_kind="shell_lint_failed",
         failure_hint="Fix every ShellCheck finding in the named tracked entrypoint.",
-        command=("{shellcheck}", "{tracked-shell-entrypoints}"),
-        implementation="subprocess:tracked-shell-entrypoints",
+        command=("{shellcheck}", "{tracked-shellcheck-entrypoints}"),
+        implementation="subprocess:tracked-shellcheck-entrypoints",
         prerequisites=("git", "shellcheck"),
+    ),
+    CheckSpec(
+        name="zsh-syntax",
+        code="QLV-010",
+        purpose="Parse every tracked zsh entrypoint with zsh itself.",
+        severity="error",
+        error_kind="shell_lint_failed",
+        failure_hint="Fix the reported zsh syntax error in the named tracked entrypoint.",
+        command=(
+            "{zsh}",
+            "-f",
+            "-c",
+            'for file do "$0" -f -n -- "$file" || exit "$?"; done',
+            "{zsh}",
+            "{tracked-zsh-entrypoints}",
+        ),
+        implementation="subprocess:tracked-zsh-syntax",
+        prerequisites=("git", "zsh"),
     ),
     CheckSpec(
         name="pytest",
@@ -663,7 +681,7 @@ def _git_tracked(repo: Path) -> tuple[str, ...]:
     )
 
 
-def _tracked_shell_entrypoints(repo: Path) -> tuple[str, ...]:
+def _tracked_shell_entrypoints(repo: Path, *, zsh: bool | None = None) -> tuple[str, ...]:
     entrypoints = []
     for relative in _git_tracked(repo):
         path = repo / relative
@@ -677,9 +695,20 @@ def _tracked_shell_entrypoints(repo: Path) -> tuple[str, ...]:
         shell_shebang = first_line.startswith("#!") and bool(
             re.search(r"(?:/|env\s+)(?:ba|z|da|k)?sh(?:\s|$)", first_line)
         )
-        if explicit_suffix or shell_shebang:
+        zsh_entrypoint = relative.endswith(".zsh") or bool(
+            re.search(r"(?:/|env\s+)zsh(?:\s|$)", first_line)
+        )
+        if (explicit_suffix or shell_shebang) and (zsh is None or zsh_entrypoint == zsh):
             entrypoints.append(relative)
     return tuple(sorted(entrypoints))
+
+
+def _tracked_shellcheck_entrypoints(repo: Path) -> tuple[str, ...]:
+    return _tracked_shell_entrypoints(repo, zsh=False)
+
+
+def _tracked_zsh_entrypoints(repo: Path) -> tuple[str, ...]:
+    return _tracked_shell_entrypoints(repo, zsh=True)
 
 
 def _tracked_test_shells(repo: Path) -> tuple[str, ...]:
@@ -839,14 +868,21 @@ def _resolve_command(spec: CheckSpec, repo: Path) -> tuple[str, ...]:
             resolved.append(str(Path(__file__).resolve()))
         elif token == "{shellcheck}":
             resolved.append(shutil.which("shellcheck") or "shellcheck")
+        elif token == "{zsh}":
+            resolved.append(shutil.which("zsh") or "zsh")
         elif token == "{bash}":
             resolved.append(shutil.which("bash") or "bash")
         elif token == "{git}":
             resolved.append(shutil.which("git") or "git")
-        elif token == "{tracked-shell-entrypoints}":
-            entrypoints = _tracked_shell_entrypoints(repo)
+        elif token == "{tracked-shellcheck-entrypoints}":
+            entrypoints = _tracked_shellcheck_entrypoints(repo)
             if not entrypoints:
-                raise OSError("no tracked shell entrypoints were found")
+                raise OSError("no tracked ShellCheck entrypoints were found")
+            resolved.extend(entrypoints)
+        elif token == "{tracked-zsh-entrypoints}":
+            entrypoints = _tracked_zsh_entrypoints(repo)
+            if not entrypoints:
+                raise OSError("no tracked zsh entrypoints were found")
             resolved.extend(entrypoints)
         else:
             resolved.append(token)

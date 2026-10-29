@@ -39,7 +39,7 @@ hooks, plugins, or repositories.
 
 **Line 2** — System overhead, cache metrics, turns, observability counters (reads, rereads, writes, bash, failures, tasks, subagents, health, compactions, hook faults), lines changed, sessions, daily/weekly cost, efficiency metrics
 
-**Line 3** — Directory, git, CPU, memory, disk + overflow from line 2
+**Line 3** — Directory, git, normalized load, memory, disk + overflow from line 2
 
 41 modules in the default layout. All metrics verified against raw data with runtime invariant checking. See [docs/modules.md](docs/modules.md) for the complete reference.
 
@@ -98,7 +98,11 @@ See `qline.example.toml` for all options.
 
 **Line 2 (31):** sys overhead, cache read, cache delta, turns, reads, rereads, writes, bash, failures, tasks, subagents, health, compactions, hook faults, diagnostics, lines changed, session count, daily cost, weekly cost, API efficiency, cost/ktok, I/O ratio, tokens/turn, free context, growth rate, unique files, fail rate, think %, cost/turn, burn trend, cost + $/hr
 
-**Line 3 (5 + overflow):** directory, git, CPU, memory, disk
+**Line 3 (5 + overflow):** directory, git, normalized load, memory, disk
+
+`Load/core` (`L/c:` in compact mode) shows the one-minute load average divided by
+the logical CPU count, expressed as a percentage. It can exceed 100%; it is not
+CPU utilization. The `cpu` configuration and cache keys remain compatible.
 
 **Optional:** agents, tmux (disabled by default)
 
@@ -121,7 +125,8 @@ python3 scripts/verify.py run                       # canonical local/CI gate
 ```
 
 The gate parses tracked Python, runs Ruff without cache, runs full ShellCheck on
-tracked shell entrypoints, runs the Python, shell, and installer suites, checks
+supported shell entrypoints and zsh syntax checks on zsh entrypoints, runs the Python,
+shell, and installer suites, checks
 both working-tree and committed-range whitespace, and rejects masked diagnostics,
 exit-masking pipelines, wall-clock sleeps, and assertion-free Python tests.
 Its shell regression receives the verifier's exact Python interpreter, so the
