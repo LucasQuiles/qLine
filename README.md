@@ -98,11 +98,11 @@ See `qline.example.toml` for all options.
 
 **Line 2 (31):** sys overhead, cache read, cache delta, turns, reads, rereads, writes, bash, failures, tasks, subagents, health, compactions, hook faults, diagnostics, lines changed, session count, daily cost, weekly cost, API efficiency, cost/ktok, I/O ratio, tokens/turn, free context, growth rate, unique files, fail rate, think %, cost/turn, burn trend, cost + $/hr
 
-**Line 3 (5 + overflow):** directory, git, normalized load, memory, disk
+**Line 3 (5 + overflow):** directory, git, CPU, memory, disk
 
-`Load/core` (`L/c:` in compact mode) shows the one-minute load average divided by
-the logical CPU count, expressed as a percentage. It can exceed 100%; it is not
-CPU utilization. The `cpu` configuration and cache keys remain compatible.
+The CPU indicator shows the one-minute load average divided by the logical CPU
+count, expressed as a percentage. It can exceed 100%; it is not CPU utilization.
+The `cpu` configuration and cache keys remain compatible.
 
 **Optional:** agents, tmux (disabled by default)
 
