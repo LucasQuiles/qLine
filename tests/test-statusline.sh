@@ -1044,7 +1044,7 @@ state = {'cpu_percent': 23, '_compact': True}
 result = render_cpu(state, DEFAULT_THEME)
 print(result or 'NONE')
 ")
-assert_contains "L-13: CPU compact icon" "$OUT" $'\U000f04cc'
+assert_contains "L-13: CPU compact icon" "$OUT" "󰓌"
 assert_contains "L-13b: CPU compact pct" "$OUT" "23%"
 assert_not_contains "L-13c: CPU compact omits load label" "$OUT" "L/c:"
 
@@ -1057,7 +1057,7 @@ print(result or 'NONE')
 ")
 assert_contains "L-14: CPU full has bar" "$OUT" "░"
 assert_contains "L-14b: CPU full pct" "$OUT" "23%"
-assert_contains "L-14c: CPU full icon" "$OUT" $'\U000f04cc'
+assert_contains "L-14c: CPU full icon" "$OUT" "󰓌"
 assert_not_contains "L-14d: CPU full omits load label" "$OUT" "Load/core "
 
 OUT=$(run_py "
