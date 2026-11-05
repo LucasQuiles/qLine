@@ -3,9 +3,8 @@
 
 Scope: Bash tool only. Exits 0 immediately for any other tool_name.
 
-Privacy: Previews are intentionally unsanitized and bounded. This creates
-acceptable bounded duplication of transcript-level information. No full
-stdout/stderr capture. No secret scrubbing in v1.
+Privacy: Previews are bounded and pass through the secret registry first; if that check
+cannot run, the preview is dropped. No full stdout/stderr capture.
 
 Per-call steps (preamble handled by run_obs_hook):
   1. Exit early if tool_name != "Bash"
@@ -17,6 +16,7 @@ Per-call steps (preamble handled by run_obs_hook):
 """
 import json
 import os
+import sys
 from typing import Any
 
 from hook_utils import run_fail_open, run_obs_hook, hash16, now_iso
@@ -31,6 +31,27 @@ _HOOK_NAME = "obs-posttool-bash"
 _EVENT_NAME = "PostToolUse"
 _MAX_CMD_PREVIEW = 500
 _MAX_STDOUT_PREVIEW = 500
+
+# Raw tool output reaches this hook even when redact-tool-output rewrites what the model sees.
+# None means the check could not run, so the caller must drop the text rather than keep it.
+_GUARDS_HOOKS = os.environ.get(
+    "CLAUDE_GUARDS_HOOKS_DIR", os.path.expanduser("~/LAB/claude-guards/hooks")
+)
+
+
+def _scrub_secrets(text: str) -> str | None:
+    if not text:
+        return text
+    try:
+        if _GUARDS_HOOKS not in sys.path:
+            sys.path.insert(0, _GUARDS_HOOKS)
+        from secret_policy import load_policy, redact_text
+
+        patterns = load_policy().runtime_patterns
+        return redact_text(text, patterns) if patterns else None
+    except Exception:
+        return None
+
 _MAX_STDERR_PREVIEW = 200
 
 
@@ -59,9 +80,9 @@ def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     stderr_hash = hash16(stderr)
     stdout_bytes = len(stdout) if stdout else 0
     stderr_bytes = len(stderr) if stderr else 0
-    command_preview = command[:_MAX_CMD_PREVIEW]
-    stdout_preview = stdout[:_MAX_STDOUT_PREVIEW]
-    stderr_preview = stderr[:_MAX_STDERR_PREVIEW]
+    command_preview = (_scrub_secrets(command) or "")[:_MAX_CMD_PREVIEW]  # scrub first: a cut could hide a match
+    stdout_preview = (_scrub_secrets(stdout) or "")[:_MAX_STDOUT_PREVIEW]  # scrub first: a cut could hide a match
+    stderr_preview = (_scrub_secrets(stderr) or "")[:_MAX_STDERR_PREVIEW]  # scrub first: a cut could hide a match
     truncated = (
         len(command) > _MAX_CMD_PREVIEW
         or len(stdout) > _MAX_STDOUT_PREVIEW
