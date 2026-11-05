@@ -278,6 +278,29 @@ def hash16(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()[:16]
 
 
+def scrub_secrets(text: str) -> str | None:
+    """Return text with registered secrets removed, before a hook stores it.
+
+    Hooks receive the raw tool input and output even when redact-tool-output rewrites what the
+    model sees. None means the check could not run, so the caller must drop the text.
+    """
+    if not text:
+        return text
+    try:
+        guards = os.environ.get(
+            "CLAUDE_GUARDS_HOOKS_DIR", os.path.expanduser("~/LAB/claude-guards/hooks")
+        )
+        if guards not in sys.path:
+            sys.path.insert(0, guards)
+        from secret_policy import load_policy, redact_text
+
+        # fail_on_error: the fallback set lacks most providers, so it would pass their values.
+        patterns = load_policy(fail_on_error=True).runtime_patterns
+        return redact_text(text, patterns) if patterns else None
+    except Exception:
+        return None
+
+
 def log_hook_diagnostic(
     hook_name: str,
     event_name: str,

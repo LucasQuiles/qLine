@@ -6,7 +6,7 @@ Only Bash failure shape is proved; other tools handled defensively.
 """
 from typing import Any
 
-from hook_utils import run_fail_open, run_obs_hook, hash16
+from hook_utils import run_fail_open, run_obs_hook, hash16, scrub_secrets
 from obs_utils import append_event
 
 _HOOK_NAME = "obs-posttool-failure"
@@ -22,7 +22,8 @@ def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     event_data: dict[str, Any] = {
         "tool_name": tool_name,
         "tool_ref": tool_ref,
-        "error": error,
+        # A failed command's text holds its whole output, unlike the bounded Bash previews.
+        "error": scrub_secrets(error) or "",
         "is_interrupt": is_interrupt,
     }
 
@@ -30,7 +31,7 @@ def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     if tool_name == "Bash" and isinstance(tool_input, dict):
         command = tool_input.get("command", "")
         if command:
-            event_data["command_preview"] = command[:500]
+            event_data["command_preview"] = (scrub_secrets(command) or "")[:500]  # scrub first: a cut could hide a match
             event_data["command_hash"] = hash16(command)
 
     append_event(
