@@ -3,9 +3,8 @@
 
 Scope: Bash tool only. Exits 0 immediately for any other tool_name.
 
-Privacy: Previews are intentionally unsanitized and bounded. This creates
-acceptable bounded duplication of transcript-level information. No full
-stdout/stderr capture. No secret scrubbing in v1.
+Privacy: Previews are bounded and pass through the secret registry first; if that check
+cannot run, the preview is dropped. No full stdout/stderr capture.
 
 Per-call steps (preamble handled by run_obs_hook):
   1. Exit early if tool_name != "Bash"
@@ -18,7 +17,7 @@ Per-call steps (preamble handled by run_obs_hook):
 import os
 from typing import Any
 
-from hook_utils import run_fail_open, run_obs_hook, hash16, now_iso
+from hook_utils import run_fail_open, run_obs_hook, hash16, now_iso, scrub_secrets
 from obs_utils import (
     append_event,
     update_health,
@@ -58,9 +57,9 @@ def _handle(input_data: dict, session_id: str, package_root: str) -> None:
     stderr_hash = hash16(stderr)
     stdout_bytes = len(stdout) if stdout else 0
     stderr_bytes = len(stderr) if stderr else 0
-    command_preview = command[:_MAX_CMD_PREVIEW]
-    stdout_preview = stdout[:_MAX_STDOUT_PREVIEW]
-    stderr_preview = stderr[:_MAX_STDERR_PREVIEW]
+    command_preview = (scrub_secrets(command) or "")[:_MAX_CMD_PREVIEW]  # scrub first: a cut could hide a match
+    stdout_preview = (scrub_secrets(stdout) or "")[:_MAX_STDOUT_PREVIEW]  # scrub first: a cut could hide a match
+    stderr_preview = (scrub_secrets(stderr) or "")[:_MAX_STDERR_PREVIEW]  # scrub first: a cut could hide a match
     truncated = (
         len(command) > _MAX_CMD_PREVIEW
         or len(stdout) > _MAX_STDOUT_PREVIEW
